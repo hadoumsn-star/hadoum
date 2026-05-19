@@ -173,39 +173,49 @@ export function SupervisorDashboard() {
         </p>
       </div>
 
-      {/* ── Decision focus card ── */}
-      <div className="flex flex-col sm:flex-row sm:items-center gap-4 px-5 py-5 rounded-xl"
-        style={{ background: pending.length > 0 ? '#FEF2F2' : '#ECFDF5', border: `1px solid ${pending.length > 0 ? '#FECACA' : '#A7F3D0'}` }}>
-        <div className="flex items-center gap-4 flex-1">
-          <div className="flex items-center justify-center rounded-xl flex-shrink-0"
-            style={{ width: 52, height: 52, background: pending.length > 0 ? '#B91C1C' : '#065F46' }}>
-            <ShieldCheck size={26} style={{ color: '#FFFFFF' }} />
+      {/* ── Decision focus card — hidden when all handled ── */}
+      {pending.length > 0 ? (
+        <div className="flex flex-col sm:flex-row sm:items-center gap-4 px-5 py-5 rounded-xl"
+          style={{ background: '#FEF2F2', border: '1px solid #FECACA' }}>
+          <div className="flex items-center gap-4 flex-1">
+            <div className="flex items-center justify-center rounded-xl flex-shrink-0"
+              style={{ width: 52, height: 52, background: '#B91C1C' }}>
+              <ShieldCheck size={26} style={{ color: '#FFFFFF' }} />
+            </div>
+            <div>
+              <p style={{ color: '#1A1A1A', fontSize: 22, fontWeight: 700, lineHeight: 1 }}>
+                {pending.length}
+                <span style={{ fontSize: 15, fontWeight: 400, color: '#6B7280', marginLeft: 6 }}>
+                  demande{pending.length > 1 ? 's' : ''} en attente
+                </span>
+              </p>
+              <p style={{ color: '#6B7280', fontSize: 13, marginTop: 4 }}>
+                {urgentCount > 0
+                  ? `${urgentCount} urgente${urgentCount > 1 ? 's' : ''} · action immédiate requise`
+                  : 'Aucune demande urgente en ce moment'
+                }
+              </p>
+            </div>
           </div>
-          <div>
-            <p style={{ color: '#1A1A1A', fontSize: 22, fontWeight: 700, lineHeight: 1 }}>
-              {pending.length}
-              <span style={{ fontSize: 15, fontWeight: 400, color: '#6B7280', marginLeft: 6 }}>
-                demande{pending.length > 1 ? 's' : ''} en attente
+          {openCount > 0 && (
+            <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl flex-shrink-0"
+              style={{ background: '#FFFBEB', border: '1px solid #FDE68A' }}>
+              <AlertTriangle size={15} style={{ color: '#D97706' }} />
+              <span style={{ color: '#D97706', fontSize: 13, fontWeight: 600 }}>
+                {openCount} incident{openCount > 1 ? 's' : ''} ouvert{openCount > 1 ? 's' : ''}
               </span>
-            </p>
-            <p style={{ color: '#6B7280', fontSize: 13, marginTop: 4 }}>
-              {urgentCount > 0
-                ? `${urgentCount} urgente${urgentCount > 1 ? 's' : ''} · action immédiate requise`
-                : pending.length === 0 ? 'Toutes les demandes ont été traitées ✓' : 'Aucune demande urgente en ce moment'
-              }
-            </p>
-          </div>
+            </div>
+          )}
         </div>
-        {openCount > 0 && (
-          <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl flex-shrink-0"
-            style={{ background: '#FFFBEB', border: '1px solid #FDE68A' }}>
-            <AlertTriangle size={15} style={{ color: '#D97706' }} />
-            <span style={{ color: '#D97706', fontSize: 13, fontWeight: 600 }}>
-              {openCount} incident{openCount > 1 ? 's' : ''} ouvert{openCount > 1 ? 's' : ''}
-            </span>
-          </div>
-        )}
-      </div>
+      ) : (
+        <div className="flex items-center gap-3 px-5 py-3.5 rounded-xl"
+          style={{ background: '#ECFDF5', border: '1px solid #A7F3D0' }}>
+          <CheckCircle2 size={18} style={{ color: '#065F46', flexShrink: 0 }} />
+          <p style={{ color: '#065F46', fontSize: 14, fontWeight: 500 }}>
+            Toutes les demandes ont été traitées. Bonne journée !
+          </p>
+        </div>
+      )}
 
       {/* ── Top validations ── */}
       <div className="rounded-xl" style={{ background: '#FFFFFF', border: '1px solid #E5E7EB' }}>

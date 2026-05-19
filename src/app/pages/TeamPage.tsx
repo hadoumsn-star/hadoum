@@ -199,7 +199,16 @@ function AddCandidateModal({ onSave, onClose }: {
           </div>
           <div>
             <label style={{ color: '#374151', fontSize: 12, fontWeight: 500, display: 'block', marginBottom: 5 }}>Poste visé</label>
-            <input value={form.posteVise} onChange={e => set('posteVise', e.target.value)} placeholder="Éducateur, Auxiliaire…" style={INPUT} />
+            <select value={form.posteVise} onChange={e => set('posteVise', e.target.value)} style={{ ...INPUT, cursor: 'pointer' }}>
+              <option value="">— Sélectionner —</option>
+              <option>Éducateur</option>
+              <option>Dame de charge</option>
+              <option>Comptable</option>
+              <option>Infirmier/ère</option>
+              <option>Community Manager</option>
+              <option>Direction</option>
+              <option>Autre</option>
+            </select>
           </div>
           <div>
             <label style={{ color: '#374151', fontSize: 12, fontWeight: 500, display: 'block', marginBottom: 5 }}>Téléphone</label>
@@ -216,7 +225,7 @@ function AddCandidateModal({ onSave, onClose }: {
           {/* CV upload simulé (point 4) */}
           <div>
             <label style={{ color: '#374151', fontSize: 12, fontWeight: 500, display: 'block', marginBottom: 5 }}>CV (PDF)</label>
-            <button type="button"
+            <div
               onClick={() => set('cvUploaded', !form.cvUploaded)}
               className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-colors"
               style={{ border: `1px solid ${form.cvUploaded ? '#A7F3D0' : '#E5E7EB'}`, background: form.cvUploaded ? 'rgba(6,95,70,0.04)' : '#FAFAFA', cursor: 'pointer' }}>
@@ -230,7 +239,7 @@ function AddCandidateModal({ onSave, onClose }: {
                   <X size={13} style={{ color: '#9CA3AF' }} />
                 </button>
               )}
-            </button>
+            </div>
           </div>
         </div>
         <div className="flex gap-2 px-6 py-4" style={{ borderTop: '1px solid #F3F4F6', background: '#F9F7F3' }}>
@@ -592,11 +601,79 @@ function CandidatesTab({ candidates, onAdd, onPromote, onEdit }: {
   );
 }
 
+// ─── Former Edit Modal ────────────────────────────────────────────────────────
+
+interface FormerEditForm { name: string; role: string; dateSortie: string; motifSortie: string; }
+
+function FormerEditModal({ member, onSave, onClose }: {
+  member: FormerMember;
+  onSave: (updated: FormerMember) => void;
+  onClose: () => void;
+}) {
+  const [form, setForm] = useState<FormerEditForm>({
+    name: member.name,
+    role: member.role,
+    dateSortie: member.dateSortie,
+    motifSortie: member.motifSortie,
+  });
+  const set = (k: keyof FormerEditForm, v: string) => setForm(f => ({ ...f, [k]: v }));
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4"
+      style={{ background: 'rgba(26,26,26,0.55)', backdropFilter: 'blur(2px)' }}
+      onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="w-full max-w-sm rounded-2xl overflow-hidden shadow-xl" style={{ background: '#FFFFFF' }}>
+        <div className="flex items-center justify-between px-6 py-5" style={{ borderBottom: '1px solid #F3F4F6' }}>
+          <h3 style={{ color: '#1A1A1A', fontSize: 17, fontWeight: 700 }}>Modifier l'ancien membre</h3>
+          <button onClick={onClose}><X size={18} style={{ color: '#9CA3AF' }} /></button>
+        </div>
+        <div className="px-6 py-5 space-y-4">
+          <div>
+            <label style={{ color: '#374151', fontSize: 12, fontWeight: 500, display: 'block', marginBottom: 5 }}>Nom complet</label>
+            <input value={form.name} onChange={e => set('name', e.target.value)} style={INPUT} />
+          </div>
+          <div>
+            <label style={{ color: '#374151', fontSize: 12, fontWeight: 500, display: 'block', marginBottom: 5 }}>Poste</label>
+            <input value={form.role} onChange={e => set('role', e.target.value)} style={INPUT} />
+          </div>
+          <div>
+            <label style={{ color: '#374151', fontSize: 12, fontWeight: 500, display: 'block', marginBottom: 5 }}>Date de départ</label>
+            <input value={form.dateSortie} onChange={e => set('dateSortie', e.target.value)} placeholder="Ex : 15 avr. 2025" style={INPUT} />
+          </div>
+          <div>
+            <label style={{ color: '#374151', fontSize: 12, fontWeight: 500, display: 'block', marginBottom: 5 }}>Motif de départ</label>
+            <select value={form.motifSortie} onChange={e => set('motifSortie', e.target.value)} style={{ ...INPUT, cursor: 'pointer' }}>
+              <option value="">— Sélectionner —</option>
+              <option>Fin de contrat</option>
+              <option>Démission</option>
+              <option>Départ à la retraite</option>
+              <option>Licenciement</option>
+              <option>Autre</option>
+            </select>
+          </div>
+        </div>
+        <div className="flex gap-2 px-6 py-4" style={{ borderTop: '1px solid #F3F4F6', background: '#F9F7F3' }}>
+          <button onClick={onClose} className="flex-1 py-2.5 rounded-lg"
+            style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', color: '#374151', fontSize: 13, cursor: 'pointer' }}>
+            Annuler
+          </button>
+          <button onClick={() => onSave({ ...member, name: form.name, role: form.role, dateSortie: form.dateSortie, motifSortie: form.motifSortie })}
+            className="flex-1 py-2.5 rounded-lg flex items-center justify-center gap-2"
+            style={{ background: '#3E5A78', color: '#FFFFFF', fontSize: 13, fontWeight: 600, border: 'none', cursor: 'pointer' }}>
+            <Check size={14} /> Enregistrer
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Tab: Former Members ───────────────────────────────────────────────────────
 
-function FormerTab({ former, onReintegrate }: {
+function FormerTab({ former, onReintegrate, onEdit }: {
   former: FormerMember[];
   onReintegrate: (m: FormerMember) => void;
+  onEdit: (m: FormerMember) => void;
 }) {
   return (
     <div className="rounded-xl overflow-hidden" style={{ background: '#FFFFFF', border: '1px solid #E5E7EB' }}>
@@ -641,13 +718,20 @@ function FormerTab({ former, onReintegrate }: {
                       {m.motifSortie}
                     </span>
                   </td>
-                  {/* Bouton Réintégrer (point 3) */}
+                  {/* Boutons Modifier + Réintégrer */}
                   <td className="px-5 py-4">
+                    <div className="flex items-center gap-1.5">
+                    <button onClick={() => onEdit(m)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg"
+                      style={{ background: '#F3F4F6', color: '#374151', fontSize: 12, fontWeight: 600, border: 'none', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                      <Edit3 size={13} /> Modifier
+                    </button>
                     <button onClick={() => onReintegrate(m)}
                       className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg"
                       style={{ background: '#EEF2F7', color: '#3E5A78', fontSize: 12, fontWeight: 600, border: 'none', cursor: 'pointer', whiteSpace: 'nowrap' }}>
                       <UserCheck size={13} /> Réintégrer
                     </button>
+                    </div>
                   </td>
                 </tr>
               );
@@ -673,6 +757,7 @@ export function TeamPage() {
   const [showAddCandidate, setShowAddCandidate] = useState(false);
   const [editCandidate, setEditCandidate]       = useState<Candidat | null>(null);
   const [reintegrateTarget, setReintegrateTarget] = useState<FormerMember | null>(null);
+  const [editFormerTarget, setEditFormerTarget]   = useState<FormerMember | null>(null);
 
   const handleExit = (motif: string) => {
     if (!exitTarget) return;
@@ -810,7 +895,7 @@ export function TeamPage() {
         />
       )}
       {tab === 'former' && (
-        <FormerTab former={former} onReintegrate={setReintegrateTarget} />
+        <FormerTab former={former} onReintegrate={setReintegrateTarget} onEdit={setEditFormerTarget} />
       )}
 
       {/* Modals */}
@@ -843,6 +928,13 @@ export function TeamPage() {
           member={reintegrateTarget}
           onConfirm={handleReintegrate}
           onClose={() => setReintegrateTarget(null)}
+        />
+      )}
+      {editFormerTarget && (
+        <FormerEditModal
+          member={editFormerTarget}
+          onSave={updated => { setFormer(prev => prev.map(m => m.id === updated.id ? updated : m)); setEditFormerTarget(null); }}
+          onClose={() => setEditFormerTarget(null)}
         />
       )}
     </div>

@@ -72,7 +72,7 @@ export function IndicatorsPage() {
               <XAxis dataKey="mois" tick={{ fill: '#9CA3AF', fontSize: 11 }} axisLine={false} tickLine={false} />
               <YAxis domain={[80, 100]} tick={{ fill: '#9CA3AF', fontSize: 11 }} axisLine={false} tickLine={false} />
               <Tooltip content={<Tt />} />
-              <Area type="monotone" dataKey="taux" stroke="#3E5A78" strokeWidth={2.5}
+              <Area key="area-taux" type="monotone" dataKey="taux" stroke="#3E5A78" strokeWidth={2.5}
                 fill="#3E5A78" fillOpacity={0.12}
                 dot={{ fill: '#3E5A78', r: 3, strokeWidth: 0 }} activeDot={{ r: 5 }} isAnimationActive={false} />
             </AreaChart>
@@ -89,8 +89,8 @@ export function IndicatorsPage() {
               <XAxis dataKey="day" tick={{ fill: '#9CA3AF', fontSize: 12 }} axisLine={false} tickLine={false} />
               <YAxis tick={{ fill: '#9CA3AF', fontSize: 12 }} axisLine={false} tickLine={false} />
               <Tooltip content={<Tt />} />
-              <Bar dataKey="presents" name="Présents" fill="#3E5A78" radius={[3, 3, 0, 0]} barSize={14} isAnimationActive={false} />
-              <Bar dataKey="absents"  name="Absents"  fill="#FECACA" radius={[3, 3, 0, 0]} barSize={14} isAnimationActive={false} />
+              <Bar key="bar-presents" dataKey="presents" name="Présents" fill="#3E5A78" radius={[3, 3, 0, 0]} barSize={14} isAnimationActive={false} />
+              <Bar key="bar-absents"  dataKey="absents"  name="Absents"  fill="#FECACA" radius={[3, 3, 0, 0]} barSize={14} isAnimationActive={false} />
             </BarChart>
           </ResponsiveContainer>
         </div>
@@ -135,7 +135,7 @@ export function IndicatorsPage() {
             <XAxis type="number" domain={[0, 100]} tick={{ fill: '#9CA3AF', fontSize: 11 }} axisLine={false} tickLine={false} />
             <YAxis type="category" dataKey="categorie" tick={{ fill: '#374151', fontSize: 11 }} axisLine={false} tickLine={false} width={90} />
             <Tooltip content={<Tt />} />
-            <Bar dataKey="pct" name="% consommé" radius={[0, 4, 4, 0]} barSize={12} isAnimationActive={false}>
+            <Bar key="bar-budget-pct" dataKey="pct" name="% consommé" radius={[0, 4, 4, 0]} barSize={12} isAnimationActive={false}>
               {budgetCategories.map((c) => (
                 <Cell key={`ind-budget-cell-${c.id}`} fill={c.color} />
               ))}

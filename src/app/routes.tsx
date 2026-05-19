@@ -16,6 +16,7 @@ import { ClassesPage }     from './pages/ClassesPage';
 import { ExportsPage }     from './pages/ExportsPage';
 import { DesignSystemPage }from './pages/DesignSystemPage';
 import { PlaceholderPage } from './pages/PlaceholderPage';
+import { MessagesPage }    from './pages/MessagesPage';
 
 export const router = createBrowserRouter([
   { path: '/',              element: <Navigate to="/login" replace /> },
@@ -40,6 +41,7 @@ export const router = createBrowserRouter([
       { path: 'classes',          Component: ClassesPage },
       { path: 'exports',          Component: ExportsPage },
       { path: 'design-system',    Component: DesignSystemPage },
+      { path: 'messages',          Component: MessagesPage },
       { path: 'educators',        element: <PlaceholderPage title="Éducateurs" /> },
       { path: 'settings',         element: <PlaceholderPage title="Paramètres" /> },
     ],

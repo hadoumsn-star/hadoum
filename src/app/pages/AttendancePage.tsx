@@ -1,12 +1,12 @@
 import { useState } from 'react';
-import { teamMembers, TeamMember } from '../data/mockData';
+import { teamMembers, TeamMember, allChildrenData } from '../data/mockData';
 import { useAppData } from '../context/AppDataContext';
+import { useAuth } from '../context/AuthContext';
 import {
   CheckCircle2, Circle, CalendarCheck, Check, AlertTriangle,
   AlertCircle, Users, UserCheck,
 } from 'lucide-react';
 
-// Simulated : après 9h (toujours vrai à l'ouverture de la page)
 const PAST_9H = true;
 
 const STATUS_BADGE: Record<TeamMember['status'], { bg: string; color: string; label: string }> = {
@@ -21,7 +21,9 @@ function getAlertType(member: TeamMember, confirmed: boolean): 'non_confirmee' |
   return null;
 }
 
-export function AttendancePage() {
+// ─── Director view ────────────────────────────────────────────────────────────
+
+function DirectorView() {
   const { teamAttendanceConfirmed, updateTeamAttendanceConfirmed } = useAppData();
   const [saved, setSaved] = useState(false);
   const [search, setSearch] = useState('');
@@ -36,42 +38,24 @@ export function AttendancePage() {
     return getAlertType(m, conf) !== null;
   }).length;
 
-  const handleSave = () => {
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2500);
-  };
-
   const today = new Date().toLocaleDateString('fr-FR', {
     weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
   });
 
   return (
     <div className="px-4 md:px-6 py-6 space-y-5" style={{ maxWidth: 1000 }}>
-
-      {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h2 style={{ color: '#1A1A1A', fontSize: 22, fontWeight: 700 }}>Présences équipe</h2>
-          <p style={{ color: '#6B7280', fontSize: 13, marginTop: 2 }}>
-            Pointage journalier — {today}
-          </p>
+          <p style={{ color: '#6B7280', fontSize: 13, marginTop: 2 }}>Pointage journalier — {today}</p>
         </div>
-        <button
-          onClick={handleSave}
+        <button onClick={() => { setSaved(true); setTimeout(() => setSaved(false), 2500); }}
           className="flex items-center gap-2 px-4 py-2.5 rounded-lg self-start sm:self-auto transition-all"
-          style={{
-            background: saved ? '#065F46' : '#3E5A78',
-            color: '#FFFFFF', fontSize: 13, fontWeight: 500, border: 'none', cursor: 'pointer',
-          }}
-        >
-          {saved
-            ? <><Check size={14} /> Sauvegardé</>
-            : <><CalendarCheck size={14} /> Valider les présences équipe</>
-          }
+          style={{ background: saved ? '#065F46' : '#3E5A78', color: '#FFFFFF', fontSize: 13, fontWeight: 500, border: 'none', cursor: 'pointer' }}>
+          {saved ? <><Check size={14} /> Sauvegardé</> : <><CalendarCheck size={14} /> Valider les présences équipe</>}
         </button>
       </div>
 
-      {/* Stats */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <div className="rounded-xl px-4 py-3 flex items-center gap-3" style={{ background: '#EEF2F7' }}>
           <Users size={16} style={{ color: '#3E5A78' }} />
@@ -97,32 +81,22 @@ export function AttendancePage() {
         <div className="rounded-xl px-4 py-3 flex items-center gap-3" style={{ background: '#F3F4F6' }}>
           <Circle size={16} style={{ color: '#9CA3AF' }} />
           <div>
-            <p style={{ color: '#374151', fontSize: 20, fontWeight: 700, lineHeight: 1 }}>
-              {teamMembers.length - confirmedCount}
-            </p>
+            <p style={{ color: '#374151', fontSize: 20, fontWeight: 700, lineHeight: 1 }}>{teamMembers.length - confirmedCount}</p>
             <p style={{ color: '#6B7280', fontSize: 11, marginTop: 2 }}>Non confirmés</p>
           </div>
         </div>
       </div>
 
-      {/* Search */}
       <div className="relative" style={{ maxWidth: 320 }}>
-        <input
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          placeholder="Rechercher un membre…"
+        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Rechercher un membre…"
           className="w-full pl-3 pr-8 py-2 rounded-lg outline-none"
-          style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', color: '#1A1A1A', fontSize: 13 }}
-        />
+          style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', color: '#1A1A1A', fontSize: 13 }} />
         {search && (
           <button onClick={() => setSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2"
-            style={{ color: '#9CA3AF', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
-            ×
-          </button>
+            style={{ color: '#9CA3AF', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>×</button>
         )}
       </div>
 
-      {/* Legend */}
       <div className="flex items-center gap-4 flex-wrap">
         <div className="flex items-center gap-2">
           <div className="w-2.5 h-2.5 rounded-full" style={{ background: '#D97706' }} />
@@ -132,47 +106,36 @@ export function AttendancePage() {
           <div className="w-2.5 h-2.5 rounded-full" style={{ background: '#B91C1C' }} />
           <span style={{ color: '#6B7280', fontSize: 12 }}>Incohérence (absent/congé mais coché)</span>
         </div>
+        <div className="flex items-center gap-2">
+          <div className="w-2.5 h-2.5 rounded-full" style={{ background: '#9CA3AF' }} />
+          <span style={{ color: '#6B7280', fontSize: 12 }}>Case désactivée pour les absents et en congé</span>
+        </div>
       </div>
 
-      {/* Table */}
       <div className="rounded-xl overflow-hidden" style={{ background: '#FFFFFF', border: '1px solid #E5E7EB' }}>
-        {/* Table header */}
-        <div
-          className="grid gap-0 px-5 py-3"
-          style={{
-            gridTemplateColumns: '2fr 1fr 1fr 1.5fr',
-            background: '#F9F7F3',
-            borderBottom: '1px solid #F3F4F6',
-          }}
-        >
+        <div className="grid gap-0 px-5 py-3"
+          style={{ gridTemplateColumns: '2fr 1fr 1fr 1.5fr', background: '#F9F7F3', borderBottom: '1px solid #F3F4F6' }}>
           {['MEMBRE', 'STATUT DÉCLARÉ', 'PRÉSENCE CONFIRMÉE', 'ALERTE'].map(h => (
             <span key={h} style={{ color: '#9CA3AF', fontSize: 11, fontWeight: 600, letterSpacing: '0.05em' }}>{h}</span>
           ))}
         </div>
-
-        {/* Rows */}
         {filtered.map((member, i) => {
           const confirmed = teamAttendanceConfirmed[member.id] ?? false;
           const alert = getAlertType(member, confirmed);
           const st = STATUS_BADGE[member.status];
           const isLast = i === filtered.length - 1;
+          const isDisabled = member.status === 'absent' || member.status === 'conge';
 
           return (
-            <div
-              key={member.id}
-              className="grid items-center gap-0 px-5 py-4 hover:bg-gray-50 transition-colors"
+            <div key={member.id} className="grid items-center gap-0 px-5 py-4"
               style={{
                 gridTemplateColumns: '2fr 1fr 1fr 1.5fr',
                 borderBottom: isLast ? 'none' : '1px solid #F9F7F3',
                 background: alert === 'incoherence' ? 'rgba(185,28,28,0.03)' : alert === 'non_confirmee' ? 'rgba(217,119,6,0.03)' : '#FFFFFF',
-              }}
-            >
-              {/* Membre */}
+              }}>
               <div className="flex items-center gap-3">
-                <div
-                  className="flex items-center justify-center rounded-full flex-shrink-0"
-                  style={{ width: 36, height: 36, background: '#F3F4F6', color: '#6B7280', fontSize: 12, fontWeight: 700 }}
-                >
+                <div className="flex items-center justify-center rounded-full flex-shrink-0"
+                  style={{ width: 36, height: 36, background: '#F3F4F6', color: '#6B7280', fontSize: 12, fontWeight: 700 }}>
                   {member.initials}
                 </div>
                 <div>
@@ -180,39 +143,30 @@ export function AttendancePage() {
                   <p style={{ color: '#9CA3AF', fontSize: 11 }}>{member.role}</p>
                 </div>
               </div>
-
-              {/* Statut déclaré */}
               <div>
-                <span
-                  className="px-2 py-0.5 rounded-full inline-block"
-                  style={{ background: st.bg, color: st.color, fontSize: 11, fontWeight: 600 }}
-                >
+                <span className="px-2 py-0.5 rounded-full inline-block"
+                  style={{ background: st.bg, color: st.color, fontSize: 11, fontWeight: 600 }}>
                   {st.label}
                 </span>
               </div>
-
-              {/* Présence confirmée */}
               <div>
-                <label className="flex items-center gap-2 cursor-pointer" style={{ width: 'fit-content' }}>
-                  <div
-                    className="flex items-center justify-center rounded flex-shrink-0"
+                <label className="flex items-center gap-2" style={{ width: 'fit-content', cursor: isDisabled ? 'not-allowed' : 'pointer' }}>
+                  <div className="flex items-center justify-center rounded flex-shrink-0"
                     style={{
                       width: 20, height: 20,
-                      background: confirmed ? '#065F46' : '#FFFFFF',
-                      border: `1.5px solid ${confirmed ? '#065F46' : '#D1D5DB'}`,
-                      cursor: 'pointer',
+                      background: isDisabled ? '#F3F4F6' : confirmed ? '#065F46' : '#FFFFFF',
+                      border: `1.5px solid ${isDisabled ? '#E5E7EB' : confirmed ? '#065F46' : '#D1D5DB'}`,
+                      cursor: isDisabled ? 'not-allowed' : 'pointer',
+                      opacity: isDisabled ? 0.5 : 1,
                     }}
-                    onClick={() => updateTeamAttendanceConfirmed(member.id, !confirmed)}
-                  >
-                    {confirmed && <Check size={12} style={{ color: '#FFFFFF' }} />}
+                    onClick={() => !isDisabled && updateTeamAttendanceConfirmed(member.id, !confirmed)}>
+                    {confirmed && !isDisabled && <Check size={12} style={{ color: '#FFFFFF' }} />}
                   </div>
-                  <span style={{ color: confirmed ? '#065F46' : '#9CA3AF', fontSize: 12, fontWeight: confirmed ? 600 : 400 }}>
-                    {confirmed ? 'Confirmé' : 'Non confirmé'}
+                  <span style={{ color: isDisabled ? '#9CA3AF' : confirmed ? '#065F46' : '#9CA3AF', fontSize: 12, fontWeight: confirmed && !isDisabled ? 600 : 400 }}>
+                    {isDisabled ? 'N/A' : confirmed ? 'Confirmé' : 'Non confirmé'}
                   </span>
                 </label>
               </div>
-
-              {/* Alerte */}
               <div>
                 {alert === 'non_confirmee' && (
                   <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg" style={{ background: '#FFFBEB', border: '1px solid #FDE68A', width: 'fit-content' }}>
@@ -239,4 +193,121 @@ export function AttendancePage() {
       </div>
     </div>
   );
+}
+
+// ─── Educator view ────────────────────────────────────────────────────────────
+
+function EducatorView() {
+  const { user } = useAuth();
+  const [presentMap, setPresentMap] = useState<Record<number, boolean>>({});
+  const [saved, setSaved] = useState(false);
+
+  // Find educator's classes
+  const educator = teamMembers.find(m => m.name === user?.name);
+  const educatorClasses = educator?.classes ?? [];
+  // Normalize: 'Primaire 2A' → 'Primaire 2'
+  const normalizedClasses = educatorClasses.map(c => c.replace(/\s+[A-Z]$/, '').trim());
+
+  const myChildren = allChildrenData.filter(c => normalizedClasses.includes(c.classe));
+
+  const today = new Date().toLocaleDateString('fr-FR', {
+    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+  });
+
+  const presentCount = myChildren.filter(c => presentMap[c.id] ?? false).length;
+
+  return (
+    <div className="px-4 md:px-6 py-6 space-y-5" style={{ maxWidth: 900 }}>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div>
+          <h2 style={{ color: '#1A1A1A', fontSize: 22, fontWeight: 700 }}>Présences des élèves</h2>
+          <p style={{ color: '#6B7280', fontSize: 13, marginTop: 2 }}>
+            {educatorClasses.length > 0
+              ? `Classes : ${educatorClasses.join(', ')} — ${today}`
+              : today}
+          </p>
+        </div>
+        <button onClick={() => { setSaved(true); setTimeout(() => setSaved(false), 2500); }}
+          className="flex items-center gap-2 px-4 py-2.5 rounded-lg self-start sm:self-auto transition-all"
+          style={{ background: saved ? '#065F46' : '#3E5A78', color: '#FFFFFF', fontSize: 13, fontWeight: 500, border: 'none', cursor: 'pointer' }}>
+          {saved ? <><Check size={14} /> Sauvegardé</> : <><CalendarCheck size={14} /> Valider les présences</>}
+        </button>
+      </div>
+
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+        <div className="rounded-xl px-4 py-3 flex items-center gap-3" style={{ background: '#EEF2F7' }}>
+          <Users size={16} style={{ color: '#3E5A78' }} />
+          <div>
+            <p style={{ color: '#3E5A78', fontSize: 20, fontWeight: 700, lineHeight: 1 }}>{myChildren.length}</p>
+            <p style={{ color: '#6B7280', fontSize: 11, marginTop: 2 }}>Total élèves</p>
+          </div>
+        </div>
+        <div className="rounded-xl px-4 py-3 flex items-center gap-3" style={{ background: '#ECFDF5' }}>
+          <UserCheck size={16} style={{ color: '#065F46' }} />
+          <div>
+            <p style={{ color: '#065F46', fontSize: 20, fontWeight: 700, lineHeight: 1 }}>{presentCount}</p>
+            <p style={{ color: '#6B7280', fontSize: 11, marginTop: 2 }}>Présents</p>
+          </div>
+        </div>
+        <div className="rounded-xl px-4 py-3 flex items-center gap-3" style={{ background: '#F3F4F6' }}>
+          <Circle size={16} style={{ color: '#9CA3AF' }} />
+          <div>
+            <p style={{ color: '#374151', fontSize: 20, fontWeight: 700, lineHeight: 1 }}>{myChildren.length - presentCount}</p>
+            <p style={{ color: '#6B7280', fontSize: 11, marginTop: 2 }}>Non confirmés</p>
+          </div>
+        </div>
+      </div>
+
+      {myChildren.length === 0 ? (
+        <div className="py-12 text-center rounded-xl" style={{ background: '#F9F7F3', border: '1px solid #E5E7EB' }}>
+          <p style={{ color: '#9CA3AF', fontSize: 13 }}>Aucun élève trouvé pour vos classes.</p>
+        </div>
+      ) : (
+        <div className="rounded-xl overflow-hidden" style={{ background: '#FFFFFF', border: '1px solid #E5E7EB' }}>
+          <div className="grid px-5 py-3"
+            style={{ gridTemplateColumns: '2fr 1fr 1fr', background: '#F9F7F3', borderBottom: '1px solid #F3F4F6' }}>
+            {['PRÉNOM + NOM', 'CLASSE', 'PRÉSENT'].map(h => (
+              <span key={h} style={{ color: '#9CA3AF', fontSize: 11, fontWeight: 600, letterSpacing: '0.05em' }}>{h}</span>
+            ))}
+          </div>
+          {myChildren.map((child, i) => {
+            const present = presentMap[child.id] ?? false;
+            const isLast = i === myChildren.length - 1;
+            return (
+              <div key={child.id} className="grid items-center px-5 py-3.5"
+                style={{
+                  gridTemplateColumns: '2fr 1fr 1fr',
+                  borderBottom: isLast ? 'none' : '1px solid #F9F7F3',
+                  background: present ? 'rgba(6,95,70,0.03)' : '#FFFFFF',
+                }}>
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center justify-center rounded-full flex-shrink-0"
+                    style={{ width: 32, height: 32, background: '#F3F4F6', color: '#6B7280', fontSize: 11, fontWeight: 700 }}>
+                    {child.firstName[0]}{child.lastName[0]}
+                  </div>
+                  <p style={{ color: '#1A1A1A', fontSize: 13, fontWeight: 500 }}>{child.firstName} {child.lastName}</p>
+                </div>
+                <p style={{ color: '#6B7280', fontSize: 12 }}>{child.classe}</p>
+                <div>
+                  <div className="flex items-center justify-center rounded flex-shrink-0 cursor-pointer"
+                    style={{ width: 20, height: 20, background: present ? '#065F46' : '#FFFFFF', border: `1.5px solid ${present ? '#065F46' : '#D1D5DB'}` }}
+                    onClick={() => setPresentMap(prev => ({ ...prev, [child.id]: !present }))}>
+                    {present && <Check size={12} style={{ color: '#FFFFFF' }} />}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Main ─────────────────────────────────────────────────────────────────────
+
+export function AttendancePage() {
+  const { user } = useAuth();
+  if (user?.role === 'educator') return <EducatorView />;
+  return <DirectorView />;
 }

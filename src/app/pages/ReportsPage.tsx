@@ -236,18 +236,18 @@ export function ReportsPage() {
       </div>
 
       {/* Filters */}
-      <div className="flex items-center gap-3 flex-wrap">
+      <div className="flex items-start gap-3 flex-wrap">
         <div className="relative flex-1" style={{ minWidth: 200 }}>
           <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: '#9CA3AF' }} />
           <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Rechercher un rapport…"
             className="w-full pl-9 py-2 rounded-lg outline-none"
             style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', color: '#1A1A1A', fontSize: 13, paddingRight: 12 }} />
         </div>
-        <div className="flex rounded-lg overflow-hidden" style={{ border: '1px solid #E5E7EB' }}>
+        <div className="flex rounded-lg" style={{ border: '1px solid #E5E7EB', overflowX: 'auto', scrollSnapType: 'x mandatory', WebkitOverflowScrolling: 'touch', flexShrink: 0 }}>
           {(['all', 'Mensuel', 'Trimestriel', 'Annuel', 'Financier', 'Audit'] as (ReportType | 'Audit')[]).map((t) => (
             <button key={t} onClick={() => setTypeFilter(t as ReportType)}
-              className="px-3 py-2"
-              style={{ background: typeFilter === t ? '#3E5A78' : '#FFFFFF', color: typeFilter === t ? '#FFFFFF' : '#374151', fontSize: 12, fontWeight: 500, border: 'none', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+              className="px-3 py-2 flex-shrink-0"
+              style={{ background: typeFilter === t ? '#3E5A78' : '#FFFFFF', color: typeFilter === t ? '#FFFFFF' : '#374151', fontSize: 12, fontWeight: 500, border: 'none', cursor: 'pointer', whiteSpace: 'nowrap', scrollSnapAlign: 'start' }}>
               {t === 'all' ? 'Tous' : t}
             </button>
           ))}

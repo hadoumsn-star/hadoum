@@ -1,169 +1,264 @@
-import { useState } from 'react';
-import { inboxMessages, Message } from '../data/mockData';
-import { Plus, Star, Search, X, Send, ArrowLeft } from 'lucide-react';
+import { useState, useRef, useEffect } from 'react';
+import { useAuth } from '../context/AuthContext';
+import { Send, MessageSquare } from 'lucide-react';
 
-const ROLE_COLORS: Record<string, string> = {
-  'Directrice': '#3E5A78', 'Superviseure': '#7C3AED', 'Éducateur': '#065F46',
-  'Éducatrice': '#065F46', 'Système': '#9CA3AF',
-};
+// ─── Types ────────────────────────────────────────────────────────────────────
 
-function ComposeModal({ onClose }: { onClose: () => void }) {
-  const [to, setTo] = useState('');
-  const [subject, setSubject] = useState('');
-  const [body, setBody] = useState('');
-  const [sent, setSent] = useState(false);
-  const INPUT: React.CSSProperties = { width: '100%', padding: '8px 12px', borderRadius: 8, border: '1px solid #E5E7EB', background: '#FFFFFF', color: '#1A1A1A', fontSize: 13, outline: 'none', boxSizing: 'border-box' };
-  if (sent) return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.45)' }}>
-      <div className="w-full max-w-sm rounded-2xl p-8 text-center" style={{ background: '#FFFFFF' }}>
-        <div className="flex items-center justify-center rounded-full mx-auto mb-4" style={{ width: 52, height: 52, background: '#ECFDF5' }}>
-          <Send size={22} style={{ color: '#065F46' }} />
-        </div>
-        <p style={{ color: '#1A1A1A', fontSize: 16, fontWeight: 700, marginBottom: 8 }}>Message envoyé</p>
-        <button onClick={onClose} className="px-6 py-2 rounded-lg" style={{ background: '#3E5A78', color: '#FFFFFF', fontSize: 13, fontWeight: 500, border: 'none', cursor: 'pointer' }}>Fermer</button>
-      </div>
-    </div>
-  );
+interface Message {
+  id: number;
+  from: string;
+  text: string;
+  time: string;
+  isMine: boolean;
+}
+
+interface Conversation {
+  id: number;
+  participantName: string;
+  participantRole: string;
+  participantInitials: string;
+  messages: Message[];
+}
+
+// ─── Mock data ────────────────────────────────────────────────────────────────
+
+function fmtTime(minutesBack: number) {
+  const d = new Date(Date.now() - minutesBack * 60000);
+  return d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+}
+
+const DIRECTOR_CONVERSATIONS: Conversation[] = [
+  {
+    id: 1,
+    participantName: 'Karim Mansouri',
+    participantRole: 'Éducateur',
+    participantInitials: 'KM',
+    messages: [
+      { id: 1, from: 'Karim Mansouri', text: 'Bonjour Amira, j\'ai une question concernant le planning de la semaine prochaine.', time: fmtTime(45), isMine: false },
+      { id: 2, from: 'Amira Benali', text: 'Bonjour Karim ! Dis-moi, je t\'écoute.', time: fmtTime(40), isMine: true },
+      { id: 3, from: 'Karim Mansouri', text: 'Est-ce que je peux décaler ma classe du mercredi matin à l\'après-midi ?', time: fmtTime(38), isMine: false },
+      { id: 4, from: 'Amira Benali', text: 'Oui, c\'est possible. Je mets à jour le planning.', time: fmtTime(30), isMine: true },
+    ],
+  },
+  {
+    id: 2,
+    participantName: 'Fatima Bouzid',
+    participantRole: 'Infirmière',
+    participantInitials: 'FB',
+    messages: [
+      { id: 1, from: 'Fatima Bouzid', text: 'Bonjour, je voulais signaler que le stock de médicaments est bas.', time: fmtTime(120), isMine: false },
+      { id: 2, from: 'Amira Benali', text: 'Merci Fatima, je vais passer une commande cette semaine.', time: fmtTime(110), isMine: true },
+      { id: 3, from: 'Fatima Bouzid', text: 'Parfait, merci beaucoup !', time: fmtTime(105), isMine: false },
+    ],
+  },
+  {
+    id: 3,
+    participantName: 'Youcef Amrani',
+    participantRole: 'Comptable',
+    participantInitials: 'YA',
+    messages: [
+      { id: 1, from: 'Youcef Amrani', text: 'Le rapport financier de mars est prêt. Vous pouvez le consulter dans l\'espace rapports.', time: fmtTime(200), isMine: false },
+      { id: 2, from: 'Amira Benali', text: 'Excellent, je le regarderai ce soir. Merci Youcef.', time: fmtTime(195), isMine: true },
+    ],
+  },
+];
+
+const EDUCATOR_CONVERSATIONS: Conversation[] = [
+  {
+    id: 1,
+    participantName: 'Amira Benali',
+    participantRole: 'Directrice',
+    participantInitials: 'AB',
+    messages: [
+      { id: 1, from: 'Amira Benali', text: 'Bonjour Karim, comment se passent les classes cette semaine ?', time: fmtTime(90), isMine: false },
+      { id: 2, from: 'Karim Mansouri', text: 'Très bien ! Les élèves sont très motivés pour le projet de lecture.', time: fmtTime(85), isMine: true },
+      { id: 3, from: 'Amira Benali', text: 'Parfait, continuez comme ça !', time: fmtTime(80), isMine: false },
+    ],
+  },
+];
+
+// ─── Conversation list item ───────────────────────────────────────────────────
+
+function ConvItem({ conv, isActive, onClick }: {
+  conv: Conversation;
+  isActive: boolean;
+  onClick: () => void;
+}) {
+  const last = conv.messages[conv.messages.length - 1];
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.45)' }}>
-      <div className="w-full max-w-lg rounded-2xl overflow-hidden shadow-xl" style={{ background: '#FFFFFF' }}>
-        <div className="flex items-center justify-between px-6 py-5" style={{ borderBottom: '1px solid #F3F4F6' }}>
-          <h3 style={{ color: '#1A1A1A', fontSize: 16, fontWeight: 700 }}>Nouveau message</h3>
-          <button onClick={onClose}><X size={18} style={{ color: '#9CA3AF' }} /></button>
+    <button
+      onClick={onClick}
+      className="w-full flex items-center gap-3 px-4 py-3.5 text-left transition-colors hover:bg-gray-50"
+      style={{
+        background: isActive ? '#EEF2F7' : 'transparent',
+        border: 'none',
+        borderBottom: '1px solid #F3F4F6',
+        cursor: 'pointer',
+        borderLeft: isActive ? '3px solid #3E5A78' : '3px solid transparent',
+      }}>
+      <div className="flex items-center justify-center rounded-full flex-shrink-0"
+        style={{ width: 40, height: 40, background: isActive ? '#3E5A78' : '#F3F4F6', color: isActive ? '#FFFFFF' : '#6B7280', fontSize: 13, fontWeight: 700 }}>
+        {conv.participantInitials}
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center justify-between">
+          <p style={{ color: '#1A1A1A', fontSize: 13, fontWeight: isActive ? 600 : 500 }}>{conv.participantName}</p>
+          <span style={{ color: '#9CA3AF', fontSize: 11 }}>{last?.time ?? ''}</span>
         </div>
-        <div className="px-6 py-5 space-y-3">
-          <div><label style={{ color: '#374151', fontSize: 12, fontWeight: 500, display: 'block', marginBottom: 5 }}>À</label>
-            <select value={to} onChange={e => setTo(e.target.value)} style={{ ...INPUT, cursor: 'pointer' }}>
-              <option value="">Sélectionner un destinataire…</option>
-              {['Amira Benali (Directrice)','Nadia Hamidi (Superviseure)','Karim Mansouri (Éducateur)','Zineb Mokhtar (Éducatrice)'].map(n => <option key={n}>{n}</option>)}
-            </select>
-          </div>
-          <div><label style={{ color: '#374151', fontSize: 12, fontWeight: 500, display: 'block', marginBottom: 5 }}>Objet</label>
-            <input value={subject} onChange={e => setSubject(e.target.value)} placeholder="Objet du message…" style={INPUT} /></div>
-          <div><label style={{ color: '#374151', fontSize: 12, fontWeight: 500, display: 'block', marginBottom: 5 }}>Message</label>
-            <textarea value={body} onChange={e => setBody(e.target.value)} rows={5} placeholder="Rédigez votre message…"
-              style={{ ...INPUT, resize: 'none' }} /></div>
-        </div>
-        <div className="flex gap-2 px-6 pb-6">
-          <button onClick={onClose} className="flex-1 py-2.5 rounded-lg" style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', color: '#374151', fontSize: 13, fontWeight: 500, cursor: 'pointer' }}>Annuler</button>
-          <button onClick={() => { if (to && subject) setSent(true); }}
-            className="flex items-center justify-center gap-2 flex-1 py-2.5 rounded-lg"
-            style={{ background: '#3E5A78', color: '#FFFFFF', fontSize: 13, fontWeight: 600, border: 'none', cursor: 'pointer' }}>
-            <Send size={14} /> Envoyer
-          </button>
-        </div>
+        <p className="truncate" style={{ color: '#9CA3AF', fontSize: 12, marginTop: 1 }}>
+          {last?.isMine ? 'Vous : ' : ''}{last?.text ?? ''}
+        </p>
+      </div>
+    </button>
+  );
+}
+
+// ─── Message bubble ───────────────────────────────────────────────────────────
+
+function Bubble({ msg }: { msg: Message }) {
+  return (
+    <div className={`flex ${msg.isMine ? 'justify-end' : 'justify-start'} mb-3`}>
+      <div className="rounded-2xl px-4 py-2.5"
+        style={{
+          maxWidth: '72%',
+          background: msg.isMine ? '#3E5A78' : '#FFFFFF',
+          color: msg.isMine ? '#FFFFFF' : '#1A1A1A',
+          border: msg.isMine ? 'none' : '1px solid #E5E7EB',
+          borderBottomRightRadius: msg.isMine ? 4 : 16,
+          borderBottomLeftRadius: msg.isMine ? 16 : 4,
+        }}>
+        <p style={{ fontSize: 13 }}>{msg.text}</p>
+        <p style={{ fontSize: 10, marginTop: 4, color: msg.isMine ? 'rgba(255,255,255,0.6)' : '#9CA3AF', textAlign: 'right' }}>
+          {msg.time}
+        </p>
       </div>
     </div>
   );
 }
 
+// ─── Main Page ────────────────────────────────────────────────────────────────
+
 export function MessagesPage() {
-  const [messages, setMessages] = useState<Message[]>(inboxMessages);
-  const [selected, setSelected] = useState<Message | null>(null);
-  const [search, setSearch] = useState('');
-  const [compose, setCompose] = useState(false);
+  const { user } = useAuth();
 
-  const filtered = messages.filter(m => !search || m.subject.toLowerCase().includes(search.toLowerCase()) || m.from.toLowerCase().includes(search.toLowerCase()));
-  const unread = messages.filter(m => !m.read).length;
+  const baseConversations = user?.role === 'director'
+    ? DIRECTOR_CONVERSATIONS
+    : EDUCATOR_CONVERSATIONS;
 
-  const openMessage = (m: Message) => {
-    setSelected(m);
-    setMessages(prev => prev.map(msg => msg.id === m.id ? { ...msg, read: true } : msg));
+  const [activeId, setActiveId] = useState<number>(baseConversations[0]?.id ?? 1);
+  const [drafts, setDrafts] = useState<Record<number, string>>({});
+  const [convList, setConvList] = useState<Conversation[]>(baseConversations);
+  const endRef = useRef<HTMLDivElement>(null);
+
+  const active = convList.find(c => c.id === activeId) ?? convList[0];
+
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [active?.messages.length, activeId]);
+
+  const draft = drafts[activeId] ?? '';
+
+  const sendMessage = () => {
+    const text = draft.trim();
+    if (!text || !active) return;
+    const newMsg: Message = {
+      id: Date.now(),
+      from: user?.name ?? '',
+      text,
+      time: new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
+      isMine: true,
+    };
+    setConvList(prev => prev.map(c =>
+      c.id === activeId ? { ...c, messages: [...c.messages, newMsg] } : c
+    ));
+    setDrafts(prev => ({ ...prev, [activeId]: '' }));
   };
 
+  if (!user || (user.role !== 'director' && user.role !== 'educator')) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <p style={{ color: '#9CA3AF', fontSize: 14 }}>Messagerie non disponible pour votre rôle.</p>
+      </div>
+    );
+  }
+
   return (
-    <div className="flex h-full overflow-hidden" style={{ maxHeight: 'calc(100vh - 64px)' }}>
-      {/* Sidebar */}
-      <div className={`flex flex-col ${selected ? 'hidden md:flex' : 'flex'} w-full md:w-80 lg:w-96 flex-shrink-0`}
-        style={{ borderRight: '1px solid #E5E7EB', background: '#FFFFFF' }}>
-        <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: '1px solid #F3F4F6' }}>
-          <div>
-            <h3 style={{ color: '#1A1A1A', fontSize: 15, fontWeight: 600 }}>Messagerie</h3>
-            {unread > 0 && <p style={{ color: '#3E5A78', fontSize: 12, marginTop: 1 }}>{unread} non lu{unread > 1 ? 's' : ''}</p>}
+    <div className="flex overflow-hidden" style={{ height: 'calc(100vh - 64px)' }}>
+
+      {/* Left column — conversation list */}
+      <div className="flex-shrink-0 flex flex-col"
+        style={{ width: 300, borderRight: '1px solid #E5E7EB', background: '#FFFFFF', overflowY: 'auto' }}>
+        <div className="px-5 py-4 flex-shrink-0" style={{ borderBottom: '1px solid #F3F4F6', position: 'sticky', top: 0, background: '#FFFFFF', zIndex: 1 }}>
+          <div className="flex items-center gap-2">
+            <MessageSquare size={16} style={{ color: '#3E5A78' }} />
+            <h2 style={{ color: '#1A1A1A', fontSize: 16, fontWeight: 700 }}>Messagerie</h2>
           </div>
-          <button onClick={() => setCompose(true)} className="flex items-center gap-1.5 px-3 py-2 rounded-lg"
-            style={{ background: '#3E5A78', color: '#FFFFFF', fontSize: 12, fontWeight: 500, border: 'none', cursor: 'pointer' }}>
-            <Plus size={13} /> Nouveau
-          </button>
+          <p style={{ color: '#9CA3AF', fontSize: 12, marginTop: 2 }}>
+            {user.role === 'director' ? 'Direction ↔ Équipe' : 'Vous ↔ Direction'}
+          </p>
         </div>
-        <div className="px-4 py-3" style={{ borderBottom: '1px solid #F3F4F6' }}>
-          <div className="relative"><Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: '#9CA3AF' }} />
-            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Rechercher…"
-              className="w-full pl-8 pr-3 py-2 rounded-lg outline-none" style={{ background: '#F9F7F3', border: '1px solid #E5E7EB', color: '#1A1A1A', fontSize: 12 }} />
-          </div>
-        </div>
-        <ul className="flex-1 overflow-y-auto">
-          {filtered.map((m) => {
-            const color = ROLE_COLORS[m.fromRole] ?? '#9CA3AF';
-            return (
-              <li key={m.id} onClick={() => openMessage(m)}
-                className="flex items-start gap-3 px-4 py-3.5 cursor-pointer hover:bg-gray-50 transition-colors"
-                style={{ borderBottom: '1px solid #F9F7F3', background: selected?.id === m.id ? '#F0F4F8' : 'transparent' }}>
-                <div className="flex items-center justify-center rounded-full flex-shrink-0 mt-0.5"
-                  style={{ width: 34, height: 34, background: color + '20', color, fontSize: 12, fontWeight: 700 }}>
-                  {m.from.split(' ').map(w => w[0]).slice(0, 2).join('')}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-start justify-between gap-2">
-                    <p style={{ color: '#1A1A1A', fontSize: 13, fontWeight: m.read ? 400 : 700 }} className="truncate">{m.from}</p>
-                    <span style={{ color: '#9CA3AF', fontSize: 11, flexShrink: 0 }}>{m.time}</span>
-                  </div>
-                  <p style={{ color: m.read ? '#6B7280' : '#1A1A1A', fontSize: 12, fontWeight: m.read ? 400 : 600 }} className="truncate">{m.subject}</p>
-                  <p style={{ color: '#9CA3AF', fontSize: 11 }} className="truncate">{m.preview}</p>
-                </div>
-                {!m.read && <div className="w-2 h-2 rounded-full flex-shrink-0 mt-2" style={{ background: '#3E5A78' }} />}
-              </li>
-            );
-          })}
-        </ul>
+        {convList.map(conv => (
+          <ConvItem
+            key={conv.id}
+            conv={conv}
+            isActive={conv.id === activeId}
+            onClick={() => setActiveId(conv.id)}
+          />
+        ))}
       </div>
 
-      {/* Message detail */}
-      <div className={`flex-1 flex flex-col ${!selected ? 'hidden md:flex' : 'flex'}`} style={{ background: '#F9F7F3' }}>
-        {selected ? (
-          <>
-            <div className="flex items-center gap-3 px-6 py-4" style={{ background: '#FFFFFF', borderBottom: '1px solid #E5E7EB' }}>
-              <button onClick={() => setSelected(null)} className="md:hidden p-1.5 rounded-lg hover:bg-gray-100">
-                <ArrowLeft size={16} style={{ color: '#374151' }} />
-              </button>
-              <div>
-                <p style={{ color: '#1A1A1A', fontSize: 15, fontWeight: 700 }}>{selected.subject}</p>
-                <p style={{ color: '#6B7280', fontSize: 12 }}>De : {selected.from} ({selected.fromRole}) · {selected.time}</p>
-              </div>
-              {selected.important && <Star size={15} style={{ color: '#D97706', fill: '#D97706' }} />}
+      {/* Right column — thread */}
+      <div className="flex-1 flex flex-col overflow-hidden" style={{ background: '#F9F7F3' }}>
+
+        {/* Thread header */}
+        {active && (
+          <div className="flex items-center gap-3 px-5 py-4 flex-shrink-0"
+            style={{ borderBottom: '1px solid #E5E7EB', background: '#FFFFFF' }}>
+            <div className="flex items-center justify-center rounded-full flex-shrink-0"
+              style={{ width: 38, height: 38, background: '#EEF2F7', color: '#3E5A78', fontSize: 13, fontWeight: 700 }}>
+              {active.participantInitials}
             </div>
-            <div className="flex-1 overflow-y-auto px-6 py-6">
-              <div className="max-w-2xl">
-                <div className="rounded-xl p-5" style={{ background: '#FFFFFF', border: '1px solid #E5E7EB' }}>
-                  <p style={{ color: '#374151', fontSize: 14, lineHeight: 1.7 }}>{selected.preview}</p>
-                </div>
-                <div className="mt-4 rounded-xl p-4" style={{ background: '#FFFFFF', border: '1px solid #E5E7EB' }}>
-                  <p style={{ color: '#9CA3AF', fontSize: 12, marginBottom: 8 }}>Répondre</p>
-                  <textarea rows={3} placeholder="Votre réponse…"
-                    className="w-full px-3 py-2 rounded-lg outline-none resize-none"
-                    style={{ background: '#F9F7F3', border: '1px solid #E5E7EB', color: '#1A1A1A', fontSize: 13, width: '100%', boxSizing: 'border-box' }} />
-                  <button className="mt-2 flex items-center gap-2 px-4 py-2 rounded-lg"
-                    style={{ background: '#3E5A78', color: '#FFFFFF', fontSize: 13, fontWeight: 500, border: 'none', cursor: 'pointer' }}>
-                    <Send size={13} /> Répondre
-                  </button>
-                </div>
-              </div>
-            </div>
-          </>
-        ) : (
-          <div className="flex-1 flex items-center justify-center">
-            <div className="text-center">
-              <div className="flex items-center justify-center rounded-2xl mx-auto mb-4" style={{ width: 56, height: 56, background: '#EEF2F7' }}>
-                <Send size={24} style={{ color: '#3E5A78' }} />
-              </div>
-              <p style={{ color: '#374151', fontSize: 14, fontWeight: 500 }}>Sélectionnez un message</p>
-              <p style={{ color: '#9CA3AF', fontSize: 12, marginTop: 4 }}>ou composez un nouveau message</p>
+            <div>
+              <p style={{ color: '#1A1A1A', fontSize: 14, fontWeight: 600 }}>{active.participantName}</p>
+              <p style={{ color: '#9CA3AF', fontSize: 12 }}>{active.participantRole}</p>
             </div>
           </div>
         )}
-      </div>
 
-      {compose && <ComposeModal onClose={() => setCompose(false)} />}
+        {/* Messages */}
+        <div className="flex-1 overflow-y-auto px-5 py-5">
+          {active?.messages.map(msg => (
+            <Bubble key={msg.id} msg={msg} />
+          ))}
+          <div ref={endRef} />
+        </div>
+
+        {/* Input */}
+        <div className="flex items-center gap-3 px-5 py-4 flex-shrink-0"
+          style={{ borderTop: '1px solid #E5E7EB', background: '#FFFFFF' }}>
+          <input
+            value={draft}
+            onChange={e => setDrafts(prev => ({ ...prev, [activeId]: e.target.value }))}
+            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }}
+            placeholder="Écrire un message…"
+            className="flex-1 rounded-xl px-4 py-2.5 outline-none"
+            style={{ background: '#F3F4F6', border: '1px solid #E5E7EB', color: '#1A1A1A', fontSize: 13 }}
+          />
+          <button
+            onClick={sendMessage}
+            disabled={!draft.trim()}
+            className="flex items-center justify-center rounded-xl flex-shrink-0"
+            style={{
+              width: 40, height: 40,
+              background: draft.trim() ? '#3E5A78' : '#E5E7EB',
+              border: 'none',
+              cursor: draft.trim() ? 'pointer' : 'not-allowed',
+            }}>
+            <Send size={16} style={{ color: draft.trim() ? '#FFFFFF' : '#9CA3AF' }} />
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

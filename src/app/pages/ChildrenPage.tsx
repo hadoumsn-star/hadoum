@@ -1,8 +1,8 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef } from 'react';
 import {
   Plus, Search, X, Edit3, Users, UserCheck, AlertCircle, FolderOpen,
   ChevronDown, ArrowUp, ArrowDown, Check, ChevronRight,
-  ArrowLeft, Phone, Camera, UserMinus, FileText, Upload,
+  ArrowLeft, Phone, Camera, UserMinus, FileText, Upload, Paperclip,
 } from 'lucide-react';
 import { allChildrenData, Child } from '../data/mockData';
 
@@ -38,8 +38,8 @@ const DOCS_LIST = [
   { key: 'photo',               label: 'Photo' },
 ] as const;
 
-type DocKey = typeof DOCS_LIST[number]['key'];
-type Docs = Record<DocKey, boolean>;
+export type DocKey = typeof DOCS_LIST[number]['key'];
+export type Docs = Record<DocKey, boolean>;
 
 // CRM extended data per child
 interface ChildCRM {
@@ -68,6 +68,8 @@ interface ChildCRM {
   activitesListe: string;
   gouts: string;
   caractere: string;
+  familyContacts: { nom: string; tel: string }[];
+  docFiles: Record<DocKey, boolean>;
 }
 
 function makeDefaultCRM(child: Child): ChildCRM {
@@ -103,6 +105,8 @@ function makeDefaultCRM(child: Child): ChildCRM {
     activitesListe: '—',
     gouts: '—',
     caractere: '—',
+    familyContacts: child.tuteurName ? [{ nom: child.tuteurName, tel: child.tuteurPhone }] : [],
+    docFiles: Object.fromEntries(DOCS_LIST.map(d => [d.key, false])) as Record<DocKey, boolean>,
   };
 }
 
@@ -265,6 +269,10 @@ function CrmFiche({ child, crm, onClose, onExitRequest, onUpdate }: {
   const [activeTab, setActiveTab] = useState<CrmTab>('identite');
   const [localCrm, setLocalCrm]  = useState<ChildCRM>(crm);
   const [editing, setEditing]     = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [pendingDocKey, setPendingDocKey] = useState<DocKey | null>(null);
+  const [showAddContactFor, setShowAddContactFor] = useState<number | null>(null);
+  const [newContact, setNewContact] = useState({ nom: '', tel: '' });
 
   const av  = avatar(child.id);
   const age = getAge(child.dob);
@@ -275,6 +283,23 @@ function CrmFiche({ child, crm, onClose, onExitRequest, onUpdate }: {
 
   const toggleDoc = (key: DocKey) =>
     setLocalCrm(prev => ({ ...prev, docs: { ...prev.docs, [key]: !prev.docs[key] } }));
+
+  const triggerDocUpload = (key: DocKey) => {
+    setPendingDocKey(key);
+    fileInputRef.current?.click();
+  };
+
+  const handleDocFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files?.length && pendingDocKey) {
+      setLocalCrm(prev => ({
+        ...prev,
+        docs: { ...prev.docs, [pendingDocKey]: true },
+        docFiles: { ...prev.docFiles, [pendingDocKey]: true },
+      }));
+      setPendingDocKey(null);
+      e.target.value = '';
+    }
+  };
 
   const save = () => { onUpdate(localCrm); setEditing(false); };
 
@@ -330,14 +355,15 @@ function CrmFiche({ child, crm, onClose, onExitRequest, onUpdate }: {
 
             {/* Documents requis */}
             <div>
+              <input type="file" ref={fileInputRef} style={{ display: 'none' }} onChange={handleDocFileChange} />
               <p style={{ color: '#374151', fontSize: 13, fontWeight: 600, marginBottom: 10 }}>Documents requis</p>
               <div className="space-y-2">
                 {DOCS_LIST.map(doc => (
-                  <label key={doc.key}
-                    className="flex items-center gap-3 cursor-pointer px-4 py-2.5 rounded-lg hover:bg-gray-50"
+                  <div key={doc.key}
+                    className="flex items-center gap-3 px-4 py-2.5 rounded-lg"
                     style={{ border: '1px solid #F3F4F6' }}>
                     <div
-                      className="flex items-center justify-center rounded flex-shrink-0"
+                      className="flex items-center justify-center rounded flex-shrink-0 cursor-pointer"
                       style={{
                         width: 18, height: 18,
                         background: localCrm.docs[doc.key] ? '#3E5A78' : '#FFFFFF',
@@ -346,14 +372,24 @@ function CrmFiche({ child, crm, onClose, onExitRequest, onUpdate }: {
                       onClick={() => toggleDoc(doc.key)}>
                       {localCrm.docs[doc.key] && <Check size={11} style={{ color: '#FFFFFF' }} />}
                     </div>
-                    <span style={{ color: localCrm.docs[doc.key] ? '#1A1A1A' : '#6B7280', fontSize: 13 }}>
+                    <span style={{ color: localCrm.docs[doc.key] ? '#1A1A1A' : '#6B7280', fontSize: 13, flex: 1 }}>
                       {doc.label}
                     </span>
-                    {localCrm.docs[doc.key]
-                      ? <Check size={13} style={{ color: '#065F46', marginLeft: 'auto' }} />
-                      : <AlertCircle size={13} style={{ color: '#B91C1C', marginLeft: 'auto' }} />
-                    }
-                  </label>
+                    {localCrm.docFiles[doc.key] && (
+                      <Paperclip size={13} style={{ color: '#3E5A78', flexShrink: 0 }} />
+                    )}
+                    <button type="button"
+                      onClick={() => triggerDocUpload(doc.key)}
+                      className="flex-shrink-0 px-2.5 py-1 rounded"
+                      style={{
+                        background: localCrm.docFiles[doc.key] ? '#EEF2F7' : '#F3F4F6',
+                        border: `1px solid ${localCrm.docFiles[doc.key] ? '#B2C5DB' : '#E5E7EB'}`,
+                        color: localCrm.docFiles[doc.key] ? '#3E5A78' : '#374151',
+                        fontSize: 10, fontWeight: 600, cursor: 'pointer',
+                      }}>
+                      {localCrm.docFiles[doc.key] ? 'Remplacer' : 'Joindre'}
+                    </button>
+                  </div>
                 ))}
               </div>
             </div>
@@ -492,15 +528,65 @@ function CrmFiche({ child, crm, onClose, onExitRequest, onUpdate }: {
                         onChange={e => { const h = [...localCrm.sortiesHist]; h[idx] = { ...h[idx], dateDepart: e.target.value }; set('sortiesHist', h); }}
                         style={INPUT_S} />
                     </Field>
-                    <Field label="Date retour prévue">
-                      <input type="date" value={s.dateRetour}
-                        onChange={e => { const h = [...localCrm.sortiesHist]; h[idx] = { ...h[idx], dateRetour: e.target.value }; set('sortiesHist', h); }}
-                        style={INPUT_S} />
-                    </Field>
+                    {s.type !== 'permanente' && (
+                      <Field label="Date retour prévue">
+                        <input type="date" value={s.dateRetour}
+                          onChange={e => { const h = [...localCrm.sortiesHist]; h[idx] = { ...h[idx], dateRetour: e.target.value }; set('sortiesHist', h); }}
+                          style={INPUT_S} />
+                      </Field>
+                    )}
                     <Field label="Responsable">
-                      <input value={s.responsable}
-                        onChange={e => { const h = [...localCrm.sortiesHist]; h[idx] = { ...h[idx], responsable: e.target.value }; set('sortiesHist', h); }}
-                        placeholder="Nom du responsable" style={INPUT_S} />
+                      {localCrm.familyContacts.length > 0 ? (
+                        <select value={s.responsable}
+                          onChange={e => {
+                            const h = [...localCrm.sortiesHist];
+                            h[idx] = { ...h[idx], responsable: e.target.value };
+                            set('sortiesHist', h);
+                          }}
+                          style={{ ...INPUT_S, cursor: 'pointer' }}>
+                          <option value="">— Sélectionner —</option>
+                          {localCrm.familyContacts.map((c, ci) => (
+                            <option key={ci} value={c.nom}>{c.nom} {c.tel ? `(${c.tel})` : ''}</option>
+                          ))}
+                        </select>
+                      ) : (
+                        <div>
+                          {showAddContactFor === idx ? (
+                            <div className="space-y-2">
+                              <input value={newContact.nom} onChange={e => setNewContact(p => ({ ...p, nom: e.target.value }))}
+                                placeholder="Nom complet" style={INPUT_S} />
+                              <input value={newContact.tel} onChange={e => setNewContact(p => ({ ...p, tel: e.target.value }))}
+                                placeholder="Téléphone" style={INPUT_S} />
+                              <div className="flex gap-2">
+                                <button type="button"
+                                  onClick={() => {
+                                    if (newContact.nom.trim()) {
+                                      const updated = [...localCrm.familyContacts, { nom: newContact.nom.trim(), tel: newContact.tel.trim() }];
+                                      setLocalCrm(prev => ({ ...prev, familyContacts: updated }));
+                                      const h = [...localCrm.sortiesHist];
+                                      h[idx] = { ...h[idx], responsable: newContact.nom.trim() };
+                                      set('sortiesHist', h);
+                                      setNewContact({ nom: '', tel: '' });
+                                      setShowAddContactFor(null);
+                                    }
+                                  }}
+                                  style={{ background: '#3E5A78', color: '#FFF', fontSize: 11, fontWeight: 600, padding: '4px 10px', borderRadius: 6, border: 'none', cursor: 'pointer' }}>
+                                  Ajouter
+                                </button>
+                                <button type="button" onClick={() => setShowAddContactFor(null)}
+                                  style={{ background: '#F3F4F6', color: '#374151', fontSize: 11, padding: '4px 10px', borderRadius: 6, border: 'none', cursor: 'pointer' }}>
+                                  Annuler
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <button type="button" onClick={() => setShowAddContactFor(idx)}
+                              style={{ ...INPUT_S, textAlign: 'left', cursor: 'pointer', color: '#3E5A78', fontWeight: 500, background: '#EEF2F7', border: '1px dashed #B2C5DB' }}>
+                              + Ajouter un contact
+                            </button>
+                          )}
+                        </div>
+                      )}
                     </Field>
                   </div>
                   <Field label="Motif">
@@ -643,17 +729,35 @@ const EMPTY_FORM: Omit<Child, 'id'> = {
 };
 const EMPTY_DOCS: Docs = Object.fromEntries(DOCS_LIST.map(d => [d.key, false])) as Docs;
 
-function AddModal({ onSave, onClose }: {
+export function AddModal({ onSave, onClose }: {
   onSave: (child: Omit<Child, 'id'>, initialDocs: Docs) => void;
   onClose: () => void;
 }) {
   const [step, setStep] = useState<FormStep>(1);
   const [form, setForm] = useState<Omit<Child, 'id'>>(EMPTY_FORM);
   const [docs, setDocs] = useState<Docs>({ ...EMPTY_DOCS });
+  const [docFiles, setDocFiles] = useState<Record<DocKey, boolean>>(
+    Object.fromEntries(DOCS_LIST.map(d => [d.key, false])) as Record<DocKey, boolean>
+  );
+  const addModalFileRef = useRef<HTMLInputElement>(null);
+  const [pendingAddDocKey, setPendingAddDocKey] = useState<DocKey | null>(null);
   const set = (k: keyof typeof form, v: string) => setForm(f => ({ ...f, [k]: v }));
 
   const toggleDoc = (key: DocKey) => setDocs(prev => ({ ...prev, [key]: !prev[key] }));
-  const joinDoc   = (key: DocKey) => setDocs(prev => ({ ...prev, [key]: true }));
+
+  const triggerAddDocUpload = (key: DocKey) => {
+    setPendingAddDocKey(key);
+    addModalFileRef.current?.click();
+  };
+
+  const handleAddDocFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files?.length && pendingAddDocKey) {
+      setDocs(prev => ({ ...prev, [pendingAddDocKey]: true }));
+      setDocFiles(prev => ({ ...prev, [pendingAddDocKey]: true }));
+      setPendingAddDocKey(null);
+      e.target.value = '';
+    }
+  };
 
   const canNext =
     step === 1 ? !!(form.firstName.trim() && form.lastName.trim() && form.dob) :
@@ -753,6 +857,7 @@ function AddModal({ onSave, onClose }: {
           )}
           {step === 4 && (
             <div>
+              <input type="file" ref={addModalFileRef} style={{ display: 'none' }} onChange={handleAddDocFileChange} />
               <div className="flex items-center justify-between mb-3">
                 <p style={{ color: '#374151', fontSize: 13, fontWeight: 600 }}>Documents requis</p>
                 <span className="px-2 py-0.5 rounded-full" style={{ background: docsCount === DOCS_LIST.length ? '#ECFDF5' : '#FEF2F2', color: docsCount === DOCS_LIST.length ? '#065F46' : '#B91C1C', fontSize: 10, fontWeight: 700 }}>
@@ -764,7 +869,6 @@ function AddModal({ onSave, onClose }: {
                   <div key={doc.key}
                     className="flex items-center gap-2.5 px-3 py-2 rounded-lg"
                     style={{ border: `1px solid ${docs[doc.key] ? '#D1FAE5' : '#F3F4F6'}`, background: docs[doc.key] ? 'rgba(6,95,70,0.03)' : '#FAFAFA' }}>
-                    {/* Checkbox Reçu */}
                     <div
                       className="flex items-center justify-center rounded flex-shrink-0 cursor-pointer"
                       style={{ width: 16, height: 16, background: docs[doc.key] ? '#3E5A78' : '#FFFFFF', border: `1.5px solid ${docs[doc.key] ? '#3E5A78' : '#D1D5DB'}` }}
@@ -772,11 +876,13 @@ function AddModal({ onSave, onClose }: {
                       {docs[doc.key] && <Check size={9} style={{ color: '#FFFFFF' }} />}
                     </div>
                     <span className="flex-1" style={{ color: docs[doc.key] ? '#1A1A1A' : '#6B7280', fontSize: 12 }}>{doc.label}</span>
-                    {/* Bouton Joindre */}
-                    <button type="button" onClick={() => joinDoc(doc.key)}
+                    {docFiles[doc.key] && (
+                      <Paperclip size={11} style={{ color: '#3E5A78', flexShrink: 0 }} />
+                    )}
+                    <button type="button" onClick={() => triggerAddDocUpload(doc.key)}
                       className="flex items-center gap-1 px-2 py-1 rounded flex-shrink-0"
-                      style={{ background: docs[doc.key] ? '#ECFDF5' : '#F3F4F6', border: `1px solid ${docs[doc.key] ? '#A7F3D0' : '#E5E7EB'}`, color: docs[doc.key] ? '#065F46' : '#374151', fontSize: 10, fontWeight: 600, cursor: 'pointer' }}>
-                      {docs[doc.key] ? <><Check size={9} /> Joint</> : <><Upload size={9} /> Joindre</>}
+                      style={{ background: docFiles[doc.key] ? '#EEF2F7' : '#F3F4F6', border: `1px solid ${docFiles[doc.key] ? '#B2C5DB' : '#E5E7EB'}`, color: docFiles[doc.key] ? '#3E5A78' : '#374151', fontSize: 10, fontWeight: 600, cursor: 'pointer' }}>
+                      {docFiles[doc.key] ? 'Remplacer' : <><Upload size={9} /> Joindre</>}
                     </button>
                   </div>
                 ))}
