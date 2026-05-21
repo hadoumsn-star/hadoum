@@ -1,0 +1,330 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Enums ───────────────────────────────────────────────────────────────────
+
+enum ChildStatus {
+  ORPHELIN_COMPLET
+  DEMI_ORPHELIN
+  ENFANT_EN_DIFFICULTE
+}
+
+enum Gender {
+  MASCULIN
+  FEMININ
+}
+
+enum SchoolType {
+  DAARA
+  ECOLE_PUBLIQUE
+  ECOLE_PRIVEE
+}
+
+enum DocumentType {
+  ACTE_NAISSANCE
+  ACTE_DECES
+  PIECE_ID_TUTEUR
+  ACCORD_AEMO
+  CARNET_SANTE
+  CERTIFICAT_PEC
+  AUTORISATION_GOUVERNEMENTALE
+  PHOTO
+  ORDONNANCE
+  BULLETIN_SCOLAIRE
+  LEGAL_DOCUMENT
+  AUTRE
+}
+
+// ─── Core entity ─────────────────────────────────────────────────────────────
+
+model Child {
+  id            String      @id @default(uuid())
+  fileNumber    String      @unique
+  firstName     String
+  lastName      String
+  dateOfBirth   DateTime
+  placeOfBirth  String
+  gender        Gender
+  entryDate     DateTime
+  status        ChildStatus
+
+  // Legal guardian
+  guardianName  String?
+  guardianPhone String?
+  guardianRelation String?
+
+  // Emergency contacts (stored as JSON for flexibility)
+  emergencyContacts Json?
+
+  // Family situation
+  familyComposition  String?
+  placementHistory   String?
+  familyContacts     Json?
+
+  // Exit / departure
+  isActive          Boolean  @default(true)
+  exitType          String?  // 'temporaire' | 'définitive'
+  exitDate          DateTime?
+  exitReason        String?
+  exitResponsable   String?
+
+  // Relations
+  medicalRecord      MedicalRecord?
+  psychRecord        PsychRecord?
+  schoolRecord       SchoolRecord?
+  dailyObservations  DailyObservation[]
+  documents          Document[]
+  eventLogs          EventLog[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ─── Medical ─────────────────────────────────────────────────────────────────
+
+model MedicalRecord {
+  id          String  @id @default(uuid())
+  childId     String  @unique
+  child       Child   @relation(fields: [childId], references: [id], onDelete: Cascade)
+
+  bloodType         String?
+  allergies         String?
+  currentTreatments String?
+  vaccinationsText  String?
+  consultationsText String?
+
+  vaccinations  Vaccination[]
+  consultations Consultation[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Vaccination {
+  id              String        @id @default(uuid())
+  medicalRecordId String
+  medicalRecord   MedicalRecord @relation(fields: [medicalRecordId], references: [id], onDelete: Cascade)
+
+  name            String
+  date            DateTime
+  nextDueDate     DateTime?
+  notes           String?
+}
+
+model Consultation {
+  id              String        @id @default(uuid())
+  medicalRecordId String
+  medicalRecord   MedicalRecord @relation(fields: [medicalRecordId], references: [id], onDelete: Cascade)
+
+  date            DateTime
+  doctor          String
+  reason          String
+  prescription    String?
+  documentUrl     String?
+
+  createdAt DateTime @default(now())
+}
+
+// ─── Psychological ───────────────────────────────────────────────────────────
+
+model PsychRecord {
+  id          String  @id @default(uuid())
+  childId     String  @unique
+  child       Child   @relation(fields: [childId], references: [id], onDelete: Cascade)
+
+  initialAssessment   String?
+  pppObjectives       String?
+  behavioralEvolution String?
+
+  sessions    PsychSession[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model PsychSession {
+  id            String      @id @default(uuid())
+  psychRecordId String
+  psychRecord   PsychRecord @relation(fields: [psychRecordId], references: [id], onDelete: Cascade)
+
+  date          DateTime
+  observations  String
+  progress      String?
+
+  createdAt DateTime @default(now())
+}
+
+// ─── School ──────────────────────────────────────────────────────────────────
+
+model SchoolRecord {
+  id          String     @id @default(uuid())
+  childId     String     @unique
+  child       Child      @relation(fields: [childId], references: [id], onDelete: Cascade)
+
+  schoolType  SchoolType
+  schoolName  String
+  currentLevel String
+
+  results     SchoolResult[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model SchoolResult {
+  id             String       @id @default(uuid())
+  schoolRecordId String
+  schoolRecord   SchoolRecord @relation(fields: [schoolRecordId], references: [id], onDelete: Cascade)
+
+  period         String
+  subject        String
+  grade          Float?
+  attendance     String?
+  teacherNotes   String?
+  bulletinUrl    String?
+
+  createdAt DateTime @default(now())
+}
+
+// ─── Daily observations ──────────────────────────────────────────────────────
+
+model DailyObservation {
+  id        String   @id @default(uuid())
+  childId   String
+  child     Child    @relation(fields: [childId], references: [id], onDelete: Cascade)
+
+  date      DateTime
+  author    String
+  behavior  String
+  groupIntegration String?
+  incidents String?
+  notes     String?
+
+  createdAt DateTime @default(now())
+}
+
+// ─── Documents ───────────────────────────────────────────────────────────────
+
+model Document {
+  id        String       @id @default(uuid())
+  childId   String
+  child     Child        @relation(fields: [childId], references: [id], onDelete: Cascade)
+
+  type      DocumentType
+  label     String
+  fileUrl   String
+  uploadedBy String?
+
+  createdAt DateTime @default(now())
+}
+
+// ─── Event log (journal) ─────────────────────────────────────────────────────
+
+model EventLog {
+  id        String   @id @default(uuid())
+  childId   String
+  child     Child    @relation(fields: [childId], references: [id], onDelete: Cascade)
+
+  eventType String
+  summary   String
+  details   String?
+  author    String?
+
+  createdAt DateTime @default(now())
+}
+
+// ─── Staff ───────────────────────────────────────────────────────────────────
+
+enum StaffStatus {
+  PRESENT
+  ABSENT
+  CONGE
+}
+
+enum CandidateStatus {
+  NOUVEAU
+  PRESELECTIONNE
+  ENTRETIEN_FAIT
+}
+
+model StaffMember {
+  id        String      @id @default(uuid())
+  firstName String
+  lastName  String
+  role      String
+  classes   String[]
+  status    StaffStatus @default(PRESENT)
+  phone     String?
+  email     String?
+  since     DateTime    @default(now())
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Candidate {
+  id         String          @id @default(uuid())
+  firstName  String
+  lastName   String
+  targetRole String?
+  phone      String?
+  status     CandidateStatus @default(NOUVEAU)
+  cvKey      String?
+
+  appliedAt  DateTime @default(now())
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+model FormerStaffMember {
+  id         String   @id @default(uuid())
+  firstName  String
+  lastName   String
+  role       String
+  exitDate   DateTime
+  exitReason String
+
+  createdAt  DateTime @default(now())
+}
+
+// ─── Reports ─────────────────────────────────────────────────────────────────
+
+model Report {
+  id         String   @id @default(uuid())
+  title      String
+  type       String
+  fileKey    String
+  mimeType   String
+  reportDate DateTime
+  uploadedBy String?
+
+  createdAt  DateTime @default(now())
+}
+
+// ─── Auth ─────────────────────────────────────────────────────────────────────
+
+enum UserRole {
+  DIRECTOR
+  EDUCATOR
+  SUPERVISOR
+  BOARD
+}
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  name         String
+  initials     String
+  role         UserRole
+  roleLabel    String
+  title        String
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
