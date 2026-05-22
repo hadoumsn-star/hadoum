@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
+import { AddModal } from './ChildrenPage';
 import {
   Users, UserCheck, GraduationCap, TrendingUp, TrendingDown,
   AlertCircle, AlertTriangle, X, ArrowRight, Plus, CalendarCheck,
@@ -181,7 +182,7 @@ function CompactAlertsBar({
       {/* Bouton "Voir toutes les notifications" — style secondaire 13px, bleu primaire */}
       <div className="flex justify-end pt-1">
         <button
-          onClick={() => navigate('/app/reports')}
+          onClick={() => navigate('/app/incidents')}
           className="hover:underline"
           style={{ color: '#1E3A8A', fontSize: 13, fontWeight: 500, background: 'none', border: 'none', cursor: 'pointer' }}
         >
@@ -240,32 +241,29 @@ function PriorityTasks() {
 
 // ─── Quick Actions ────────────────────────────────────────────────────────────
 
-const QUICK_ACTIONS = [
-  { label: 'Ajouter un enfant', icon: Plus,          color: '#3E5A78', bg: '#EEF2F7', desc: 'Nouveau dossier',    to: '/app/children' },
-  { label: 'Saisir présences',  icon: CalendarCheck, color: '#065F46', bg: '#ECFDF5', desc: 'Pointage du jour',   to: '/app/attendance' },
-  { label: 'Générer un rapport',icon: FileText,      color: '#7C3AED', bg: '#F5F3FF', desc: 'PDF / Export',       to: '/app/reports' },
-];
-
-function QuickActions() {
+function QuickActions({ onAddChild }: { onAddChild: () => void }) {
   const navigate = useNavigate();
+
+  const actions = [
+    { label: 'Ajouter un enfant', icon: Plus,          color: '#3E5A78', bg: '#EEF2F7', desc: 'Nouveau dossier',    onClick: onAddChild },
+    { label: 'Saisir présences',  icon: CalendarCheck, color: '#065F46', bg: '#ECFDF5', desc: 'Pointage du jour',   onClick: () => navigate('/app/attendance') },
+    { label: 'Générer un rapport',icon: FileText,      color: '#7C3AED', bg: '#F5F3FF', desc: 'PDF / Export',       onClick: () => navigate('/app/reports') },
+  ];
+
   return (
     <div>
       <p style={{ color: '#9CA3AF', fontSize: 11, fontWeight: 600, letterSpacing: '0.05em', marginBottom: 10 }}>
         ACTIONS RAPIDES
       </p>
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        {QUICK_ACTIONS.map((action) => {
+        {actions.map((action) => {
           const Icon = action.icon;
           return (
             <button
               key={action.label}
-              onClick={() => navigate(action.to)}
+              onClick={action.onClick}
               className="flex items-center gap-3 px-4 py-4 rounded-xl text-left transition-all hover:shadow-md hover:-translate-y-0.5 active:translate-y-0"
-              style={{
-                background: '#FFFFFF',
-                border: `1.5px solid #3E5A78`,
-                cursor: 'pointer',
-              }}
+              style={{ background: '#FFFFFF', border: '1.5px solid #3E5A78', cursor: 'pointer' }}
             >
               <div
                 className="flex items-center justify-center rounded-xl flex-shrink-0"
@@ -490,6 +488,7 @@ export function DirectorDashboard() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [dismissedAlerts, setDismissedAlerts] = useState<number[]>([]);
+  const [showAddChild, setShowAddChild] = useState(false);
 
   const visibleAlerts = activeAlerts.filter((a) => !dismissedAlerts.includes(a.id));
 
@@ -540,7 +539,7 @@ export function DirectorDashboard() {
       </div>
 
       {/* ── Quick actions ── */}
-      <QuickActions />
+      <QuickActions onAddChild={() => setShowAddChild(true)} />
 
       {/* ── Row : Présences équipe + Tâches ── */}
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
@@ -619,6 +618,16 @@ export function DirectorDashboard() {
       </div>
 
       <div style={{ height: 24 }} />
+
+      {showAddChild && (
+        <AddModal
+          onSave={(_form: any, _docs: any) => {
+            setShowAddChild(false);
+            navigate('/app/children');
+          }}
+          onClose={() => setShowAddChild(false)}
+        />
+      )}
     </div>
   );
 }

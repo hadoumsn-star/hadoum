@@ -6,7 +6,7 @@ import { useNavigate } from 'react-router';
 import {
   Download, TrendingUp, TrendingDown, FileText,
   ExternalLink, ChevronRight, Clock, CheckCircle2,
-  AlertCircle, Loader2,
+  AlertCircle, Loader2, DollarSign,
 } from 'lucide-react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid,
@@ -144,6 +144,37 @@ export function BoardDashboard() {
             <p style={{ color: '#374151', fontSize: 12, marginTop: 4 }}>{ind.label}</p>
           </div>
         ))}
+      </div>
+
+      {/* ── Budget block (lecture seule) ── */}
+      <div className="rounded-xl" style={{ background: '#FFFFFF', border: '1px solid #E5E7EB' }}>
+        <div className="flex items-center gap-2 px-5 py-4" style={{ borderBottom: '1px solid #F3F4F6' }}>
+          <DollarSign size={16} style={{ color: '#3E5A78' }} />
+          <h3 style={{ color: '#1A1A1A', fontSize: 15, fontWeight: 600 }}>Budget</h3>
+          <span className="ml-auto px-2 py-0.5 rounded-full" style={{ background: '#F3F4F6', color: '#9CA3AF', fontSize: 10, fontWeight: 600 }}>LECTURE SEULE</span>
+        </div>
+        <div className="px-5 py-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            {[
+              { label: 'Budget alloué',   value: '840 000 DA', color: '#3E5A78', bg: '#EEF2F7', icon: DollarSign },
+              { label: 'Budget consommé', value: '653 400 DA', color: '#D97706', bg: '#FFFBEB', icon: TrendingUp },
+              { label: 'Budget restant',  value: '186 600 DA', color: '#065F46', bg: '#ECFDF5', icon: CheckCircle2 },
+            ].map(k => {
+              const Icon = k.icon;
+              return (
+                <div key={k.label} className="rounded-xl px-4 py-3 flex items-center gap-3" style={{ background: k.bg }}>
+                  <div className="flex items-center justify-center rounded-lg" style={{ width: 34, height: 34, background: 'rgba(255,255,255,0.75)' }}>
+                    <Icon size={15} style={{ color: k.color }} />
+                  </div>
+                  <div>
+                    <p style={{ color: k.color, fontSize: 16, fontWeight: 700, lineHeight: 1 }}>{k.value}</p>
+                    <p style={{ color: '#6B7280', fontSize: 11, marginTop: 2 }}>{k.label}</p>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
       </div>
 
       {/* ── Row : Trend chart + Document deadlines ── */}

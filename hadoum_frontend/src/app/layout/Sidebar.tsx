@@ -4,6 +4,7 @@ import {
   LayoutDashboard, Users, UsersRound, CalendarCheck,
   DollarSign, FileText, BookOpen, Activity,
   BarChart2, Download, ChevronsLeft, ChevronsRight, AlertTriangle,
+  MessageSquare,
 } from 'lucide-react';
 import { useAuth, UserRole } from '../context/AuthContext';
 import { HadoumLogo } from '../components/HadoumLogo';
@@ -36,7 +37,7 @@ const NAV_BY_ROLE: Record<UserRole, { primary: NavItem[]; secondary: NavItem[] }
       { label: 'Voir les enfants',       path: '/app/children',   icon: Users },
       { label: 'Mon équipe',             path: '/app/team',       icon: UsersRound },
       { label: 'Consulter les rapports', path: '/app/reports',    icon: FileText },
-
+      { label: 'Messagerie',             path: '/app/messages',   icon: MessageSquare },
     ],
     secondary: []
   },
@@ -48,6 +49,7 @@ const NAV_BY_ROLE: Record<UserRole, { primary: NavItem[]; secondary: NavItem[] }
     ],
     secondary: [
       { label: 'Mes activités',          path: '/app/activities', icon: Activity },
+      { label: 'Messagerie',             path: '/app/messages',   icon: MessageSquare },
     ],
   },
   supervisor: {
