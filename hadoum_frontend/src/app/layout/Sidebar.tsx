@@ -37,7 +37,7 @@ const NAV_BY_ROLE: Record<UserRole, { primary: NavItem[]; secondary: NavItem[] }
       { label: 'Voir les enfants',       path: '/app/children',   icon: Users },
       { label: 'Mon équipe',             path: '/app/team',       icon: UsersRound },
       { label: 'Consulter les rapports', path: '/app/reports',    icon: FileText },
-      { label: 'Messagerie',             path: '/app/messages',   icon: MessageSquare },
+      // { label: 'Messagerie',             path: '/app/messages',   icon: MessageSquare },
     ],
     secondary: []
   },
