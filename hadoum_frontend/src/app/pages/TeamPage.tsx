@@ -235,7 +235,7 @@ function AddCandidateModal({ onSave, onClose }: {
             Annuler
           </button>
           <button disabled={!canSave}
-            onClick={() => canSave && onSave({ ...form, cvUploaded: !!cvFile, dateCandidate: new Date().toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' }), STATUT_CANDIDAT: STATUS, _cvFile: cvFile } as any)}
+            onClick={() => canSave && onSave({ ...form, cvUploaded: !!cvFile, dateCandidate: new Date().toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' }), _cvFile: cvFile } as any)}
             className="flex-1 py-2.5 rounded-lg flex items-center justify-center gap-2"
             style={{ background: canSave ? '#3E5A78' : '#E5E7EB', color: canSave ? '#FFFFFF' : '#9CA3AF', fontSize: 13, fontWeight: 600, border: 'none', cursor: canSave ? 'pointer' : 'not-allowed' }}>
             <Check size={14} /> Ajouter
