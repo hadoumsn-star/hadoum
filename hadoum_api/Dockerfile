@@ -1,12 +1,12 @@
 FROM node:22-alpine AS builder
 WORKDIR /app
-COPY package*.json prisma.config.ts ./
+COPY package*.json nest-cli.json tsconfig*.json prisma.config.ts ./
 COPY prisma ./prisma
 RUN npm ci
 RUN npx prisma generate
-COPY tsconfig*.json ./
 COPY src ./src
 RUN npm run build
+RUN ls dist/main.js
 
 FROM node:22-alpine
 WORKDIR /app
