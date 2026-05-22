@@ -1,0 +1,16 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: hadoum-db
+    restart: always
+    environment:
+      POSTGRES_USER: hadoum_user
+      POSTGRES_PASSWORD: hadoum1990
+      POSTGRES_DB: hadoum_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:
