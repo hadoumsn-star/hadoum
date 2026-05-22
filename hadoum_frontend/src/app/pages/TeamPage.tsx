@@ -735,11 +735,15 @@ export function TeamPage() {
   };
 
   const handleAddCandidate = async (c: Omit<Candidat, 'id'> & { _cvFile?: File }) => {
+    const candidateStatusMap: Record<string, ApiCandidateStatus> = {
+      'nouveau': 'NOUVEAU', 'présélectionné': 'PRESELECTIONNE', 'entretien fait': 'ENTRETIEN_FAIT',
+    };
     try {
       const created = await teamApi.createCandidate({
         firstName: c.prenom, lastName: c.nom,
         targetRole: c.posteVise || undefined,
         phone: c.telephone || undefined,
+        status: candidateStatusMap[c.statut],
       });
       if (c._cvFile) {
         const updated = await teamApi.uploadCv(created.id, c._cvFile);

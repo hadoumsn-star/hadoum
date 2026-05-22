@@ -52,7 +52,7 @@ export const teamApi = {
 
   // Candidates
   listCandidates: () => api.get<ApiCandidate[]>('/staff/candidates'),
-  createCandidate: (data: { firstName: string; lastName: string; targetRole?: string; phone?: string }) =>
+  createCandidate: (data: { firstName: string; lastName: string; targetRole?: string; phone?: string; status?: ApiCandidateStatus }) =>
     api.post<ApiCandidate>('/staff/candidates', data),
   updateCandidate: (id: string, data: { status?: ApiCandidateStatus; targetRole?: string; phone?: string }) =>
     api.patch<ApiCandidate>(`/staff/candidates/${id}`, data),
