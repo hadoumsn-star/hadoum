@@ -934,7 +934,7 @@ const DOC_KEY_TO_TYPE: Record<DocKey, ApiDocumentType> = {
   photo:            'PHOTO',
 };
 
-function AddModal({ onCreated, onClose }: {
+export function AddModal({ onCreated, onClose }: {
   onCreated: (child: Child & { apiId: string }) => void;
   onClose: () => void;
 }) {
