@@ -1,0 +1,102 @@
+import { useState } from 'react';
+import { Outlet, Navigate, useLocation } from 'react-router';
+import { useAuth } from '../context/AuthContext';
+import { Sidebar } from './Sidebar';
+import { Topbar } from './Topbar';
+
+const PAGE_TITLES: Record<string, { title: string; breadcrumb?: string[] }> = {
+  '/app/dashboard':   { title: 'Tableau de bord' },
+  '/app/children':    { title: 'Enfants',                  breadcrumb: ['Gestion'] },
+  '/app/team':        { title: 'Mon équipe',               breadcrumb: ['Gestion'] },
+  '/app/classes':     { title: 'Classes',                  breadcrumb: ['Pédagogie'] },
+  '/app/attendance':  { title: 'Présences',                breadcrumb: ['Pédagogie'] },
+  '/app/activities':  { title: 'Mes activités',            breadcrumb: ['Pédagogie'] },
+  '/app/messages':    { title: 'Messagerie' },
+  '/app/finances':    { title: 'Finances & Budget',        breadcrumb: ['Administration'] },
+  '/app/reports':     { title: 'Rapports',                 breadcrumb: ['Pilotage'] },
+  '/app/validations': { title: 'Validations en attente',   breadcrumb: ['Supervision'] },
+  '/app/incidents':   { title: 'Incidents',                breadcrumb: ['Supervision'] },
+  '/app/monitoring':  { title: 'Suivis individuels',       breadcrumb: ['Supervision'] },
+  '/app/indicators':  { title: 'Indicateurs',              breadcrumb: ['Pilotage'] },
+  '/app/exports':     { title: 'Exports',                  breadcrumb: ['Pilotage'] },
+  '/app/settings':    { title: 'Paramètres' },
+  '/app/profile':     { title: 'Mon profil' },
+  '/app/design-system': { title: 'Design System' },
+};
+
+const SIDEBAR_FULL = 256;
+const SIDEBAR_COMPACT = 64;
+
+export function AppLayout() {
+  const { isAuthenticated } = useAuth();
+  const location = useLocation();
+
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(() => {
+    try { return localStorage.getItem('hadoum-sidebar-collapsed') === 'true'; }
+    catch { return false; }
+  });
+
+  if (!isAuthenticated) return <Navigate to="/login" replace />;
+
+  const pageInfo = PAGE_TITLES[location.pathname] ?? { title: 'Hadoum' };
+  const sidebarW = collapsed ? SIDEBAR_COMPACT : SIDEBAR_FULL;
+
+  const toggleCollapse = () => {
+    setCollapsed((prev) => {
+      const next = !prev;
+      try { localStorage.setItem('hadoum-sidebar-collapsed', String(next)); } catch {}
+      return next;
+    });
+  };
+
+  return (
+    <div className="flex h-screen overflow-hidden" style={{ background: '#F9F7F3' }}>
+      {/* Dynamic sidebar width for desktop */}
+      <style>{`
+        @media (min-width: 1024px) {
+          .hadoum-sidebar { transform: translateX(0) !important; }
+          .hadoum-main    { margin-left: ${sidebarW}px; transition: margin-left 280ms ease; }
+        }
+      `}</style>
+
+      {/* Mobile backdrop */}
+      {mobileSidebarOpen && (
+        <div
+          className="fixed inset-0 z-20 lg:hidden"
+          style={{ background: 'rgba(0,0,0,0.35)' }}
+          onClick={() => setMobileSidebarOpen(false)}
+        />
+      )}
+
+      {/* Sidebar */}
+      <aside
+        className="hadoum-sidebar fixed top-0 left-0 h-full z-30 transition-all duration-300 ease-in-out overflow-hidden"
+        style={{
+          background: '#FFFFFF',
+          borderRight: '1px solid #E5E7EB',
+          width: sidebarW,
+          transform: mobileSidebarOpen ? 'translateX(0)' : 'translateX(-100%)',
+        }}
+      >
+        <Sidebar
+          collapsed={collapsed}
+          onToggleCollapse={toggleCollapse}
+          onNavClick={() => setMobileSidebarOpen(false)}
+        />
+      </aside>
+
+      {/* Main content */}
+      <div className="hadoum-main flex flex-col flex-1 min-w-0 h-screen">
+        <Topbar
+          onMenuClick={() => setMobileSidebarOpen(true)}
+          pageTitle={pageInfo.title}
+          breadcrumb={pageInfo.breadcrumb}
+        />
+        <main className="flex-1 overflow-y-auto" style={{ background: '#F9F7F3' }}>
+          <Outlet />
+        </main>
+      </div>
+    </div>
+  );
+}
