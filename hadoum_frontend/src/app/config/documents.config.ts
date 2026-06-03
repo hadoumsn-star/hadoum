@@ -12,12 +12,21 @@ export const REQUIRED_DOCS: RequiredDoc[] = [
   { type: 'ACCORD_AEMO',                 label: 'Accord AEMO' },
   { type: 'CARNET_SANTE',               label: 'Carnet de santé' },
   { type: 'CERTIFICAT_PEC',             label: 'Certificat de prise en charge' },
-  { type: 'AUTORISATION_GOUVERNEMENTALE', label: 'Autorisation gouvernementale' },
   { type: 'PHOTO',                       label: 'Photo' },
+];
+
+export const COMPLEMENTARY_DOCS: RequiredDoc[] = [
+  { type: 'EVALUATION_PSYCHOMOTRICE', label: 'Évaluation psychomotrice' },
+  { type: 'BILAN_PSYCHOLOGIQUE',    label: 'Bilan psychologique' },
+  { type: 'BILAN_SANTE',              label: 'Bilan de santé' },
 ];
 
 export const REQUIRED_TYPES = new Set(REQUIRED_DOCS.map(d => d.type));
 
 export function isDossierComplet(presentTypes: ApiDocumentType[]): boolean {
   return REQUIRED_DOCS.every(d => presentTypes.includes(d.type));
+}
+
+export function isDossierEnrichi(presentTypes: ApiDocumentType[]): boolean {
+  return COMPLEMENTARY_DOCS.every(d => presentTypes.includes(d.type));
 }

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate, Navigate } from 'react-router';
+import { useNavigate, Navigate, Link } from 'react-router';
 import { useAuth, UserRole, User } from '../context/AuthContext';
 
 const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3001/api';
@@ -8,6 +8,7 @@ import {
   Shield,
   GraduationCap,
   Eye,
+  EyeOff,
   Users,
   ArrowRight,
   Lock,
@@ -75,11 +76,12 @@ export function LoginPage() {
   const { login, loginWithUser, isAuthenticated } = useAuth();
   const navigate = useNavigate();
 
-  const [email, setEmail]       = useState('');
-  const [password, setPassword] = useState('');
-  const [error, setError]       = useState('');
-  const [loading, setLoading]   = useState(false);
-  const [demoOpen, setDemoOpen] = useState(false);
+  const [email, setEmail]         = useState('');
+  const [password, setPassword]   = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [error, setError]         = useState('');
+  const [loading, setLoading]     = useState(false);
+  const [demoOpen, setDemoOpen]   = useState(false);
 
   if (isAuthenticated) {
     return <Navigate to="/app/children" replace />;
@@ -155,12 +157,12 @@ export function LoginPage() {
               fontFamily: 'Georgia, serif',
             }}
           >
-            Gérer, protéger,<br />accompagner.
+            La maison de l'amour et de la miséricorde
           </h2>
-          <p style={{ color: '#9CA3AF', fontSize: 14, lineHeight: 1.7 }}>
+          {/* <p style={{ color: '#9CA3AF', fontSize: 14, lineHeight: 1.7 }}>
             Hadoum est la plateforme de gestion de l'orphelinat. Chaque profil accède
             uniquement aux outils et informations nécessaires à sa mission.
-          </p>
+          </p> */}
         </div>
 
         <p style={{ color: '#6B7280', fontSize: 12 }}>
@@ -230,11 +232,11 @@ export function LoginPage() {
                   <Lock size={15} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: '#9CA3AF' }} />
                   <input
                     id="password"
-                    type="password"
+                    type={showPassword ? 'text' : 'password'}
                     value={password}
                     onChange={(e) => { setPassword(e.target.value); setError(''); }}
                     placeholder="••••••••"
-                    className="w-full pl-10 pr-4 py-2.5 rounded-lg outline-none"
+                    className="w-full pl-10 pr-10 py-2.5 rounded-lg outline-none"
                     style={{
                       background: '#FFFFFF',
                       border: `1.5px solid ${error ? '#B91C1C' : '#E5E7EB'}`,
@@ -242,18 +244,26 @@ export function LoginPage() {
                       fontSize: 14,
                     }}
                   />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2"
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: '#9CA3AF' }}
+                  >
+                    {showPassword ? <Eye size={15} /> : <EyeOff size={15} />}
+                  </button>
                 </div>
               </div>
             </div>
 
             {/* Forgot password */}
             <div className="flex justify-end mb-5">
-              <button
-                type="button"
+              <Link
+                to="/forgot-password"
                 style={{ color: '#3E5A78', fontSize: 12, fontWeight: 500 }}
               >
                 Mot de passe oublié ?
-              </button>
+              </Link>
             </div>
 
             {/* Error */}

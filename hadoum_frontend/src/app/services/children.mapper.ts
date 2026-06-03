@@ -1,6 +1,6 @@
 import type { Child } from '../data/mockData';
 import type { ApiChildSummary, ApiChildFull, ApiGender, ApiChildStatus, ApiDocumentType, CreateChildPayload } from '../types/api.types';
-import { isDossierComplet } from '../config/documents.config';
+import { isDossierComplet, isDossierEnrichi } from '../config/documents.config';
 
 // ─── Backend → Frontend ───────────────────────────────────────────────────────
 
@@ -10,9 +10,11 @@ function mapGender(g: ApiGender): 'M' | 'F' {
 
 function mapStatus(s: ApiChildStatus): string {
   const map: Record<ApiChildStatus, string> = {
-    ORPHELIN_COMPLET:    'Orphelin complet',
-    DEMI_ORPHELIN:       'Demi-orphelin',
-    ENFANT_EN_DIFFICULTE:'Enfant en difficulté',
+    ORPHELIN_COMPLET:     'Orphelin complet',
+    ORPHELIN_PERE:        'Orphelin de père',
+    ORPHELIN_MERE:        'Orphelin de mère',
+    DEMI_ORPHELIN:        'Demi-orphelin',
+    ENFANT_EN_DIFFICULTE: 'Enfant en difficulté',
   };
   return map[s];
 }
@@ -45,13 +47,20 @@ export function mapSummaryToChild(api: ApiChildSummary): Child & { apiId: string
     gender:          mapGender(api.gender),
     classe:          mapLevel(api.schoolRecord?.currentLevel),
     attendanceStatus:'present',
-    dossierStatus:   isDossierComplet((api.documents ?? []).map(d => d.type as ApiDocumentType)) ? 'complet' : 'incomplet',
+    dossierStatus:   (() => {
+      const types = (api.documents ?? []).map(d => d.type as ApiDocumentType);
+      if (!isDossierComplet(types)) return 'incomplet';
+      if (!isDossierEnrichi(types)) return 'partiel';
+      return 'complet';
+    })(),
     tuteurName:      api.guardianName  ?? '',
     tuteurPhone:     api.guardianPhone ?? '',
     admissionDate:   api.entryDate.split('T')[0],
+    childStatus:     api.status,
     exitStatus:      (api.isActive === false) ? 'sorti' : 'actif',
     exitType:        (api.exitType as 'temporaire' | 'définitive' | undefined) ?? undefined,
     exitDate:        api.exitDate?.split('T')[0],
+    exitReturnDate:  api.exitReturnDate?.split('T')[0],
     exitMotif:       api.exitReason ?? undefined,
     exitResponsable: api.exitResponsable ?? undefined,
   };
@@ -70,7 +79,7 @@ export function mapFullToChild(api: ApiChildFull): Child & { apiId: string } {
 // ─── Frontend → Backend ───────────────────────────────────────────────────────
 
 export function mapFormToPayload(
-  form: Omit<Child, 'id'> & { placeOfBirth?: string },
+  form: Omit<Child, 'id'> & { placeOfBirth?: string; childStatus?: ApiChildStatus },
 ): CreateChildPayload {
   return {
     firstName:    form.firstName,
@@ -79,7 +88,7 @@ export function mapFormToPayload(
     placeOfBirth: form.placeOfBirth ?? 'Dakar',
     gender:       form.gender === 'M' ? 'MASCULIN' : 'FEMININ',
     entryDate:    form.admissionDate,
-    status:       'ORPHELIN_COMPLET',         // default — user can update in CRM
+    status:       form.childStatus ?? 'ORPHELIN_COMPLET',
     guardianName:  form.tuteurName  || undefined,
     guardianPhone: form.tuteurPhone || undefined,
   };

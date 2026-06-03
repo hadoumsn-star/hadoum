@@ -10,6 +10,8 @@ datasource db {
 
 enum ChildStatus {
   ORPHELIN_COMPLET
+  ORPHELIN_PERE
+  ORPHELIN_MERE
   DEMI_ORPHELIN
   ENFANT_EN_DIFFICULTE
 }
@@ -37,6 +39,9 @@ enum DocumentType {
   ORDONNANCE
   BULLETIN_SCOLAIRE
   LEGAL_DOCUMENT
+  EVALUATION_PSYCHOMOTRICE
+  BILAN_PSYCHOSOMATIQUE
+  BILAN_SANTE
   AUTRE
 }
 
@@ -70,6 +75,7 @@ model Child {
   isActive          Boolean  @default(true)
   exitType          String?  // 'temporaire' | 'définitive'
   exitDate          DateTime?
+  exitReturnDate    DateTime?
   exitReason        String?
   exitResponsable   String?
 
@@ -253,28 +259,37 @@ enum CandidateStatus {
 }
 
 model StaffMember {
-  id        String      @id @default(uuid())
-  firstName String
-  lastName  String
-  role      String
-  classes   String[]
-  status    StaffStatus @default(PRESENT)
-  phone     String?
-  email     String?
-  since     DateTime    @default(now())
+  id           String      @id @default(uuid())
+  firstName    String
+  lastName     String
+  role         String
+  classes      String[]
+  status       StaffStatus @default(PRESENT)
+  phone        String?
+  email        String?
+  since        DateTime    @default(now())
+  cvKey        String?
+  scheduleKey  String?
+  scheduleJson String?
+  notes        String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
 
 model Candidate {
-  id         String          @id @default(uuid())
-  firstName  String
-  lastName   String
-  targetRole String?
-  phone      String?
-  status     CandidateStatus @default(NOUVEAU)
-  cvKey      String?
+  id               String          @id @default(uuid())
+  firstName        String
+  lastName         String
+  targetRole       String?
+  phone            String?
+  status           CandidateStatus @default(NOUVEAU)
+  cvKey            String?
+  typeCandidature  String?
+  disponibleDe             DateTime?
+  contactInfo              String?
+  notes                    String?
+  scheduledIntegrationDate DateTime?
 
   appliedAt  DateTime @default(now())
   createdAt  DateTime @default(now())
@@ -290,6 +305,35 @@ model FormerStaffMember {
   exitReason String
 
   createdAt  DateTime @default(now())
+}
+
+model CandidateDoc {
+  id          String   @id @default(uuid())
+  candidateId String
+  key         String
+  label       String
+  createdAt   DateTime @default(now())
+}
+
+model StaffDoc {
+  id        String   @id @default(uuid())
+  staffId   String
+  key       String
+  label     String
+  createdAt DateTime @default(now())
+}
+
+model StaffAttendance {
+  id        String   @id @default(uuid())
+  staffId   String
+  type      String
+  motif     String?
+  dateDebut DateTime
+  dateFin   DateTime?
+  justifKey String?
+  justified Boolean  @default(false)
+
+  createdAt DateTime @default(now())
 }
 
 // ─── Reports ─────────────────────────────────────────────────────────────────
@@ -324,6 +368,9 @@ model User {
   role         UserRole
   roleLabel    String
   title        String
+
+  resetToken       String?
+  resetTokenExpiry DateTime?
 
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt

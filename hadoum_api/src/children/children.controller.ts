@@ -114,6 +114,15 @@ export class ChildrenController {
     return this.childrenService.getEventLog(id);
   }
 
+  @Patch(':id/events/:eventId')
+  updateEvent(
+    @Param('id') id: string,
+    @Param('eventId') eventId: string,
+    @Body() dto: Partial<CreateEventDto>,
+  ) {
+    return this.childrenService.updateEvent(id, eventId, dto);
+  }
+
   @Delete(':id/events/:eventId')
   deleteEvent(@Param('id') id: string, @Param('eventId') eventId: string) {
     return this.childrenService.deleteEvent(id, eventId);

@@ -176,14 +176,16 @@ export interface Child {
   gender: 'M' | 'F';
   classe: 'Maternelle' | 'Primaire 1' | 'Primaire 2' | 'Primaire 3' | 'Collège';
   attendanceStatus: 'present' | 'absent';
-  dossierStatus: 'complet' | 'incomplet';
+  dossierStatus: 'complet' | 'partiel' | 'incomplet';
   tuteurName: string;
   tuteurPhone: string;
   admissionDate: string; // YYYY-MM-DD
+  childStatus?: 'ORPHELIN_COMPLET' | 'ORPHELIN_PERE' | 'ORPHELIN_MERE' | 'DEMI_ORPHELIN' | 'ENFANT_EN_DIFFICULTE';
   // CRM exit fields
   exitStatus?: 'actif' | 'sorti';
   exitType?: 'temporaire' | 'définitive';
   exitDate?: string;
+  exitReturnDate?: string;
   exitMotif?: string;
   exitResponsable?: string;
 }
@@ -212,6 +214,7 @@ export interface TeamMember {
   id: number; name: string; role: string;
   classes: string[]; status: 'present' | 'absent' | 'conge';
   phone: string; email: string; since: string; initials: string;
+  scheduleJson?: string | null;
 }
 
 export const teamMembers: TeamMember[] = [
@@ -240,6 +243,11 @@ export interface Candidat {
   telephone: string;
   statut: 'nouveau' | 'présélectionné' | 'entretien fait';
   cvUploaded: boolean;
+  cvKey?: string | null;
+  typeCandidature?: string | null;
+  disponibleDe?: string | null;
+  notes?: string | null;
+  contactInfo?: string | null;
 }
 
 export interface FormerMember {

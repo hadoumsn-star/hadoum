@@ -26,7 +26,7 @@ export const childrenApi = {
   create: (payload: CreateChildPayload) =>
     api.post<ApiChildFull>('/children', payload),
 
-  update: (id: string, payload: Partial<CreateChildPayload>) =>
+  update: (id: string, payload: Partial<CreateChildPayload> & { exitReturnDate?: string | null; exitDate?: string }) =>
     api.patch<ApiChildFull>(`/children/${id}`, payload),
 
   exitChild: (id: string, data: { exitType: string; exitDate: string; exitReason: string; exitResponsable?: string; dateRetour?: string }) =>
@@ -64,6 +64,9 @@ export const childrenApi = {
 
   getEvents: (childId: string) =>
     api.get<ApiEventLog[]>(`/children/${childId}/events`),
+
+  updateEvent: (childId: string, eventId: string, data: { summary?: string; details?: string }) =>
+    api.patch<ApiEventLog>(`/children/${childId}/events/${eventId}`, data),
 
   deleteEvent: (childId: string, eventId: string) =>
     api.delete(`/children/${childId}/events/${eventId}`),

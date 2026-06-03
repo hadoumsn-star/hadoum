@@ -1,7 +1,7 @@
 // ─── Enums matching backend ───────────────────────────────────────────────────
 
 export type ApiGender = 'MASCULIN' | 'FEMININ';
-export type ApiChildStatus = 'ORPHELIN_COMPLET' | 'DEMI_ORPHELIN' | 'ENFANT_EN_DIFFICULTE';
+export type ApiChildStatus = 'ORPHELIN_COMPLET' | 'ORPHELIN_PERE' | 'ORPHELIN_MERE' | 'DEMI_ORPHELIN' | 'ENFANT_EN_DIFFICULTE';
 export type ApiSchoolType = 'DAARA' | 'ECOLE_PUBLIQUE' | 'ECOLE_PRIVEE';
 export type ApiDocumentType =
   | 'ACTE_NAISSANCE'
@@ -15,6 +15,9 @@ export type ApiDocumentType =
   | 'ORDONNANCE'
   | 'BULLETIN_SCOLAIRE'
   | 'LEGAL_DOCUMENT'
+  | 'EVALUATION_PSYCHOMOTRICE'
+  | 'BILAN_PSYCHOLOGIQUE'
+  | 'BILAN_SANTE'
   | 'AUTRE';
 
 // ─── List item (GET /api/children) ───────────────────────────────────────────
@@ -33,6 +36,7 @@ export interface ApiChildSummary {
   isActive: boolean;
   exitType: string | null;
   exitDate: string | null;
+  exitReturnDate: string | null;
   exitReason: string | null;
   exitResponsable: string | null;
   schoolRecord: { currentLevel: string } | null;

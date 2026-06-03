@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { FileText, Download, ExternalLink, Search, Check, Loader2, Upload, X, Trash2 } from 'lucide-react';
+import { FileText, Download, Eye, Search, Check, Loader2, Upload, X, Trash2 } from 'lucide-react';
 import { reportsApi, type ApiReport } from '../services/reports.api';
 
 type ReportType = 'all' | 'Mensuel' | 'Trimestriel' | 'Annuel' | 'Financier' | 'Audit';
@@ -171,11 +171,13 @@ export function ReportsPage() {
       .finally(() => setLoading(false));
   }, []);
 
-  const filtered = reports.filter(r => {
-    const q = search.toLowerCase();
-    return (!q || r.title.toLowerCase().includes(q))
-      && (typeFilter === 'all' || r.type === typeFilter);
-  });
+  const filtered = reports
+    .filter(r => {
+      const q = search.toLowerCase();
+      return (!q || r.title.toLowerCase().includes(q))
+        && (typeFilter === 'all' || r.type === typeFilter);
+    })
+    .sort((a, b) => new Date(b.reportDate).getTime() - new Date(a.reportDate).getTime());
 
   const openPresigned = async (id: string, download = false) => {
     setActionId(id);
@@ -313,9 +315,9 @@ export function ReportsPage() {
                             </button>
                             {/* View */}
                             <button onClick={() => openPresigned(r.id, false)} disabled={busy || deleting === r.id}
-                              className="p-1.5 rounded-lg hover:bg-gray-100" title="Ouvrir"
-                              style={{ border: 'none', cursor: busy ? 'wait' : 'pointer', background: 'transparent' }}>
-                              <ExternalLink size={13} style={{ color: '#6B7280' }} />
+                              className="flex items-center justify-center rounded-lg hover:bg-gray-100" title="Voir le rapport"
+                              style={{ width: 30, height: 30, border: 'none', cursor: busy ? 'wait' : 'pointer', background: 'transparent' }}>
+                              <Eye size={14} style={{ color: '#6B7280' }} />
                             </button>
                             {/* Delete — directors only */}
                             {canUpload && (

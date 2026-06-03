@@ -17,8 +17,12 @@ export class ChildrenService {
   ) {}
 
   async create(dto: CreateChildDto) {
-    const count = await this.prisma.child.count();
-    const fileNumber = `HAD-${String(count + 1).padStart(4, '0')}`;
+    const last = await this.prisma.child.findFirst({
+      orderBy: { fileNumber: 'desc' },
+      select: { fileNumber: true },
+    });
+    const lastNum = last ? parseInt(last.fileNumber.replace('HAD-', ''), 10) : 0;
+    const fileNumber = `HAD-${String(lastNum + 1).padStart(4, '0')}`;
     return this.prisma.child.create({
       data: {
         ...dto,
@@ -59,6 +63,7 @@ export class ChildrenService {
         isActive: true,
         exitType: true,
         exitDate: true,
+        exitReturnDate: true,
         exitReason: true,
         exitResponsable: true,
         schoolRecord: { select: { currentLevel: true } },
@@ -86,7 +91,19 @@ export class ChildrenService {
 
   async update(id: string, dto: UpdateChildDto) {
     await this.findOne(id);
-    return this.prisma.child.update({ where: { id }, data: dto });
+    const { exitReturnDate, exitDate, ...rest } = dto as any;
+    return this.prisma.child.update({
+      where: { id },
+      data: {
+        ...rest,
+        ...(exitReturnDate !== undefined
+          ? { exitReturnDate: exitReturnDate ? new Date(exitReturnDate) : null }
+          : {}),
+        ...(exitDate !== undefined
+          ? { exitDate: exitDate ? new Date(exitDate) : null }
+          : {}),
+      },
+    });
   }
 
   async exitChild(id: string, data: {
@@ -103,12 +120,13 @@ export class ChildrenService {
         isActive: false,
         exitType: data.exitType,
         exitDate: new Date(data.exitDate),
+        exitReturnDate: data.dateRetour ? new Date(data.dateRetour) : null,
         exitReason: data.exitReason,
         exitResponsable: data.exitResponsable ?? null,
       },
     });
-    // Store dateRetour in details as JSON so we can read it back
     const details = JSON.stringify({
+      dateDepart: data.exitDate,
       motif: data.exitReason,
       dateRetour: data.dateRetour ?? null,
     });
@@ -128,7 +146,7 @@ export class ChildrenService {
     await this.findOne(id);
     return this.prisma.child.update({
       where: { id },
-      data: { isActive: true, exitType: null, exitDate: null, exitReason: null, exitResponsable: null },
+      data: { isActive: true, exitType: null, exitDate: null, exitReturnDate: null, exitReason: null, exitResponsable: null },
     });
   }
 
@@ -221,6 +239,13 @@ export class ChildrenService {
     return this.prisma.eventLog.findMany({
       where: { childId },
       orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  async updateEvent(childId: string, eventId: string, dto: Partial<CreateEventDto>) {
+    return this.prisma.eventLog.update({
+      where: { id: eventId },
+      data: dto,
     });
   }
 

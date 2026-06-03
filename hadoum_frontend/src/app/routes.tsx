@@ -1,6 +1,8 @@
 import { createBrowserRouter, Navigate } from 'react-router';
-import { AppLayout }       from './layout/AppLayout';
-import { LoginPage }       from './pages/LoginPage';
+import { AppLayout }            from './layout/AppLayout';
+import { LoginPage }            from './pages/LoginPage';
+import { ForgotPasswordPage }   from './pages/ForgotPasswordPage';
+import { ResetPasswordPage }    from './pages/ResetPasswordPage';
 import { RoleDashboard }   from './pages/RoleDashboard';
 import { ChildrenPage }    from './pages/ChildrenPage';
 import { TeamPage }        from './pages/TeamPage';
@@ -20,9 +22,11 @@ import { ProfilePage }     from './pages/ProfilePage';
 import { MessagesPage }    from './pages/MessagesPage';
 
 export const router = createBrowserRouter([
-  { path: '/',              element: <Navigate to="/login" replace /> },
-  { path: '/login',         Component: LoginPage },
-  { path: '/design-system', Component: DesignSystemPage },
+  { path: '/',                 element: <Navigate to="/login" replace /> },
+  { path: '/login',            Component: LoginPage },
+  { path: '/forgot-password',  Component: ForgotPasswordPage },
+  { path: '/reset-password',   Component: ResetPasswordPage },
+  { path: '/design-system',    Component: DesignSystemPage },
   {
     path: '/app',
     Component: AppLayout,
