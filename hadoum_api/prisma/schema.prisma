@@ -40,7 +40,7 @@ enum DocumentType {
   BULLETIN_SCOLAIRE
   LEGAL_DOCUMENT
   EVALUATION_PSYCHOMOTRICE
-  BILAN_PSYCHOSOMATIQUE
+  BILAN_PSYCHOLOGIQUE
   BILAN_SANTE
   AUTRE
 }
@@ -297,12 +297,14 @@ model Candidate {
 }
 
 model FormerStaffMember {
-  id         String   @id @default(uuid())
+  id         String    @id @default(uuid())
   firstName  String
   lastName   String
   role       String
   exitDate   DateTime
   exitReason String
+  scheduledReintegrationDate DateTime?
+  scheduledRole              String?
 
   createdAt  DateTime @default(now())
 }

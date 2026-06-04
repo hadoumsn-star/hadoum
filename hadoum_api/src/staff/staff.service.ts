@@ -304,6 +304,16 @@ export class StaffService {
     return this.prisma.formerStaffMember.findMany({ orderBy: { exitDate: 'desc' } });
   }
 
+  async scheduleReintegration(id: string, role: string, date: string) {
+    return this.prisma.formerStaffMember.update({
+      where: { id },
+      data: {
+        scheduledReintegrationDate: new Date(date),
+        scheduledRole: role || undefined,
+      },
+    });
+  }
+
   async reintegrate(id: string, role: string, reintegrationDate: string) {
     const former = await this.prisma.formerStaffMember.findUniqueOrThrow({ where: { id } });
     const [member] = await this.prisma.$transaction([

@@ -2447,13 +2447,34 @@ function FormerTab({ former, onReintegrate }: {
                       {m.motifSortie}
                     </span>
                   </td>
-                  {/* Bouton Réintégrer (point 3) */}
                   <td className="px-5 py-4">
-                    <button onClick={() => onReintegrate(m)}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg"
-                      style={{ background: '#EEF2F7', color: '#3E5A78', fontSize: 12, fontWeight: 600, border: 'none', cursor: 'pointer', whiteSpace: 'nowrap' }}>
-                      <UserCheck size={13} /> Réintégrer
-                    </button>
+                    {(() => {
+                      const srd = (m as any).scheduledReintegrationDate as string | null;
+                      const today = new Date().toISOString().split('T')[0];
+                      if (srd && srd.split('T')[0] > today) {
+                        return (
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="flex items-center gap-1 px-2 py-0.5 rounded-full"
+                              style={{ background: '#FFFBEB', color: '#D97706', fontSize: 11, fontWeight: 600, border: '1px solid #FDE68A', whiteSpace: 'nowrap' }}>
+                              <CalendarClock size={11} />
+                              Intégration le {new Date(srd).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' })}
+                            </span>
+                            <button onClick={() => onReintegrate(m)}
+                              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg"
+                              style={{ background: '#ECFDF5', color: '#065F46', fontSize: 11, fontWeight: 600, border: 'none', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                              <UserCheck size={12} /> Intégrer maintenant
+                            </button>
+                          </div>
+                        );
+                      }
+                      return (
+                        <button onClick={() => onReintegrate(m)}
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg"
+                          style={{ background: '#EEF2F7', color: '#3E5A78', fontSize: 12, fontWeight: 600, border: 'none', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                          <UserCheck size={13} /> Réintégrer
+                        </button>
+                      );
+                    })()}
                   </td>
                 </tr>
               );
@@ -2575,15 +2596,24 @@ export function TeamPage() {
 
   const handleReintegrate = async (poste: string, date: string, _note: string, planning: WeekPlan) => {
     if (!reintegrateTarget) return;
+    const today = new Date().toISOString().split('T')[0];
+    const isFuture = date > today;
     try {
-      const newMember = await teamApi.reintegrate(reintegrateTarget.apiId, poste, date);
-      await teamApi.updateStaff(newMember.id, { scheduleJson: JSON.stringify(planning) });
-      const fresh = await teamApi.getStaff(newMember.id);
-      setMembers(prev => [mapStaff(fresh) as any, ...prev]);
-      setFormer(prev => prev.filter(m => m.apiId !== reintegrateTarget.apiId));
+      if (isFuture) {
+        const updated = await teamApi.scheduleReintegration(reintegrateTarget.apiId, poste, date);
+        setFormer(prev => prev.map(m => m.apiId === reintegrateTarget.apiId ? { ...m, ...mapFormer(updated) } as any : m));
+        const dateLabel = new Date(date).toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' });
+        toast.success(`Réintégration de ${reintegrateTarget.name} programmée au ${dateLabel}.`);
+      } else {
+        const newMember = await teamApi.reintegrate(reintegrateTarget.apiId, poste, date);
+        await teamApi.updateStaff(newMember.id, { scheduleJson: JSON.stringify(planning) });
+        const fresh = await teamApi.getStaff(newMember.id);
+        setMembers(prev => [mapStaff(fresh) as any, ...prev]);
+        setFormer(prev => prev.filter(m => m.apiId !== reintegrateTarget.apiId));
+        setTab('active');
+        toast.success(`${reintegrateTarget.name} a été réintégré(e) dans l'équipe active.`);
+      }
       setReintegrateTarget(null);
-      setTab('active');
-      toast.success(`${reintegrateTarget.name} a été réintégré(e) dans l'équipe active.`);
     } catch { toast.error('Erreur lors de la réintégration.'); }
   };
 

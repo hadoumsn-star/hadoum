@@ -45,6 +45,8 @@ export interface ApiFormerMember {
   role: string;
   exitDate: string;
   exitReason: string;
+  scheduledReintegrationDate?: string | null;
+  scheduledRole?: string | null;
 }
 
 // ─── API calls ────────────────────────────────────────────────────────────────
@@ -136,6 +138,8 @@ export const teamApi = {
 
   // Former
   listFormer: () => api.get<ApiFormerMember[]>('/staff/former'),
+  scheduleReintegration: (id: string, role: string, scheduledReintegrationDate: string) =>
+    api.patch<ApiFormerMember>(`/staff/former/${id}`, { role, scheduledReintegrationDate }),
   reintegrate: (id: string, role: string, reintegrationDate: string) =>
     api.post<ApiStaffMember>(`/staff/former/${id}/reintegrate`, { role, reintegrationDate }),
 };
@@ -185,12 +189,14 @@ export function mapCandidate(c: ApiCandidate) {
 export function mapFormer(m: ApiFormerMember) {
   const initials = `${m.firstName[0] ?? '?'}${m.lastName[0] ?? '?'}`.toUpperCase();
   return {
-    apiId:       m.id,
-    id:          m.id,
-    name:        `${m.firstName} ${m.lastName}`,
-    role:        m.role,
-    dateSortie:  new Date(m.exitDate).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' }),
-    motifSortie: m.exitReason,
+    apiId:                     m.id,
+    id:                        m.id,
+    name:                      `${m.firstName} ${m.lastName}`,
+    role:                      m.role,
+    dateSortie:                new Date(m.exitDate).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' }),
+    motifSortie:               m.exitReason,
+    scheduledReintegrationDate: m.scheduledReintegrationDate ?? null,
+    scheduledRole:             m.scheduledRole ?? null,
     initials,
   };
 }

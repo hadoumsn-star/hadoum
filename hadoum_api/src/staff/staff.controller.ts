@@ -119,6 +119,11 @@ export class StaffController {
   @Get('former')
   findFormer() { return this.staffService.findAllFormer(); }
 
+  @Patch('former/:id')
+  scheduleReintegration(@Param('id') id: string, @Body() body: { role?: string; scheduledReintegrationDate?: string }) {
+    return this.staffService.scheduleReintegration(id, body.role ?? '', body.scheduledReintegrationDate ?? '');
+  }
+
   @Post('former/:id/reintegrate')
   reintegrate(@Param('id') id: string, @Body() body: { role: string; reintegrationDate: string }) {
     return this.staffService.reintegrate(id, body.role, body.reintegrationDate);
