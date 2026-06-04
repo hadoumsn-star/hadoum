@@ -28,7 +28,7 @@ Ajouter un filtre "Actifs / Sortis / Tous" dans la liste des enfants.
 
 Dossier incomplet :
 Ajouter dans l'onglet Identité une section "Documents requis" avec liste de cases à cocher :
-Acte de naissance, Acte de décès parent(s), Pièce d'identité tuteur légal, Accord AEMO, Carnet de santé, Certificat de prise en charge, Autorisation gouvernementale, Photo.
+Acte de naissance, Acte de décès parent(s), Pièce d'identité tuteur légal, Accord AEMO, Carnet de santé, Certificat de prise en charge, Photo.
 Si au moins une case est décochée → badge "Dossier incomplet" rouge sur la fiche et dans la liste.
 
 ---

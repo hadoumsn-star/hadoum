@@ -14,7 +14,7 @@ Corrections :
   Cette étape arrive en avant-dernière position, juste avant le récapitulatif.
   Elle contient la checklist des 8 documents : Acte de naissance, Acte de décès parent(s),
   Pièce d'identité tuteur légal, Accord AEMO, Carnet de santé,
-  Certificat de prise en charge, Autorisation gouvernementale, Photo.
+  Certificat de prise en charge, Photo.
 - Chaque document a une case à cocher "Reçu" et un bouton d'upload simulé "Joindre".
 - Cette même checklist doit rester accessible et modifiable dans l'onglet Identité
   de la fiche CRM une fois l'enfant créé.
