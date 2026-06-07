@@ -1,4 +1,4 @@
-import { Menu, Bell, ChevronDown, LogOut, Settings, User, ChevronLeft, ChevronRight, X } from 'lucide-react';
+import { Menu, Bell, ChevronDown, LogOut, User, ChevronLeft, ChevronRight, X } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router';
@@ -352,13 +352,6 @@ export function Topbar({ onMenuClick, pageTitle = 'Tableau de bord', breadcrumb 
                   >
                     <User size={15} style={{ color: '#6B7280' }} />
                     <span style={{ color: '#374151', fontSize: 13 }}>Mon profil</span>
-                  </button>
-                  <button
-                    onClick={() => { navigate('/app/settings'); setProfileOpen(false); }}
-                    className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50 transition-colors text-left"
-                  >
-                    <Settings size={15} style={{ color: '#6B7280' }} />
-                    <span style={{ color: '#374151', fontSize: 13 }}>Paramètres</span>
                   </button>
                 </div>
 

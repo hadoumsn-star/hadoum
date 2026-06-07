@@ -3,7 +3,7 @@ import { Link, useLocation } from 'react-router';
 import {
   LayoutDashboard, Users, UsersRound, CalendarCheck,
   DollarSign, FileText, BookOpen, Activity,
-  BarChart2, Download, ChevronsLeft, ChevronsRight, AlertTriangle,
+  BarChart2, Download, AlertTriangle,
   MessageSquare,
 } from 'lucide-react';
 import { useAuth, UserRole } from '../context/AuthContext';
@@ -13,8 +13,6 @@ import { HadoumLogo } from '../components/HadoumLogo';
 
 interface NavItem { label: string; path: string; icon: React.ElementType; }
 interface SidebarProps {
-  collapsed: boolean;
-  onToggleCollapse: () => void;
   onNavClick: () => void;
 }
 
@@ -75,37 +73,10 @@ const NAV_BY_ROLE: Record<UserRole, { primary: NavItem[]; secondary: NavItem[] }
 
 // ─── Nav item (expanded & collapsed) ─────────────────────────────────────────
 
-function NavItemRow({ item, isActive, collapsed, onNavClick }: {
-  item: NavItem; isActive: boolean; collapsed: boolean; onNavClick: () => void;
+function NavItemRow({ item, isActive, onNavClick }: {
+  item: NavItem; isActive: boolean; onNavClick: () => void;
 }) {
   const Icon = item.icon;
-
-  if (collapsed) {
-    return (
-      <li>
-        <Link
-          to={item.path}
-          onClick={onNavClick}
-          title={item.label}
-          className="relative flex items-center justify-center rounded-lg mx-auto my-0.5 transition-all"
-          style={{
-            width: 40, height: 40,
-            background: isActive ? '#EEF2F7' : 'transparent',
-            textDecoration: 'none',
-            display: 'flex',
-          }}
-        >
-          {isActive && (
-            <div
-              className="absolute left-0 rounded-r-full"
-              style={{ width: 3, height: 22, background: '#3E5A78', top: '50%', transform: 'translateY(-50%)' }}
-            />
-          )}
-          <Icon size={18} style={{ color: isActive ? '#3E5A78' : '#6B7280' }} />
-        </Link>
-      </li>
-    );
-  }
 
   return (
     <li>
@@ -133,17 +104,13 @@ function NavItemRow({ item, isActive, collapsed, onNavClick }: {
 
 // ─── Sidebar ──────────────────────────────────────────────────────────────────
 
-export function Sidebar({ collapsed, onToggleCollapse, onNavClick }: SidebarProps) {
+export function Sidebar({ onNavClick }: SidebarProps) {
   const { user } = useAuth();
   const location = useLocation();
-
-  // On mobile, sidebar is always full-width — collapse only applies on desktop
-  // (handled by AppLayout which only sets collapsed width on lg+)
 
   if (!user) return null;
 
   const { primary, secondary } = NAV_BY_ROLE[user.role];
-  const allItems = [...primary, ...secondary];
 
   const isActive = (path: string) => location.pathname === path;
 
@@ -156,15 +123,11 @@ export function Sidebar({ collapsed, onToggleCollapse, onNavClick }: SidebarProp
         style={{
           height: 64,
           borderBottom: '1px solid #E5E7EB',
-          padding: collapsed ? '0' : '0 16px',
-          justifyContent: collapsed ? 'center' : 'flex-start',
+          padding: '0 16px',
           overflow: 'hidden',
         }}
       >
-        {collapsed
-          ? <HadoumLogo size="small" variant="mark-only" />
-          : <HadoumLogo size="default" variant="full" />
-        }
+        <HadoumLogo size="default" variant="full" />
       </div>
 
       {/* Role badge */}
@@ -172,34 +135,25 @@ export function Sidebar({ collapsed, onToggleCollapse, onNavClick }: SidebarProp
         className="flex-shrink-0"
         style={{
           borderBottom: '1px solid #F3F4F6',
-          padding: collapsed ? '10px 0' : '10px 16px',
+          padding: '10px 16px',
           display: 'flex',
-          justifyContent: collapsed ? 'center' : 'flex-start',
         }}
       >
-        {collapsed ? (
-          <div
-            className="w-2 h-2 rounded-full"
-            style={{ background: '#3E5A78' }}
-            title={user.roleLabel}
-          />
-        ) : (
-          <div
-            className="flex items-center gap-2 px-3 py-2 rounded-lg"
-            style={{ background: '#F0F4F8' }}
-          >
-            <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: '#3E5A78' }} />
-            <span style={{ color: '#3E5A78', fontSize: 12, fontWeight: 600, letterSpacing: '0.04em', whiteSpace: 'nowrap' }}>
-              {user.roleLabel.toUpperCase()}
-            </span>
-          </div>
-        )}
+        <div
+          className="flex items-center gap-2 px-3 py-2 rounded-lg"
+          style={{ background: '#F0F4F8' }}
+        >
+          <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: '#3E5A78' }} />
+          <span style={{ color: '#3E5A78', fontSize: 12, fontWeight: 600, letterSpacing: '0.04em', whiteSpace: 'nowrap' }}>
+            {user.roleLabel.toUpperCase()}
+          </span>
+        </div>
       </div>
 
       {/* Navigation — flat list, divider between primary & secondary */}
       <nav
         className="flex-1 overflow-y-auto overflow-x-hidden"
-        style={{ padding: collapsed ? '12px 8px' : '12px' }}
+        style={{ padding: '12px' }}
       >
         {/* Primary items */}
         <ul className="space-y-0.5">
@@ -208,7 +162,6 @@ export function Sidebar({ collapsed, onToggleCollapse, onNavClick }: SidebarProp
               key={item.path}
               item={item}
               isActive={isActive(item.path)}
-              collapsed={collapsed}
               onNavClick={onNavClick}
             />
           ))}
@@ -227,7 +180,6 @@ export function Sidebar({ collapsed, onToggleCollapse, onNavClick }: SidebarProp
                   key={item.path}
                   item={item}
                   isActive={isActive(item.path)}
-                  collapsed={collapsed}
                   onNavClick={onNavClick}
                 />
               ))}
@@ -235,46 +187,6 @@ export function Sidebar({ collapsed, onToggleCollapse, onNavClick }: SidebarProp
           </>
         )}
       </nav>
-
-      {/* Footer: collapse toggle + design system */}
-      <div className="flex-shrink-0" style={{ borderTop: '1px solid #F3F4F6' }}>
-        {/* Collapse button — desktop only */}
-        <button
-          onClick={onToggleCollapse}
-          className="hidden lg:flex w-full items-center px-4 py-3 hover:bg-gray-50 transition-colors"
-          style={{
-            border: 'none', background: 'transparent', cursor: 'pointer',
-            justifyContent: collapsed ? 'center' : 'flex-start',
-          }}
-          title={collapsed ? 'Développer le menu' : 'Réduire le menu'}
-        >
-          {collapsed
-            ? <ChevronsRight size={16} style={{ color: '#9CA3AF' }} />
-            : (
-              <div className="flex items-center gap-2">
-                <ChevronsLeft size={15} style={{ color: '#9CA3AF' }} />
-                <span style={{ color: '#9CA3AF', fontSize: 12, fontWeight: 500 }}>Réduire</span>
-              </div>
-            )
-          }
-        </button>
-
-        {/* Design system link — only when expanded */}
-        {!collapsed && (
-          <div className="px-4 pb-3">
-            <a
-              href="/design-system"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-gray-50 transition-colors"
-              style={{ textDecoration: 'none' }}
-            >
-              <div className="w-1.5 h-1.5 rounded-full" style={{ background: '#D1D5DB' }} />
-              <span style={{ color: '#9CA3AF', fontSize: 11, fontWeight: 500 }}>Design System</span>
-            </a>
-          </div>
-        )}
-      </div>
     </div>
   );
 }

@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { TeamMember, Candidat, FormerMember } from '../data/mockData';
 import {
   Plus, Search, X, Edit3, Check,
@@ -924,6 +925,7 @@ function EditCandidateModal({ candidat, onSave, onClose }: {
   });
   const [remarques,      setRemarques]      = useState(((candidat as any).notes as string) ?? '');
   const [cvFile,         setCvFile]         = useState<File | null>(null);
+  const [cinFile,        setCinFile]        = useState<File | null>(null);
   const [extraFiles,     setExtraFiles]     = useState<File[]>([]);
   const [existingDocs,   setExistingDocs]   = useState<{ id: string; label: string }[]>([]);
   const [saving,         setSaving]         = useState(false);
@@ -973,6 +975,10 @@ function EditCandidateModal({ candidat, onSave, onClose }: {
       });
       let final = updated;
       if (cvFile) final = await teamApi.uploadCv(candidat.apiId, cvFile);
+      if (cinFile) {
+        if (cinDocs[0]) await teamApi.deleteCandidateDoc(candidat.apiId, cinDocs[0].id);
+        await teamApi.uploadCandidateDoc(candidat.apiId, cinFile, "Carte d'identité nationale");
+      }
       await Promise.all(extraFiles.map(f => teamApi.uploadCandidateDoc(candidat.apiId, f, f.name)));
       onSave({ ...mapCandidate(final), apiId: candidat.apiId } as any);
     } catch { toast.error('Erreur lors de la mise à jour.'); }
@@ -1108,6 +1114,27 @@ function EditCandidateModal({ candidat, onSave, onClose }: {
           {/* Documents */}
           <div className="space-y-3">
             <SectionTitle>Documents</SectionTitle>
+            <div>
+              <label style={{ color: '#374151', fontSize: 12, fontWeight: 500, display: 'block', marginBottom: 5 }}>Carte d'identité</label>
+              <div className="space-y-1.5">
+                {cinDocs[0] && !cinFile && (
+                  <div className="flex items-center gap-2 px-3 py-2 rounded-lg"
+                    style={{ border: '1px solid #D1FAE5', background: 'rgba(6,95,70,0.03)' }}>
+                    <Check size={12} style={{ color: '#065F46', flexShrink: 0 }} />
+                    <span style={{ flex: 1, color: '#065F46', fontSize: 12 }}>Carte d'identité — déjà enregistrée</span>
+                    <button type="button" title="Voir le document" onClick={async () => {
+                      try { const { url } = await teamApi.getCandidateDocUrl(candidat.apiId, cinDocs[0].id); window.open(url, '_blank', 'noopener,noreferrer'); }
+                      catch { toast.error('Impossible d\'ouvrir le document.'); }
+                    }}
+                      className="flex items-center justify-center rounded"
+                      style={{ width: 26, height: 26, background: '#EEF2F7', color: '#3E5A78', border: 'none', cursor: 'pointer', flexShrink: 0 }}>
+                      <Eye size={13} />
+                    </button>
+                  </div>
+                )}
+                <FilePicker label={cinDocs[0] ? 'Remplacer la CIN…' : 'Joindre la CIN…'} file={cinFile} onChange={setCinFile} accept=".pdf,.jpg,.jpeg,.png" />
+              </div>
+            </div>
             <div>
               <label style={{ color: '#374151', fontSize: 12, fontWeight: 500, display: 'block', marginBottom: 5 }}>CV</label>
               <div className="space-y-1.5">
@@ -2162,7 +2189,7 @@ function CandidatesTab({ candidates, onAdd, onIntegrate, onEdit }: {
   onIntegrate: (c: Candidat & { apiId: string }) => void;
   onEdit: (c: Candidat & { apiId: string }) => void;
 }) {
-  const [docsPopover, setDocsPopover] = useState<{ id: string; docs: { id: string; label: string }[]; loading: boolean } | null>(null);
+  const [docsPopover, setDocsPopover] = useState<{ id: string; docs: { id: string; label: string }[]; loading: boolean; anchor: { top: number; right: number } } | null>(null);
 
   const handleCvClick = async (c: Candidat & { apiId: string }) => {
     if (!c.cvUploaded) return;
@@ -2174,12 +2201,14 @@ function CandidatesTab({ candidates, onAdd, onIntegrate, onEdit }: {
     }
   };
 
-  const handleDocsClick = async (c: Candidat & { apiId: string }) => {
+  const handleDocsClick = async (c: Candidat & { apiId: string }, e: React.MouseEvent<HTMLButtonElement>) => {
     if (docsPopover?.id === c.apiId) { setDocsPopover(null); return; }
-    setDocsPopover({ id: c.apiId, docs: [], loading: true });
+    const rect = e.currentTarget.getBoundingClientRect();
+    const anchor = { top: rect.bottom + 4, right: window.innerWidth - rect.right };
+    setDocsPopover({ id: c.apiId, docs: [], loading: true, anchor });
     try {
       const docs = await teamApi.listCandidateDocs(c.apiId);
-      setDocsPopover({ id: c.apiId, docs, loading: false });
+      setDocsPopover(prev => (prev && prev.id === c.apiId) ? { ...prev, docs, loading: false } : prev);
     } catch {
       toast.error('Impossible de charger les documents.');
       setDocsPopover(null);
@@ -2316,44 +2345,13 @@ function CandidatesTab({ candidates, onAdd, onIntegrate, onEdit }: {
                     </td>
 
                     {/* Docs complémentaires */}
-                    <td className="px-5 py-4" style={{ position: 'relative' }}>
-                      <button onClick={e => { e.stopPropagation(); handleDocsClick(c); }}
+                    <td className="px-5 py-4">
+                      <button onClick={e => { e.stopPropagation(); handleDocsClick(c, e); }}
                         title="Documents complémentaires"
                         className="flex items-center justify-center rounded"
                         style={{ width: 28, height: 28, background: docsPopover?.id === c.apiId ? '#3E5A78' : '#EEF2F7', color: docsPopover?.id === c.apiId ? '#FFFFFF' : '#3E5A78', border: 'none', cursor: 'pointer' }}>
-                        <Eye size={13} />
+                        <Paperclip size={13} />
                       </button>
-                      {docsPopover?.id === c.apiId && (
-                        <div className="fixed inset-0 z-40" onClick={() => setDocsPopover(null)} />
-                      )}
-                      {docsPopover?.id === c.apiId && (
-                        <div className="absolute z-50 rounded-xl shadow-xl overflow-hidden"
-                          onClick={e => e.stopPropagation()}
-                          style={{ top: '100%', right: 0, minWidth: 220, background: '#FFFFFF', border: '1px solid #E5E7EB', marginTop: 4 }}>
-                          <div className="px-3 py-2" style={{ borderBottom: '1px solid #F3F4F6', background: '#F9F7F3' }}>
-                            <p style={{ color: '#374151', fontSize: 11, fontWeight: 700 }}>DOCUMENTS COMPLÉMENTAIRES</p>
-                          </div>
-                          {docsPopover.loading ? (
-                            <div className="flex justify-center py-4">
-                              <Loader2 size={14} className="animate-spin" style={{ color: '#9CA3AF' }} />
-                            </div>
-                          ) : docsPopover.docs.length === 0 ? (
-                            <p className="px-3 py-3" style={{ color: '#9CA3AF', fontSize: 12 }}>Aucun document.</p>
-                          ) : (
-                            <div className="py-1">
-                              {docsPopover.docs.map(doc => (
-                                <button key={doc.id} onClick={() => openDoc(c.apiId, doc.id)}
-                                  className="w-full flex items-center gap-2 px-3 py-2 hover:bg-gray-50 text-left"
-                                  style={{ background: 'none', border: 'none', cursor: 'pointer' }}>
-                                  <Paperclip size={11} style={{ color: '#3E5A78', flexShrink: 0 }} />
-                                  <span style={{ color: '#374151', fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{doc.label}</span>
-                                  <Eye size={11} style={{ color: '#9CA3AF', flexShrink: 0, marginLeft: 'auto' }} />
-                                </button>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      )}
                     </td>
 
                     {/* Actions */}
@@ -2394,6 +2392,39 @@ function CandidatesTab({ candidates, onAdd, onIntegrate, onEdit }: {
           </table>
         )}
       </div>
+
+      {docsPopover && createPortal(
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setDocsPopover(null)} />
+          <div className="fixed z-50 rounded-xl shadow-xl overflow-hidden"
+            onClick={e => e.stopPropagation()}
+            style={{ top: docsPopover.anchor.top, right: docsPopover.anchor.right, width: 260, background: '#FFFFFF', border: '1px solid #E5E7EB' }}>
+            <div className="px-3 py-2" style={{ borderBottom: '1px solid #F3F4F6', background: '#F9F7F3' }}>
+              <p style={{ color: '#374151', fontSize: 11, fontWeight: 700 }}>DOCUMENTS COMPLÉMENTAIRES</p>
+            </div>
+            {docsPopover.loading ? (
+              <div className="flex justify-center py-4">
+                <Loader2 size={14} className="animate-spin" style={{ color: '#9CA3AF' }} />
+              </div>
+            ) : docsPopover.docs.length === 0 ? (
+              <p className="px-3 py-3" style={{ color: '#9CA3AF', fontSize: 12 }}>Aucun document.</p>
+            ) : (
+              <div className="py-1" style={{ maxHeight: 260, overflowY: 'auto' }}>
+                {docsPopover.docs.map(doc => (
+                  <button key={doc.id} onClick={() => openDoc(docsPopover.id, doc.id)}
+                    className="w-full flex items-center gap-2 px-3 py-2 hover:bg-gray-50 text-left"
+                    style={{ background: 'none', border: 'none', cursor: 'pointer' }}>
+                    <Paperclip size={11} style={{ color: '#3E5A78', flexShrink: 0 }} />
+                    <span style={{ flex: 1, minWidth: 0, color: '#374151', fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{doc.label}</span>
+                    <Eye size={11} style={{ color: '#9CA3AF', flexShrink: 0 }} />
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </>,
+        document.body
+      )}
     </div>
   );
 }

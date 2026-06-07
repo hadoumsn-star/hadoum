@@ -270,13 +270,13 @@ export class StaffService {
   }
 
   async getCandidateDocUrl(candidateId: string, docId: string): Promise<{ url: string }> {
-    const doc = await this.prisma.candidateDoc.findUniqueOrThrow({ where: { id: docId } });
+    const doc = await this.prisma.candidateDoc.findFirstOrThrow({ where: { id: docId, candidateId } });
     return { url: await this.uploadService.getPresignedUrl(doc.key) };
   }
 
   async deleteCandidateDoc(candidateId: string, docId: string): Promise<void> {
-    await this.prisma.candidateDoc.findUniqueOrThrow({ where: { id: docId } });
-    await this.prisma.candidateDoc.delete({ where: { id: docId } });
+    const doc = await this.prisma.candidateDoc.findFirstOrThrow({ where: { id: docId, candidateId } });
+    await this.prisma.candidateDoc.delete({ where: { id: doc.id } });
   }
 
   async promote(id: string, role?: string, since?: string) {

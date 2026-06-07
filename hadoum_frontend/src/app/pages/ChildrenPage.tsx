@@ -1,8 +1,8 @@
 import { useState, useMemo, useEffect } from 'react';
 import {
-  Plus, Search, X, Edit3, Users, UserCheck, AlertCircle, FolderOpen,
+  Plus, Search, X, Edit3, UserCheck, AlertCircle,
   ChevronDown, ArrowUp, ArrowDown, Check, ChevronRight,
-  ArrowLeft, Camera, UserMinus, Upload, Eye, Loader, Bell,
+  ArrowLeft, Camera, UserMinus, Upload, Eye, Loader, Bell, Trash2,
 } from 'lucide-react';
 import { Child } from '../data/mockData';
 import { childrenApi } from '../services/children.api';
@@ -13,7 +13,7 @@ import type { ApiDocument, ApiDocumentType, ApiChildStatus } from '../types/api.
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type StatusFilter = 'actif' | 'sorti' | 'all';
+type StatusFilter = 'actif' | 'sorti';
 type AttendanceFilter = 'all' | 'present' | 'absent';
 type DossierFilter    = 'all' | 'complet' | 'incomplet';
 type ClasseFilter     = 'all' | Child['classe'];
@@ -345,10 +345,9 @@ function CrmFiche({ child, crm, onClose, onExitRequest, onUpdate, onReactivate, 
   // ── Real documents state ────────────────────────────────────────────────────
   const [docs, setDocs]           = useState<ApiDocument[]>([]);
   const [loadingDocs, setLoadingDocs] = useState(false);
-  const [addingDoc, setAddingDoc]     = useState<ApiDocumentType | null>(null);
-  const [replacingDocId, setReplacingDocId] = useState<string | null>(null);
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [savingDoc, setSavingDoc]     = useState(false);
+  // Tracks which slot is currently uploading: a document type (new upload) or a document id (replacement)
+  const [uploadingFor, setUploadingFor] = useState<string | null>(null);
+  const [deletingDocId, setDeletingDocId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!child.apiId) return;
@@ -417,25 +416,52 @@ function CrmFiche({ child, crm, onClose, onExitRequest, onUpdate, onReactivate, 
   const complet = isDossierComplet(presentTypes);
   const enrichi = isDossierEnrichi(presentTypes);
 
-  const handleAddDoc = async (type: ApiDocumentType, label: string) => {
-    if (!child.apiId || !selectedFile) return;
-    setSavingDoc(true);
+  const handleAddDoc = async (type: ApiDocumentType, label: string, file: File) => {
+    if (!child.apiId) return;
+    setUploadingFor(type);
     try {
-      const created = await childrenApi.uploadDocument(child.apiId, selectedFile, type, label);
-      setDocs(prev => {
-        const updated = [...prev, created];
-        const types = updated.map(d => d.type as ApiDocumentType);
-        const complet = isDossierComplet(types);
-        const enrichi = isDossierEnrichi(types);
-        onDossierChange(!complet ? 'incomplet' : !enrichi ? 'partiel' : 'complet');
-        return updated;
-      });
-      setAddingDoc(null);
-      setSelectedFile(null);
+      const created = await childrenApi.uploadDocument(child.apiId, file, type, label);
+      const updated = [...docs, created];
+      setDocs(updated);
+      const types = updated.map(d => d.type as ApiDocumentType);
+      const complet = isDossierComplet(types);
+      const enrichi = isDossierEnrichi(types);
+      onDossierChange(!complet ? 'incomplet' : !enrichi ? 'partiel' : 'complet');
     } catch (err: any) {
       alert(`Erreur lors de l'envoi : ${err.message}`);
     } finally {
-      setSavingDoc(false);
+      setUploadingFor(null);
+    }
+  };
+
+  const handleReplaceDoc = async (docId: string, file: File) => {
+    if (!child.apiId) return;
+    setUploadingFor(docId);
+    try {
+      const updated = await childrenApi.replaceDocument(child.apiId, docId, file);
+      setDocs(prev => prev.map(d => d.id === docId ? updated : d));
+    } catch (err: any) {
+      alert(`Erreur lors du remplacement : ${err.message}`);
+    } finally {
+      setUploadingFor(null);
+    }
+  };
+
+  const handleDeleteDoc = async (docId: string) => {
+    if (!child.apiId) return;
+    setDeletingDocId(docId);
+    try {
+      await childrenApi.deleteDocument(child.apiId, docId);
+      const updated = docs.filter(d => d.id !== docId);
+      setDocs(updated);
+      const types = updated.map(d => d.type as ApiDocumentType);
+      const complet = isDossierComplet(types);
+      const enrichi = isDossierEnrichi(types);
+      onDossierChange(!complet ? 'incomplet' : !enrichi ? 'partiel' : 'complet');
+    } catch (err: any) {
+      alert(`Erreur lors de la suppression : ${err.message ?? 'veuillez réessayer.'}`);
+    } finally {
+      setDeletingDocId(null);
     }
   };
 
@@ -603,7 +629,8 @@ function CrmFiche({ child, crm, onClose, onExitRequest, onUpdate, onReactivate, 
                 <div className="space-y-2">
                   {REQUIRED_DOCS.map(req => {
                     const uploaded = docs.find(d => d.type === req.type);
-                    const isAdding = addingDoc === req.type;
+                    const isReplacing = uploaded ? uploadingFor === uploaded.id : false;
+                    const isUploading = uploadingFor === req.type;
                     return (
                       <div key={req.type}>
                         <div className="flex items-center gap-3 px-4 py-2.5 rounded-lg"
@@ -639,85 +666,46 @@ function CrmFiche({ child, crm, onClose, onExitRequest, onUpdate, onReactivate, 
                                 style={{ width: 28, height: 28, background: '#EEF2F7', color: '#3E5A78', border: 'none', cursor: 'pointer' }}>
                                 <Eye size={13} />
                               </button>
+                              <label
+                                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg"
+                                style={{ border: `1px solid ${isReplacing ? '#A7F3D0' : '#E5E7EB'}`, background: isReplacing ? 'rgba(6,95,70,0.04)' : '#FAFAFA', color: isReplacing ? '#065F46' : '#6B7280', fontSize: 11, fontWeight: 600, cursor: isReplacing ? 'not-allowed' : 'pointer' }}>
+                                {isReplacing ? <Loader size={11} className="animate-spin" style={{ color: '#065F46' }} /> : <Upload size={11} style={{ color: '#9CA3AF' }} />}
+                                {isReplacing ? 'Envoi…' : 'Remplacer'}
+                                <input type="file" className="hidden"
+                                  accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
+                                  disabled={isReplacing}
+                                  onChange={e => {
+                                    const f = e.target.files?.[0];
+                                    e.target.value = '';
+                                    if (f) handleReplaceDoc(uploaded.id, f);
+                                  }} />
+                              </label>
                               <button
-                                onClick={() => { setReplacingDocId(replacingDocId === uploaded.id ? null : uploaded.id); setSelectedFile(null); }}
-                                className="flex items-center gap-1 px-2 py-1 rounded"
-                                style={{ background: replacingDocId === uploaded.id ? '#FEF2F2' : '#F3F4F6', color: replacingDocId === uploaded.id ? '#B91C1C' : '#374151', fontSize: 11, fontWeight: 600, border: 'none', cursor: 'pointer' }}>
-                                <Upload size={10} /> {replacingDocId === uploaded.id ? 'Annuler' : 'Remplacer'}
+                                onClick={() => handleDeleteDoc(uploaded.id)}
+                                disabled={deletingDocId === uploaded.id}
+                                title="Supprimer le document"
+                                className="flex items-center justify-center rounded"
+                                style={{ width: 28, height: 28, background: 'none', border: 'none', color: '#B91C1C', cursor: deletingDocId === uploaded.id ? 'not-allowed' : 'pointer', opacity: deletingDocId === uploaded.id ? 0.5 : 1 }}>
+                                {deletingDocId === uploaded.id ? <Loader size={13} className="animate-spin" /> : <Trash2 size={13} />}
                               </button>
                             </div>
                           ) : (
-                            <button onClick={() => { setAddingDoc(isAdding ? null : req.type); setSelectedFile(null); }}
-                              className="flex items-center gap-1 px-2 py-1 rounded"
-                              style={{ background: isAdding ? '#FEF2F2' : '#F3F4F6', color: isAdding ? '#B91C1C' : '#374151', fontSize: 11, fontWeight: 600, border: 'none', cursor: 'pointer' }}>
-                              {isAdding ? <><X size={10} /> Annuler</> : <><Upload size={10} /> Ajouter</>}
-                            </button>
-                          )}
-                        </div>
-
-                        {/* Inline replace picker */}
-                        {uploaded && replacingDocId === uploaded.id && (
-                          <div className="flex items-center gap-2 mt-1 px-4 pb-2">
-                            <label className="flex items-center gap-2 flex-1 px-3 py-2 rounded-lg cursor-pointer"
-                              style={{ border: '1.5px dashed #D1D5DB', background: selectedFile ? 'rgba(62,90,120,0.04)' : '#FAFAFA' }}>
-                              <Upload size={13} style={{ color: '#9CA3AF', flexShrink: 0 }} />
-                              <span style={{ fontSize: 12, color: selectedFile ? '#1A1A1A' : '#9CA3AF', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                {selectedFile ? selectedFile.name : 'Choisir le nouveau fichier…'}
-                              </span>
+                            <label
+                              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg"
+                              style={{ border: `1px solid ${isUploading ? '#A7F3D0' : '#E5E7EB'}`, background: isUploading ? 'rgba(6,95,70,0.04)' : '#FAFAFA', color: isUploading ? '#065F46' : '#6B7280', fontSize: 11, fontWeight: 600, cursor: isUploading ? 'not-allowed' : 'pointer' }}>
+                              {isUploading ? <Loader size={11} className="animate-spin" style={{ color: '#065F46' }} /> : <Upload size={11} style={{ color: '#9CA3AF' }} />}
+                              {isUploading ? 'Envoi…' : 'Ajouter'}
                               <input type="file" className="hidden"
                                 accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
-                                onChange={e => setSelectedFile(e.target.files?.[0] ?? null)} />
+                                disabled={isUploading}
+                                onChange={e => {
+                                  const f = e.target.files?.[0];
+                                  e.target.value = '';
+                                  if (f) handleAddDoc(req.type, req.label, f);
+                                }} />
                             </label>
-                            <button
-                              onClick={async () => {
-                                if (!child.apiId || !selectedFile || !uploaded) return;
-                                setSavingDoc(true);
-                                try {
-                                  const updated = await childrenApi.replaceDocument(child.apiId, uploaded.id, selectedFile);
-                                  setDocs(prev => prev.map(d => d.id === uploaded.id ? updated : d));
-                                  setReplacingDocId(null);
-                                  setSelectedFile(null);
-                                } catch (err: any) {
-                                  alert(`Erreur lors du remplacement : ${err.message}`);
-                                } finally {
-                                  setSavingDoc(false);
-                                }
-                              }}
-                              disabled={!selectedFile || savingDoc}
-                              className="flex items-center gap-1 px-3 py-1.5 rounded-lg flex-shrink-0"
-                              style={{ background: selectedFile ? '#3E5A78' : '#E5E7EB', color: selectedFile ? '#FFFFFF' : '#9CA3AF', fontSize: 12, fontWeight: 600, border: 'none', cursor: selectedFile ? 'pointer' : 'not-allowed' }}>
-                              {savingDoc ? <Loader size={12} className="animate-spin" /> : <Check size={12} />}
-                              {savingDoc ? 'Envoi…' : 'Confirmer'}
-                            </button>
-                          </div>
-                        )}
-
-                        {/* Inline file picker */}
-                        {isAdding && (
-                          <div className="flex items-center gap-2 mt-1 px-4 pb-2">
-                            <label className="flex items-center gap-2 flex-1 px-3 py-2 rounded-lg cursor-pointer"
-                              style={{ border: '1.5px dashed #D1D5DB', background: selectedFile ? 'rgba(62,90,120,0.04)' : '#FAFAFA' }}>
-                              <Upload size={13} style={{ color: '#9CA3AF', flexShrink: 0 }} />
-                              <span style={{ fontSize: 12, color: selectedFile ? '#1A1A1A' : '#9CA3AF', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                {selectedFile ? selectedFile.name : 'Choisir un fichier…'}
-                              </span>
-                              <input
-                                type="file"
-                                className="hidden"
-                                accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
-                                onChange={e => setSelectedFile(e.target.files?.[0] ?? null)}
-                              />
-                            </label>
-                            <button
-                              onClick={() => handleAddDoc(req.type, req.label)}
-                              disabled={!selectedFile || savingDoc}
-                              className="flex items-center gap-1 px-3 py-1.5 rounded-lg flex-shrink-0"
-                              style={{ background: selectedFile ? '#3E5A78' : '#E5E7EB', color: selectedFile ? '#FFFFFF' : '#9CA3AF', fontSize: 12, fontWeight: 600, border: 'none', cursor: selectedFile ? 'pointer' : 'not-allowed' }}>
-                              {savingDoc ? <Loader size={12} className="animate-spin" /> : <Check size={12} />}
-                              {savingDoc ? 'Envoi…' : 'Enregistrer'}
-                            </button>
-                          </div>
-                        )}
+                          )}
+                        </div>
                       </div>
                     );
                   })}
@@ -741,7 +729,8 @@ function CrmFiche({ child, crm, onClose, onExitRequest, onUpdate, onReactivate, 
                 <div className="space-y-2">
                   {COMPLEMENTARY_DOCS.map(comp => {
                     const uploaded = docs.find(d => d.type === comp.type);
-                    const isAdding = addingDoc === comp.type;
+                    const isReplacing = uploaded ? uploadingFor === uploaded.id : false;
+                    const isUploading = uploadingFor === comp.type;
                     return (
                       <div key={comp.type}>
                         <div className="flex items-center gap-3 px-4 py-2.5 rounded-lg"
@@ -772,80 +761,46 @@ function CrmFiche({ child, crm, onClose, onExitRequest, onUpdate, onReactivate, 
                                 style={{ width: 28, height: 28, background: '#EEF2F7', color: '#3E5A78', border: 'none', cursor: 'pointer' }}>
                                 <Eye size={13} />
                               </button>
+                              <label
+                                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg"
+                                style={{ border: `1px solid ${isReplacing ? '#A7F3D0' : '#E5E7EB'}`, background: isReplacing ? 'rgba(6,95,70,0.04)' : '#FAFAFA', color: isReplacing ? '#065F46' : '#6B7280', fontSize: 11, fontWeight: 600, cursor: isReplacing ? 'not-allowed' : 'pointer' }}>
+                                {isReplacing ? <Loader size={11} className="animate-spin" style={{ color: '#065F46' }} /> : <Upload size={11} style={{ color: '#9CA3AF' }} />}
+                                {isReplacing ? 'Envoi…' : 'Remplacer'}
+                                <input type="file" className="hidden"
+                                  accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
+                                  disabled={isReplacing}
+                                  onChange={e => {
+                                    const f = e.target.files?.[0];
+                                    e.target.value = '';
+                                    if (f) handleReplaceDoc(uploaded.id, f);
+                                  }} />
+                              </label>
                               <button
-                                onClick={() => { setReplacingDocId(replacingDocId === uploaded.id ? null : uploaded.id); setSelectedFile(null); }}
-                                className="flex items-center gap-1 px-2 py-1 rounded"
-                                style={{ background: replacingDocId === uploaded.id ? '#FEF2F2' : '#F3F4F6', color: replacingDocId === uploaded.id ? '#B91C1C' : '#374151', fontSize: 11, fontWeight: 600, border: 'none', cursor: 'pointer' }}>
-                                <Upload size={10} /> {replacingDocId === uploaded.id ? 'Annuler' : 'Remplacer'}
+                                onClick={() => handleDeleteDoc(uploaded.id)}
+                                disabled={deletingDocId === uploaded.id}
+                                title="Supprimer le document"
+                                className="flex items-center justify-center rounded"
+                                style={{ width: 28, height: 28, background: 'none', border: 'none', color: '#B91C1C', cursor: deletingDocId === uploaded.id ? 'not-allowed' : 'pointer', opacity: deletingDocId === uploaded.id ? 0.5 : 1 }}>
+                                {deletingDocId === uploaded.id ? <Loader size={13} className="animate-spin" /> : <Trash2 size={13} />}
                               </button>
                             </div>
                           ) : (
-                            <button onClick={() => { setAddingDoc(isAdding ? null : comp.type); setSelectedFile(null); }}
-                              className="flex items-center gap-1 px-2 py-1 rounded"
-                              style={{ background: isAdding ? '#FEF2F2' : '#FFFBEB', color: isAdding ? '#B91C1C' : '#92400E', fontSize: 11, fontWeight: 600, border: 'none', cursor: 'pointer' }}>
-                              {isAdding ? <><X size={10} /> Annuler</> : <><Upload size={10} /> Ajouter</>}
-                            </button>
+                            <label
+                              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg"
+                              style={{ border: `1px solid ${isUploading ? '#A7F3D0' : '#FCD34D'}`, background: isUploading ? 'rgba(6,95,70,0.04)' : '#FFFBEB', color: isUploading ? '#065F46' : '#92400E', fontSize: 11, fontWeight: 600, cursor: isUploading ? 'not-allowed' : 'pointer' }}>
+                              {isUploading ? <Loader size={11} className="animate-spin" style={{ color: '#065F46' }} /> : <Upload size={11} style={{ color: '#92400E' }} />}
+                              {isUploading ? 'Envoi…' : 'Ajouter'}
+                              <input type="file" className="hidden"
+                                accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
+                                disabled={isUploading}
+                                onChange={e => {
+                                  const f = e.target.files?.[0];
+                                  e.target.value = '';
+                                  if (f) handleAddDoc(comp.type, comp.label, f);
+                                }} />
+                            </label>
                           )}
                         </div>
-
-                        {uploaded && replacingDocId === uploaded.id && (
-                          <div className="flex items-center gap-2 mt-1 px-4 pb-2">
-                            <label className="flex items-center gap-2 flex-1 px-3 py-2 rounded-lg cursor-pointer"
-                              style={{ border: '1.5px dashed #D1D5DB', background: selectedFile ? 'rgba(62,90,120,0.04)' : '#FAFAFA' }}>
-                              <Upload size={13} style={{ color: '#9CA3AF', flexShrink: 0 }} />
-                              <span style={{ fontSize: 12, color: selectedFile ? '#1A1A1A' : '#9CA3AF', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                {selectedFile ? selectedFile.name : 'Choisir le nouveau fichier…'}
-                              </span>
-                              <input type="file" className="hidden"
-                                accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
-                                onChange={e => setSelectedFile(e.target.files?.[0] ?? null)} />
-                            </label>
-                            <button
-                              onClick={async () => {
-                                if (!child.apiId || !selectedFile || !uploaded) return;
-                                setSavingDoc(true);
-                                try {
-                                  const updated = await childrenApi.replaceDocument(child.apiId, uploaded.id, selectedFile);
-                                  setDocs(prev => prev.map(d => d.id === uploaded.id ? updated : d));
-                                  setReplacingDocId(null);
-                                  setSelectedFile(null);
-                                } catch (err: any) {
-                                  alert(`Erreur lors du remplacement : ${err.message}`);
-                                } finally {
-                                  setSavingDoc(false);
-                                }
-                              }}
-                              disabled={!selectedFile || savingDoc}
-                              className="flex items-center gap-1 px-3 py-1.5 rounded-lg flex-shrink-0"
-                              style={{ background: selectedFile ? '#3E5A78' : '#E5E7EB', color: selectedFile ? '#FFFFFF' : '#9CA3AF', fontSize: 12, fontWeight: 600, border: 'none', cursor: selectedFile ? 'pointer' : 'not-allowed' }}>
-                              {savingDoc ? <Loader size={12} className="animate-spin" /> : <Check size={12} />}
-                              {savingDoc ? 'Envoi…' : 'Confirmer'}
-                            </button>
-                          </div>
-                        )}
-
-                        {isAdding && (
-                          <div className="flex items-center gap-2 mt-1 px-4 pb-2">
-                            <label className="flex items-center gap-2 flex-1 px-3 py-2 rounded-lg cursor-pointer"
-                              style={{ border: '1.5px dashed #FCD34D', background: selectedFile ? 'rgba(251,191,36,0.04)' : '#FFFBF0' }}>
-                              <Upload size={13} style={{ color: '#D97706', flexShrink: 0 }} />
-                              <span style={{ fontSize: 12, color: selectedFile ? '#1A1A1A' : '#92400E', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                {selectedFile ? selectedFile.name : 'Choisir un fichier…'}
-                              </span>
-                              <input type="file" className="hidden"
-                                accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
-                                onChange={e => setSelectedFile(e.target.files?.[0] ?? null)} />
-                            </label>
-                            <button
-                              onClick={() => handleAddDoc(comp.type, comp.label)}
-                              disabled={!selectedFile || savingDoc}
-                              className="flex items-center gap-1 px-3 py-1.5 rounded-lg flex-shrink-0"
-                              style={{ background: selectedFile ? '#D97706' : '#E5E7EB', color: selectedFile ? '#FFFFFF' : '#9CA3AF', fontSize: 12, fontWeight: 600, border: 'none', cursor: selectedFile ? 'pointer' : 'not-allowed' }}>
-                              {savingDoc ? <Loader size={12} className="animate-spin" /> : <Check size={12} />}
-                              {savingDoc ? 'Envoi…' : 'Enregistrer'}
-                            </button>
-                          </div>
-                        )}
                       </div>
                     );
                   })}
@@ -1550,6 +1505,24 @@ export function AddModal({ onCreated, onClose }: {
                         style={{ background: file ? '#ECFDF5' : '#F3F4F6', border: `1px solid ${file ? '#A7F3D0' : '#E5E7EB'}`, color: file ? '#065F46' : '#374151', fontSize: 10, fontWeight: 600 }}>
                         {file ? <><Check size={9} /> Joint</> : <><Upload size={9} /> Joindre</>}
                       </span>
+                      {file && (
+                        <button
+                          type="button"
+                          onClick={e => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setDocFiles(prev => {
+                              const next = { ...prev };
+                              delete next[doc.key];
+                              return next;
+                            });
+                          }}
+                          title="Retirer le fichier"
+                          className="flex items-center justify-center rounded flex-shrink-0"
+                          style={{ width: 22, height: 22, background: 'none', border: 'none', color: '#B91C1C', cursor: 'pointer' }}>
+                          <Trash2 size={12} />
+                        </button>
+                      )}
                       <input type="file" className="hidden"
                         accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
                         onChange={e => {
@@ -1595,6 +1568,24 @@ export function AddModal({ onCreated, onClose }: {
                           style={{ background: file ? '#ECFDF5' : '#FFFBEB', border: `1px solid ${file ? '#A7F3D0' : '#FCD34D'}`, color: file ? '#065F46' : '#92400E', fontSize: 10, fontWeight: 600 }}>
                           {file ? <><Check size={9} /> Joint</> : <><Upload size={9} /> Joindre</>}
                         </span>
+                        {file && (
+                          <button
+                            type="button"
+                            onClick={e => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              setCompDocFiles(prev => {
+                                const next = { ...prev };
+                                delete next[doc.type];
+                                return next;
+                              });
+                            }}
+                            title="Retirer le fichier"
+                            className="flex items-center justify-center rounded flex-shrink-0"
+                            style={{ width: 22, height: 22, background: 'none', border: 'none', color: '#B91C1C', cursor: 'pointer' }}>
+                            <Trash2 size={12} />
+                          </button>
+                        )}
                         <input type="file" className="hidden"
                           accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
                           onChange={e => {
@@ -1643,14 +1634,20 @@ export function AddModal({ onCreated, onClose }: {
 
 // ─── Stat Card ────────────────────────────────────────────────────────────────
 
-function StatCard({ label, value, color, bg, icon: Icon }: { label: string; value: number; color: string; bg: string; icon: React.ElementType }) {
+function StatCard({ label, value, total, color, bg, icon: Icon }: { label: string; value: number; total?: number; color: string; bg: string; icon: React.ElementType }) {
   return (
     <div className="rounded-xl px-4 py-3 flex items-center gap-3" style={{ background: bg }}>
       <div className="flex items-center justify-center rounded-lg" style={{ width: 34, height: 34, background: 'rgba(255,255,255,0.75)' }}>
         <Icon size={16} style={{ color }} />
       </div>
       <div>
-        <p style={{ color, fontSize: 22, fontWeight: 700, lineHeight: 1 }}>{value}</p>
+        {total !== undefined ? (
+          <p style={{ color, fontSize: 22, fontWeight: 700, lineHeight: 1 }}>
+            {value} <span style={{ fontSize: 14, fontWeight: 500, color: '#9CA3AF' }}>sur {total}</span>
+          </p>
+        ) : (
+          <p style={{ color, fontSize: 22, fontWeight: 700, lineHeight: 1 }}>{value}</p>
+        )}
         <p style={{ color: '#6B7280', fontSize: 11, marginTop: 2 }}>{label}</p>
       </div>
     </div>
@@ -1753,7 +1750,8 @@ export function ChildrenPage() {
       const q = search.toLowerCase();
       return (!q || `${c.firstName} ${c.lastName}`.toLowerCase().includes(q) || c.classe.toLowerCase().includes(q))
         && (filterAttendance === 'all' || c.attendanceStatus === filterAttendance)
-        && (filterDossier === 'all' || getDossierStatus(c.id) === filterDossier);
+        && (filterDossier === 'all'
+          || (filterDossier === 'incomplet' ? getDossierStatus(c.id) !== 'complet' : getDossierStatus(c.id) === filterDossier));
     });
     if (sortField) {
       list = [...list].sort((a, b) => {
@@ -1772,10 +1770,8 @@ export function ChildrenPage() {
   }, [children, crmData, search, statusFilter, filterAttendance, filterDossier, sortField, sortDir]);
 
   const activeCount    = children.filter(isEffectivelyActive).length;
-  const sortisCount    = children.filter(c => !isEffectivelyActive(c)).length;
   const presentCount   = children.filter(c => isEffectivelyActive(c) && c.attendanceStatus === 'present').length;
-  const incompletCount = children.filter(c => isEffectivelyActive(c) && getDossierStatus(c.id) === 'incomplet').length;
-  const partielCount   = children.filter(c => isEffectivelyActive(c) && getDossierStatus(c.id) === 'partiel').length;
+  const incompletTotal = children.filter(c => isEffectivelyActive(c) && getDossierStatus(c.id) !== 'complet').length;
 
   const handleExit = async (type: 'temporaire' | 'définitive', date: string, motif: string, responsable: string, dateRetour: string) => {
     if (!exitTarget) return;
@@ -1840,7 +1836,7 @@ export function ChildrenPage() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h2 style={{ color: '#1A1A1A', fontSize: 22, fontWeight: 700 }}>Dossiers enfants</h2>
-          <p style={{ color: '#6B7280', fontSize: 13, marginTop: 2 }}>{activeCount} actifs · {sortisCount} sortis · {children.length} total</p>
+          <p style={{ color: '#6B7280', fontSize: 13, marginTop: 2 }}>{activeCount} actifs · {children.length - activeCount} sortis · {children.length} total</p>
         </div>
         <button onClick={() => setModal({ mode: 'add' })}
           className="flex items-center gap-2 px-4 py-2.5 rounded-lg self-start"
@@ -1884,19 +1880,16 @@ export function ChildrenPage() {
       )}
 
       {/* Stat cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-        <StatCard label="Actifs"              value={activeCount}    color="#3E5A78" bg="#EEF2F7" icon={Users} />
-        <StatCard label="Présents auj."       value={presentCount}   color="#065F46" bg="#ECFDF5" icon={UserCheck} />
-        <StatCard label="Dossiers incomplets" value={incompletCount} color="#B91C1C" bg="#FEF2F2" icon={AlertCircle} />
-        <StatCard label="À compléter"         value={partielCount}   color="#92400E" bg="#FFFBEB" icon={FolderOpen} />
-        <StatCard label="Sortis"              value={sortisCount}    color="#9CA3AF" bg="#F3F4F6" icon={UserMinus} />
+      <div className="grid grid-cols-2 gap-3">
+        <StatCard label="Présents aujourd'hui" value={presentCount}   total={activeCount}  color="#065F46" bg="#ECFDF5" icon={UserCheck} />
+        <StatCard label="Dossiers incomplets"  value={incompletTotal}                      color="#B91C1C" bg="#FEF2F2" icon={AlertCircle} />
       </div>
 
       {/* Status filter + search */}
       <div className="flex flex-col sm:flex-row gap-3">
         {/* Status tabs */}
         <div className="flex gap-1 p-1 rounded-xl flex-shrink-0" style={{ background: '#F3F4F6' }}>
-          {([['actif', 'Actifs', activeCount], ['sorti', 'Sortis', sortisCount], ['all', 'Tous', children.length]] as [StatusFilter, string, number][]).map(([f, label, n]) => (
+          {([['actif', 'Actifs', activeCount], ['sorti', 'Non actifs', children.length - activeCount]] as [StatusFilter, string, number][]).map(([f, label, n]) => (
             <button key={f} onClick={() => setStatusFilter(f)}
               className="flex items-center gap-1.5 px-3 py-2 rounded-lg transition-all"
               style={{
@@ -2023,7 +2016,7 @@ export function ChildrenPage() {
                         const ds = getDossierStatus(child.id);
                         const bg = ds === 'complet' ? '#ECFDF5' : ds === 'partiel' ? '#FFFBEB' : '#FEF2F2';
                         const color = ds === 'complet' ? '#065F46' : ds === 'partiel' ? '#92400E' : '#B91C1C';
-                        const label = ds === 'complet' ? 'Complet' : ds === 'partiel' ? 'À compléter' : 'Incomplet';
+                        const label = ds === 'complet' ? 'Complet' : 'Incomplet';
                         return (
                           <span className="px-2 py-0.5 rounded-full" style={{ background: bg, color, fontSize: 11, fontWeight: 600 }}>
                             {label}

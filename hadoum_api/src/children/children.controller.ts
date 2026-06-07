@@ -166,4 +166,9 @@ export class ChildrenController {
   getDocumentUrl(@Param('id') id: string, @Param('docId') docId: string) {
     return this.childrenService.getDocumentUrl(id, docId);
   }
+
+  @Delete(':id/documents/:docId')
+  deleteDocument(@Param('id') id: string, @Param('docId') docId: string) {
+    return this.childrenService.deleteDocument(id, docId);
+  }
 }

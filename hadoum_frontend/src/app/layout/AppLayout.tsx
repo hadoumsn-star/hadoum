@@ -24,39 +24,25 @@ const PAGE_TITLES: Record<string, { title: string; breadcrumb?: string[] }> = {
   '/app/design-system': { title: 'Design System' },
 };
 
-const SIDEBAR_FULL = 256;
-const SIDEBAR_COMPACT = 64;
+const SIDEBAR_WIDTH = 256;
 
 export function AppLayout() {
   const { isAuthenticated } = useAuth();
   const location = useLocation();
 
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
-  const [collapsed, setCollapsed] = useState(() => {
-    try { return localStorage.getItem('hadoum-sidebar-collapsed') === 'true'; }
-    catch { return false; }
-  });
 
   if (!isAuthenticated) return <Navigate to="/login" replace />;
 
   const pageInfo = PAGE_TITLES[location.pathname] ?? { title: 'Hadoum' };
-  const sidebarW = collapsed ? SIDEBAR_COMPACT : SIDEBAR_FULL;
-
-  const toggleCollapse = () => {
-    setCollapsed((prev) => {
-      const next = !prev;
-      try { localStorage.setItem('hadoum-sidebar-collapsed', String(next)); } catch {}
-      return next;
-    });
-  };
 
   return (
     <div className="flex h-screen overflow-hidden" style={{ background: '#F9F7F3' }}>
-      {/* Dynamic sidebar width for desktop */}
+      {/* Sidebar width for desktop */}
       <style>{`
         @media (min-width: 1024px) {
           .hadoum-sidebar { transform: translateX(0) !important; }
-          .hadoum-main    { margin-left: ${sidebarW}px; transition: margin-left 280ms ease; }
+          .hadoum-main    { margin-left: ${SIDEBAR_WIDTH}px; }
         }
       `}</style>
 
@@ -75,13 +61,11 @@ export function AppLayout() {
         style={{
           background: '#FFFFFF',
           borderRight: '1px solid #E5E7EB',
-          width: sidebarW,
+          width: SIDEBAR_WIDTH,
           transform: mobileSidebarOpen ? 'translateX(0)' : 'translateX(-100%)',
         }}
       >
         <Sidebar
-          collapsed={collapsed}
-          onToggleCollapse={toggleCollapse}
           onNavClick={() => setMobileSidebarOpen(false)}
         />
       </aside>

@@ -96,6 +96,9 @@ export const childrenApi = {
 
   getDocumentUrl: (childId: string, docId: string) =>
     api.get<{ url: string; expiresIn: number }>(`/children/${childId}/documents/${docId}/url`),
+
+  deleteDocument: (childId: string, docId: string) =>
+    api.delete(`/children/${childId}/documents/${docId}`),
 };
 
 // Re-export types for convenience

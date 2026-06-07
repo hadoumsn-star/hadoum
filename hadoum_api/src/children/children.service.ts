@@ -306,4 +306,21 @@ export class ChildrenService {
       orderBy: { createdAt: 'desc' },
     });
   }
+
+  async deleteDocument(childId: string, docId: string): Promise<void> {
+    const doc = await this.prisma.document.findFirst({ where: { id: docId, childId } });
+    if (!doc) throw new NotFoundException('Document not found');
+
+    // Remove the DB record first so the slot is freed for re-upload even if S3 cleanup fails
+    await this.prisma.document.delete({ where: { id: doc.id } });
+
+    const key = doc.fileUrl.startsWith('http')
+      ? new URL(doc.fileUrl).pathname.replace(/^\//, '')
+      : doc.fileUrl;
+    try {
+      await this.uploadService.deleteFile(key);
+    } catch {
+      // Orphaned S3 object is acceptable; the document record is gone either way
+    }
+  }
 }
