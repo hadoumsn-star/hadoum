@@ -2030,25 +2030,6 @@ function MemberCard({ m, effectiveStatus, onAttendance, onEdit, onExit }: {
 
 // ─── Tab: Active Members ───────────────────────────────────────────────────────
 
-type PeriodFilter = 'all' | 'Mensuel' | 'Trimestriel' | 'Annuel';
-
-function getPeriodRange(period: PeriodFilter): { from: string; to: string } | null {
-  if (period === 'all') return null;
-  const now = new Date();
-  const y = now.getFullYear();
-  const m = now.getMonth();
-  const iso = (d: Date) => d.toISOString().split('T')[0];
-  if (period === 'Mensuel') {
-    return { from: iso(new Date(y, m, 1)), to: iso(new Date(y, m + 1, 0)) };
-  }
-  if (period === 'Trimestriel') {
-    const qs = Math.floor(m / 3) * 3;
-    return { from: iso(new Date(y, qs, 1)), to: iso(new Date(y, qs + 3, 0)) };
-  }
-  // Annuel
-  return { from: iso(new Date(y, 0, 1)), to: iso(new Date(y, 11, 31)) };
-}
-
 function ActiveTab({ members, onExit, onEdit, onAdd, onAttendance }: {
   members: TeamMember[];
   onExit: (m: TeamMember) => void;
@@ -2058,29 +2039,8 @@ function ActiveTab({ members, onExit, onEdit, onAdd, onAttendance }: {
 }) {
   const [search,        setSearch]        = useState('');
   const [filter,        setFilter]        = useState<'all' | 'present' | 'absent' | 'conge'>('all');
-  const [period,        setPeriod]        = useState<PeriodFilter>('all');
-  const [periodMap,     setPeriodMap]     = useState<Record<string, 'absent' | 'conge'>>({});
-  const [loadingPeriod, setLoadingPeriod] = useState(false);
 
-  useEffect(() => {
-    const range = getPeriodRange(period);
-    if (!range) { setPeriodMap({}); return; }
-    setLoadingPeriod(true);
-    teamApi.getAttendancePeriod(range.from, range.to)
-      .then(records => {
-        const map: Record<string, 'absent' | 'conge'> = {};
-        records.forEach(r => {
-          if (r.type === 'absence') map[r.staffId] = 'absent';
-          else if (r.type === 'conge' && map[r.staffId] !== 'absent') map[r.staffId] = 'conge';
-        });
-        setPeriodMap(map);
-      })
-      .catch(() => toast.error('Erreur de chargement.'))
-      .finally(() => setLoadingPeriod(false));
-  }, [period]);
-
-  const effStatus = (m: TeamMember): 'present' | 'absent' | 'conge' =>
-    period === 'all' ? m.status : (periodMap[m.id] ?? 'present');
+  const effStatus = (m: TeamMember): 'present' | 'absent' | 'conge' => m.status;
 
   const filtered = members.filter(m => {
     const q = search.toLowerCase();
@@ -2095,28 +2055,10 @@ function ActiveTab({ members, onExit, onEdit, onAdd, onAttendance }: {
     conge:   members.filter(m => effStatus(m) === 'conge').length,
   };
 
-  const grpLabel = (grp: 'present' | 'absent' | 'conge') =>
-    period === 'all' ? STATUS[grp].label
-    : grp === 'present' ? STATUS['present'].label
-    : grp === 'absent'  ? `Absents — ${period}`
-    : `En congé — ${period}`;
+  const grpLabel = (grp: 'present' | 'absent' | 'conge') => STATUS[grp].label;
 
   return (
     <div className="space-y-4">
-
-      {/* Period filter — same style as ReportsPage */}
-      <div className="flex items-center gap-3 flex-wrap">
-        <div className="flex rounded-lg overflow-hidden" style={{ border: '1px solid #E5E7EB' }}>
-          {(['all', 'Mensuel', 'Trimestriel', 'Annuel'] as PeriodFilter[]).map(p => (
-            <button key={p} onClick={() => setPeriod(p)}
-              className="px-3 py-2"
-              style={{ background: period === p ? '#3E5A78' : '#FFFFFF', color: period === p ? '#FFFFFF' : '#374151', fontSize: 12, fontWeight: 500, border: 'none', cursor: 'pointer', whiteSpace: 'nowrap' }}>
-              {p === 'all' ? 'Tous' : p}
-            </button>
-          ))}
-        </div>
-        {loadingPeriod && <Loader2 size={14} className="animate-spin" style={{ color: '#9CA3AF' }} />}
-      </div>
 
       {/* Status chips + add button */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -2183,10 +2125,11 @@ function ActiveTab({ members, onExit, onEdit, onAdd, onAttendance }: {
 
 // ─── Tab: Candidates ───────────────────────────────────────────────────────────
 
-function CandidatesTab({ candidates, onAdd, onIntegrate, onEdit }: {
+function CandidatesTab({ candidates, onAdd, onIntegrate, onIntegrateNow, onEdit }: {
   candidates: (Candidat & { apiId: string })[];
   onAdd: () => void;
   onIntegrate: (c: Candidat & { apiId: string }) => void;
+  onIntegrateNow: (c: Candidat & { apiId: string }) => void;
   onEdit: (c: Candidat & { apiId: string }) => void;
 }) {
   const [docsPopover, setDocsPopover] = useState<{ id: string; docs: { id: string; label: string }[]; loading: boolean; anchor: { top: number; right: number } } | null>(null);
@@ -2375,7 +2318,7 @@ function CandidatesTab({ candidates, onAdd, onIntegrate, onEdit }: {
                             );
                           }
                           return (
-                            <button onClick={() => onIntegrate(c)}
+                            <button onClick={() => sid ? onIntegrateNow(c) : onIntegrate(c)}
                               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg"
                               style={{ background: sid ? '#ECFDF5' : '#EEF2F7', color: sid ? '#065F46' : '#3E5A78', fontSize: 12, fontWeight: 600, border: 'none', cursor: 'pointer', whiteSpace: 'nowrap' }}>
                               <UserCheck size={13} />
@@ -2431,9 +2374,10 @@ function CandidatesTab({ candidates, onAdd, onIntegrate, onEdit }: {
 
 // ─── Tab: Former Members ───────────────────────────────────────────────────────
 
-function FormerTab({ former, onReintegrate }: {
+function FormerTab({ former, onReintegrate, onReintegrateNow }: {
   former: FormerMember[];
   onReintegrate: (m: FormerMember) => void;
+  onReintegrateNow: (m: FormerMember) => void;
 }) {
   return (
     <div className="rounded-xl overflow-hidden" style={{ background: '#FFFFFF', border: '1px solid #E5E7EB' }}>
@@ -2490,7 +2434,7 @@ function FormerTab({ former, onReintegrate }: {
                               <CalendarClock size={11} />
                               Intégration le {new Date(srd).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' })}
                             </span>
-                            <button onClick={() => onReintegrate(m)}
+                            <button onClick={() => onReintegrateNow(m)}
                               className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg"
                               style={{ background: '#ECFDF5', color: '#065F46', fontSize: 11, fontWeight: 600, border: 'none', cursor: 'pointer', whiteSpace: 'nowrap' }}>
                               <UserCheck size={12} /> Intégrer maintenant
@@ -2648,6 +2592,30 @@ export function TeamPage() {
     } catch { toast.error('Erreur lors de la réintégration.'); }
   };
 
+  const handleIntegrateNow = async (candidat: Candidat & { apiId: string }) => {
+    const today = new Date().toISOString().split('T')[0];
+    try {
+      const newMember = await teamApi.promote(candidat.apiId, (candidat as any).posteVise || undefined, today);
+      const fresh = await teamApi.getStaff(newMember.id);
+      setMembers(prev => [mapStaff(fresh) as any, ...prev]);
+      setCandidates(prev => prev.filter(c => c.apiId !== candidat.apiId));
+      setTab('active');
+      toast.success(`${candidat.prenom} ${candidat.nom} a été intégré(e) dans l'équipe active.`);
+    } catch { toast.error('Erreur lors de l\'intégration.'); }
+  };
+
+  const handleReintegrateNow = async (member: FormerMember & { apiId: string }) => {
+    const today = new Date().toISOString().split('T')[0];
+    try {
+      const newMember = await teamApi.reintegrate(member.apiId, member.role, today);
+      const fresh = await teamApi.getStaff(newMember.id);
+      setMembers(prev => [mapStaff(fresh) as any, ...prev]);
+      setFormer(prev => prev.filter(m => m.apiId !== member.apiId));
+      setTab('active');
+      toast.success(`${member.name} a été réintégré(e) dans l'équipe active.`);
+    } catch { toast.error('Erreur lors de la réintégration.'); }
+  };
+
   const handleAddCandidate = async (c: Omit<Candidat, 'id'> & { _files?: Record<string, File>; _typeCandidature?: string; _disponibleDe?: string; _contactInfo?: string; _notes?: string }) => {
     const candidateStatusMap: Record<string, ApiCandidateStatus> = {
       'nouveau': 'NOUVEAU', 'présélectionné': 'PRESELECTIONNE', 'entretien fait': 'ENTRETIEN_FAIT',
@@ -2741,11 +2709,12 @@ export function TeamPage() {
           candidates={candidates}
           onAdd={() => setShowAddCandidate(true)}
           onIntegrate={setIntegrateTarget}
+          onIntegrateNow={handleIntegrateNow}
           onEdit={setEditCandidate}
         />
       )}
       {tab === 'former' && (
-        <FormerTab former={former} onReintegrate={setReintegrateTarget} />
+        <FormerTab former={former} onReintegrate={setReintegrateTarget} onReintegrateNow={handleReintegrateNow} />
       )}
 
       {/* Modals */}

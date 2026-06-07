@@ -107,7 +107,15 @@ export function UploadModal({ onClose, onUploaded, initialType = 'Mensuel' }: {
               <span style={{ color: file ? '#065F46' : '#6B7280', fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
                 {file ? file.name : 'Sélectionner un fichier…'}
               </span>
-              {file && <Check size={15} style={{ color: '#065F46', flexShrink: 0 }} />}
+              {file && (
+                <button type="button"
+                  onClick={e => { e.preventDefault(); e.stopPropagation(); setFile(null); }}
+                  className="flex items-center justify-center rounded-md hover:bg-red-50"
+                  style={{ width: 22, height: 22, border: 'none', background: 'transparent', cursor: 'pointer', flexShrink: 0 }}
+                  title="Retirer le fichier">
+                  <Trash2 size={14} style={{ color: '#B91C1C' }} />
+                </button>
+              )}
               <input type="file" className="hidden"
                 accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                 onChange={e => setFile(e.target.files?.[0] ?? null)} />

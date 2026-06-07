@@ -13,7 +13,6 @@ import type { ApiDocument, ApiDocumentType, ApiChildStatus } from '../types/api.
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type StatusFilter = 'actif' | 'sorti';
 type AttendanceFilter = 'all' | 'present' | 'absent';
 type DossierFilter    = 'all' | 'complet' | 'incomplet';
 type ClasseFilter     = 'all' | Child['classe'];
@@ -1696,12 +1695,11 @@ export function ChildrenPage() {
   }, []);
 
   const [search, setSearch]                 = useState('');
-  const [statusFilter, setStatusFilter]     = useState<StatusFilter>('actif');
   const [filterAttendance, setFilterAttendance] = useState<AttendanceFilter>('all');
   const [filterDossier, setFilterDossier]   = useState<DossierFilter>('all');
   const [sortField, setSortField]           = useState<SortField>(null);
   const [sortDir, setSortDir]               = useState<SortDir>('asc');
-  const [showFilters, setShowFilters]       = useState(false);
+  const [showFilters, setShowFilters]       = useState(true);
 
   const [modal, setModal]           = useState<{ mode: 'view' | 'add' | null; child?: Child }>({ mode: null });
   const [exitTarget, setExitTarget] = useState<Child | null>(null);
@@ -1744,9 +1742,6 @@ export function ChildrenPage() {
 
   const filtered = useMemo(() => {
     let list = children.filter(c => {
-      const active = isEffectivelyActive(c);
-      if (statusFilter === 'actif' && !active) return false;
-      if (statusFilter === 'sorti' && active) return false;
       const q = search.toLowerCase();
       return (!q || `${c.firstName} ${c.lastName}`.toLowerCase().includes(q) || c.classe.toLowerCase().includes(q))
         && (filterAttendance === 'all' || c.attendanceStatus === filterAttendance)
@@ -1767,7 +1762,7 @@ export function ChildrenPage() {
       });
     }
     return list;
-  }, [children, crmData, search, statusFilter, filterAttendance, filterDossier, sortField, sortDir]);
+  }, [children, crmData, search, filterAttendance, filterDossier, sortField, sortDir]);
 
   const activeCount    = children.filter(isEffectivelyActive).length;
   const presentCount   = children.filter(c => isEffectivelyActive(c) && c.attendanceStatus === 'present').length;
@@ -1885,25 +1880,8 @@ export function ChildrenPage() {
         <StatCard label="Dossiers incomplets"  value={incompletTotal}                      color="#B91C1C" bg="#FEF2F2" icon={AlertCircle} />
       </div>
 
-      {/* Status filter + search */}
+      {/* Search + filters */}
       <div className="flex flex-col sm:flex-row gap-3">
-        {/* Status tabs */}
-        <div className="flex gap-1 p-1 rounded-xl flex-shrink-0" style={{ background: '#F3F4F6' }}>
-          {([['actif', 'Actifs', activeCount], ['sorti', 'Non actifs', children.length - activeCount]] as [StatusFilter, string, number][]).map(([f, label, n]) => (
-            <button key={f} onClick={() => setStatusFilter(f)}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-lg transition-all"
-              style={{
-                background: statusFilter === f ? '#FFFFFF' : 'transparent',
-                color: statusFilter === f ? '#1A1A1A' : '#6B7280',
-                fontSize: 12, fontWeight: statusFilter === f ? 600 : 400,
-                border: 'none', cursor: 'pointer',
-                boxShadow: statusFilter === f ? '0 1px 3px rgba(0,0,0,0.08)' : 'none',
-              }}>
-              {label} <span style={{ background: statusFilter === f ? '#EEF2F7' : '#E5E7EB', color: statusFilter === f ? '#3E5A78' : '#9CA3AF', fontSize: 10, fontWeight: 700, padding: '1px 5px', borderRadius: 8 }}>{n}</span>
-            </button>
-          ))}
-        </div>
-
         {/* Search */}
         <div className="relative flex-1" style={{ maxWidth: 320 }}>
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: '#9CA3AF' }} />

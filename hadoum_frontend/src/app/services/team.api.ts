@@ -95,10 +95,6 @@ export const teamApi = {
   },
   getAttendance: (staffId: string) =>
     api.get<{ id: string; type: string; motif: string | null; dateDebut: string; dateFin: string | null; justifKey: string | null; justified: boolean; createdAt: string }[]>(`/staff/${staffId}/attendance`),
-  getAttendancePeriod: (from: string, to: string) =>
-    api.get<{ id: string; staffId: string; type: string; dateDebut: string; dateFin: string | null }[]>(
-      `/staff/attendance/monthly?from=${from}&to=${to}`
-    ),
   updateAttendance: (recordId: string, data: { type?: string; motif?: string; dateDebut?: string; dateFin?: string | null; justified?: boolean }) =>
     api.patch<{ id: string; type: string; motif: string | null; dateDebut: string; dateFin: string | null; justifKey: string | null; justified: boolean; createdAt: string }>(`/staff/attendance/${recordId}`, data),
   deleteAttendance: (recordId: string) =>
