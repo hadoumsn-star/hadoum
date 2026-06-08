@@ -63,6 +63,80 @@ const INPUT: React.CSSProperties = {
   color: '#1A1A1A', fontSize: 13, outline: 'none', boxSizing: 'border-box',
 };
 
+// ─── Poste dropdown (predefined list + add new) ───────────────────────────────
+
+const POSTE_OPTIONS_KEY = 'hadoum_poste_options';
+const DEFAULT_POSTE_OPTIONS = ['Français', 'Arabe'];
+const ADD_POSTE_VALUE = '__add_new_poste__';
+
+function loadPosteOptions(): string[] {
+  try {
+    const stored: string[] = JSON.parse(localStorage.getItem(POSTE_OPTIONS_KEY) ?? '[]');
+    const merged = [...DEFAULT_POSTE_OPTIONS];
+    stored.forEach(p => { if (p && !merged.includes(p)) merged.push(p); });
+    return merged;
+  } catch { return [...DEFAULT_POSTE_OPTIONS]; }
+}
+
+function savePosteOption(poste: string) {
+  try {
+    const stored: string[] = JSON.parse(localStorage.getItem(POSTE_OPTIONS_KEY) ?? '[]');
+    if (!stored.includes(poste)) localStorage.setItem(POSTE_OPTIONS_KEY, JSON.stringify([...stored, poste]));
+  } catch {}
+}
+
+function PosteSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const [options, setOptions] = useState<string[]>(loadPosteOptions);
+  const [adding,  setAdding]  = useState(false);
+  const [draft,   setDraft]   = useState('');
+
+  const allOptions = useMemo(
+    () => (value && !options.includes(value)) ? [...options, value] : options,
+    [options, value],
+  );
+
+  const confirmAdd = () => {
+    const trimmed = draft.trim();
+    if (!trimmed) { setAdding(false); return; }
+    setOptions(prev => prev.includes(trimmed) ? prev : [...prev, trimmed]);
+    savePosteOption(trimmed);
+    onChange(trimmed);
+    setDraft('');
+    setAdding(false);
+  };
+
+  if (adding) {
+    return (
+      <div className="flex gap-2">
+        <input autoFocus value={draft} onChange={e => setDraft(e.target.value)}
+          onKeyDown={e => {
+            if (e.key === 'Enter') { e.preventDefault(); confirmAdd(); }
+            if (e.key === 'Escape') { setAdding(false); setDraft(''); }
+          }}
+          placeholder="Nom du nouveau poste…" style={{ ...INPUT, flex: 1 }} />
+        <button type="button" onClick={confirmAdd}
+          style={{ padding: '0 14px', borderRadius: 8, border: 'none', background: '#065F46', color: '#FFFFFF', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+          Ajouter
+        </button>
+        <button type="button" onClick={() => { setAdding(false); setDraft(''); }}
+          style={{ padding: '0 12px', borderRadius: 8, border: '1px solid #E5E7EB', background: '#FFFFFF', color: '#374151', fontSize: 13, cursor: 'pointer' }}>
+          Annuler
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <select value={value}
+      onChange={e => { if (e.target.value === ADD_POSTE_VALUE) setAdding(true); else onChange(e.target.value); }}
+      style={{ ...INPUT, cursor: 'pointer' }}>
+      <option value="">— Sélectionner —</option>
+      {allOptions.map(o => <option key={o} value={o}>{o}</option>)}
+      <option value={ADD_POSTE_VALUE}>+ Ajouter un poste…</option>
+    </select>
+  );
+}
+
 // ─── Exit Modal (active member) ───────────────────────────────────────────────
 
 function ExitMemberModal({ member, onConfirm, onClose }: {
@@ -330,7 +404,7 @@ function MemberEditModal({ member, onSave, onClose }: {
             <SectionTitle>Poste</SectionTitle>
             <div>
               <label style={{ color: '#374151', fontSize: 12, fontWeight: 500, display: 'block', marginBottom: 5 }}>Poste</label>
-              <input value={form.poste} onChange={e => set('poste', e.target.value)} placeholder="Éducateur, Auxiliaire…" style={INPUT} />
+              <PosteSelect value={form.poste} onChange={v => set('poste', v)} />
             </div>
             <div>
               <label style={{ color: '#374151', fontSize: 12, fontWeight: 500, display: 'block', marginBottom: 5 }}>Emploi du temps</label>
@@ -447,7 +521,7 @@ function AddMemberModal({ onSave, onClose }: {
             <SectionTitle>Poste</SectionTitle>
             <div>
               <label style={{ color: '#374151', fontSize: 12, fontWeight: 500, display: 'block', marginBottom: 5 }}>Poste</label>
-              <input value={form.poste} onChange={e => set('poste', e.target.value)} placeholder="Éducateur, Auxiliaire…" style={INPUT} />
+              <PosteSelect value={form.poste} onChange={v => set('poste', v)} />
             </div>
             <div>
               <label style={{ color: '#374151', fontSize: 12, fontWeight: 500, display: 'block', marginBottom: 5 }}>Emploi du temps</label>
@@ -761,7 +835,7 @@ function AddCandidateModal({ onSave, onClose }: {
             <SectionTitle>Candidature</SectionTitle>
             <div>
               <label style={{ color: '#374151', fontSize: 12, fontWeight: 500, display: 'block', marginBottom: 5 }}>Poste visé</label>
-              <input value={posteVise} onChange={e => setPosteVise(e.target.value)} placeholder="Éducateur, Auxiliaire…" style={INPUT} />
+              <PosteSelect value={posteVise} onChange={setPosteVise} />
             </div>
             <div>
               <label style={{ color: '#374151', fontSize: 12, fontWeight: 500, display: 'block', marginBottom: 5 }}>Type de candidature</label>
@@ -1021,7 +1095,7 @@ function EditCandidateModal({ candidat, onSave, onClose }: {
             <SectionTitle>Candidature</SectionTitle>
             <div>
               <label style={{ color: '#374151', fontSize: 12, fontWeight: 500, display: 'block', marginBottom: 5 }}>Poste visé</label>
-              <input value={posteVise} onChange={e => setPosteVise(e.target.value)} placeholder="Éducateur, Auxiliaire…" style={INPUT} />
+              <PosteSelect value={posteVise} onChange={setPosteVise} />
             </div>
             <div>
               <label style={{ color: '#374151', fontSize: 12, fontWeight: 500, display: 'block', marginBottom: 5 }}>Type de candidature</label>
@@ -1265,7 +1339,7 @@ function ReintegrationModal({ member, onConfirm, onClose }: {
           </p>
           <div>
             <label style={{ color: '#374151', fontSize: 12, fontWeight: 500, display: 'block', marginBottom: 5 }}>Nouveau poste</label>
-            <input value={poste} onChange={e => setPoste(e.target.value)} placeholder="Poste…" style={INPUT} />
+            <PosteSelect value={poste} onChange={setPoste} />
           </div>
           <div>
             <label style={{ color: '#374151', fontSize: 12, fontWeight: 500, display: 'block', marginBottom: 5 }}>Date de réintégration *</label>
@@ -1354,7 +1428,7 @@ function IntegrationModal({ candidat, onConfirm, onClose }: {
           </div>
           <div>
             <label style={{ color: '#374151', fontSize: 12, fontWeight: 500, display: 'block', marginBottom: 5 }}>Poste</label>
-            <input value={poste} onChange={e => setPoste(e.target.value)} placeholder="Éducateur, Auxiliaire…" style={INPUT} />
+            <PosteSelect value={poste} onChange={setPoste} />
           </div>
           <div>
             <label style={{ color: '#374151', fontSize: 12, fontWeight: 500, display: 'block', marginBottom: 5 }}>Date d'intégration *</label>
