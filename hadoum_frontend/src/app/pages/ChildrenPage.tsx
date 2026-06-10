@@ -14,7 +14,7 @@ import type { ApiDocument, ApiDocumentType, ApiChildStatus } from '../types/api.
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type AttendanceFilter = 'all' | 'present' | 'absent';
-type DossierFilter    = 'all' | 'complet' | 'incomplet';
+type DossierFilter    = 'all' | 'complet' | 'à compléter' | 'incomplet';
 type ClasseFilter     = 'all' | Child['classe'];
 type SortField        = 'name' | 'age' | 'classe' | 'attendance' | 'dossier' | null;
 type SortDir          = 'asc' | 'desc';
@@ -425,7 +425,7 @@ function CrmFiche({ child, crm, onClose, onExitRequest, onUpdate, onReactivate, 
       const types = updated.map(d => d.type as ApiDocumentType);
       const complet = isDossierComplet(types);
       const enrichi = isDossierEnrichi(types);
-      onDossierChange(!complet ? 'incomplet' : !enrichi ? 'partiel' : 'complet');
+      onDossierChange(!complet ? 'incomplet' : !enrichi ? 'à compléter' : 'complet');
     } catch (err: any) {
       alert(`Erreur lors de l'envoi : ${err.message}`);
     } finally {
@@ -456,7 +456,7 @@ function CrmFiche({ child, crm, onClose, onExitRequest, onUpdate, onReactivate, 
       const types = updated.map(d => d.type as ApiDocumentType);
       const complet = isDossierComplet(types);
       const enrichi = isDossierEnrichi(types);
-      onDossierChange(!complet ? 'incomplet' : !enrichi ? 'partiel' : 'complet');
+      onDossierChange(!complet ? 'incomplet' : !enrichi ? 'à compléter' : 'complet');
     } catch (err: any) {
       alert(`Erreur lors de la suppression : ${err.message ?? 'veuillez réessayer.'}`);
     } finally {
@@ -1289,7 +1289,7 @@ export function AddModal({ onCreated, onClose }: {
         const compCount = Object.keys(compDocFiles).length;
         newChild.dossierStatus =
           docsCount === DOCS_LIST.length && compCount === COMPLEMENTARY_DOCS.length ? 'complet' :
-          docsCount === DOCS_LIST.length ? 'partiel' :
+          docsCount === DOCS_LIST.length ? 'à compléter' :
           'incomplet';
       } catch (uploadErr: any) {
         // Child was created — warn but don't block; user can add docs from the CRM fiche
@@ -1670,8 +1670,14 @@ function getSortieState(c: Child): SortieState {
   if (c.exitType !== 'temporaire' || !c.exitDate) return 'none';
   const daysUntilDep = daysFromToday(c.exitDate);
   if (daysUntilDep > 0) return 'pending';
-  if (c.exitReturnDate && daysFromToday(c.exitReturnDate) < 0) return 'returned';
+  if (c.exitReturnDate && daysFromToday(c.exitReturnDate) <= 0) return 'returned';
   return 'active';
+}
+
+function getEffectiveAttendance(c: Child): 'present' | 'absent' {
+  const state = getSortieState(c);
+  if (state === 'active' || state === 'returned') return 'absent';
+  return c.attendanceStatus;
 }
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
@@ -1712,7 +1718,7 @@ export function ChildrenPage() {
     else { setSortField(field); setSortDir('asc'); }
   };
 
-  const getDossierStatus = (id: number): 'complet' | 'partiel' | 'incomplet' =>
+  const getDossierStatus = (id: number): 'complet' | 'à compléter' | 'partiel' | 'incomplet' =>
     children.find(c => c.id === id)?.dossierStatus ?? 'incomplet';
 
   // A child is effectively active if: never exited, OR their temporary sortie return date has passed
@@ -1720,7 +1726,7 @@ export function ChildrenPage() {
     const manuallySorti = crmData[c.id]?.isActive === false || c.exitStatus === 'sorti';
     if (!manuallySorti) return true;
     const state = getSortieState(c);
-    return state === 'returned' || state === 'pending';
+    return state === 'active' || state === 'returned' || state === 'pending';
   };
 
   // Sortie alerts: departure or return within 7 days
@@ -1744,9 +1750,8 @@ export function ChildrenPage() {
     let list = children.filter(c => {
       const q = search.toLowerCase();
       return (!q || `${c.firstName} ${c.lastName}`.toLowerCase().includes(q) || c.classe.toLowerCase().includes(q))
-        && (filterAttendance === 'all' || c.attendanceStatus === filterAttendance)
-        && (filterDossier === 'all'
-          || (filterDossier === 'incomplet' ? getDossierStatus(c.id) !== 'complet' : getDossierStatus(c.id) === filterDossier));
+        && (filterAttendance === 'all' || getEffectiveAttendance(c) === filterAttendance)
+        && (filterDossier === 'all' || getDossierStatus(c.id) === filterDossier);
     });
     if (sortField) {
       list = [...list].sort((a, b) => {
@@ -1755,7 +1760,7 @@ export function ChildrenPage() {
         if (sortField === 'name')       { va = `${a.firstName} ${a.lastName}`; vb = `${b.firstName} ${b.lastName}`; }
         else if (sortField === 'age')   { va = getAge(a.dob); vb = getAge(b.dob); }
         else if (sortField === 'classe'){ va = a.classe; vb = b.classe; }
-        else if (sortField === 'attendance') { va = a.attendanceStatus; vb = b.attendanceStatus; }
+        else if (sortField === 'attendance') { va = getEffectiveAttendance(a); vb = getEffectiveAttendance(b); }
         else if (sortField === 'dossier')    { va = getDossierStatus(a.id); vb = getDossierStatus(b.id); }
         if (typeof va === 'number') return sortDir === 'asc' ? va - (vb as number) : (vb as number) - va;
         return sortDir === 'asc' ? String(va).localeCompare(String(vb)) : String(vb).localeCompare(String(va));
@@ -1765,7 +1770,7 @@ export function ChildrenPage() {
   }, [children, crmData, search, filterAttendance, filterDossier, sortField, sortDir]);
 
   const activeCount    = children.filter(isEffectivelyActive).length;
-  const presentCount   = children.filter(c => isEffectivelyActive(c) && c.attendanceStatus === 'present').length;
+  const presentCount   = children.filter(c => isEffectivelyActive(c) && getEffectiveAttendance(c) === 'present').length;
   const incompletTotal = children.filter(c => isEffectivelyActive(c) && getDossierStatus(c.id) !== 'complet').length;
 
   const handleExit = async (type: 'temporaire' | 'définitive', date: string, motif: string, responsable: string, dateRetour: string) => {
@@ -1917,7 +1922,7 @@ export function ChildrenPage() {
           <div>
             <p style={{ color: '#9CA3AF', fontSize: 11, fontWeight: 600, marginBottom: 6 }}>DOSSIER</p>
             <div className="flex gap-1">
-              {([['all', 'Tous'], ['complet', 'Complet'], ['incomplet', 'Incomplet']] as [DossierFilter, string][]).map(([f, l]) => (
+              {([['all', 'Tous'], ['complet', 'Complet'], ['à compléter', 'À compléter'], ['incomplet', 'Incomplet']] as [DossierFilter, string][]).map(([f, l]) => (
                 <button key={f} onClick={() => setFilterDossier(f)}
                   className="px-3 py-1.5 rounded-lg"
                   style={{ background: filterDossier === f ? '#3E5A78' : '#FFFFFF', color: filterDossier === f ? '#FFFFFF' : '#374151', fontSize: 12, border: `1px solid ${filterDossier === f ? '#3E5A78' : '#E5E7EB'}`, cursor: 'pointer' }}>
@@ -1984,17 +1989,17 @@ export function ChildrenPage() {
                     <td className="px-5 py-4">
                       {isActive ? (
                         <span className="px-2 py-0.5 rounded-full"
-                          style={{ background: child.attendanceStatus === 'present' ? '#ECFDF5' : '#FEF2F2', color: child.attendanceStatus === 'present' ? '#065F46' : '#B91C1C', fontSize: 11, fontWeight: 600 }}>
-                          {child.attendanceStatus === 'present' ? 'Présent' : 'Absent'}
+                          style={{ background: getEffectiveAttendance(child) === 'present' ? '#ECFDF5' : '#FEF2F2', color: getEffectiveAttendance(child) === 'present' ? '#065F46' : '#B91C1C', fontSize: 11, fontWeight: 600 }}>
+                          {getEffectiveAttendance(child) === 'present' ? 'Présent' : 'Absent'}
                         </span>
                       ) : <span style={{ color: '#9CA3AF', fontSize: 12 }}>—</span>}
                     </td>
                     <td className="px-5 py-4">
                       {(() => {
                         const ds = getDossierStatus(child.id);
-                        const bg = ds === 'complet' ? '#ECFDF5' : ds === 'partiel' ? '#FFFBEB' : '#FEF2F2';
-                        const color = ds === 'complet' ? '#065F46' : ds === 'partiel' ? '#92400E' : '#B91C1C';
-                        const label = ds === 'complet' ? 'Complet' : 'Incomplet';
+                        const bg    = ds === 'complet' ? '#ECFDF5' : ds === 'à compléter' ? '#FFFBEB' : '#FEF2F2';
+                        const color = ds === 'complet' ? '#065F46' : ds === 'à compléter' ? '#92400E' : '#B91C1C';
+                        const label = ds === 'complet' ? 'Complet' : ds === 'à compléter' ? 'À compléter' : 'Incomplet';
                         return (
                           <span className="px-2 py-0.5 rounded-full" style={{ background: bg, color, fontSize: 11, fontWeight: 600 }}>
                             {label}
@@ -2025,7 +2030,17 @@ export function ChildrenPage() {
           crm={crmData[modal.child.id]}
           onClose={() => setModal({ mode: null })}
           onExitRequest={() => setExitTarget(modal.child!)}
-          onUpdate={crm => updateCrm(modal.child!.id, crm)}
+          onUpdate={crm => {
+            updateCrm(modal.child!.id, crm);
+            const latest = [...crm.sortiesHist].sort((a, b) => b.dateDepart.localeCompare(a.dateDepart))[0];
+            if (latest && latest.type === 'temporaire') {
+              setChildren(prev => prev.map(c =>
+                c.id === modal.child!.id
+                  ? { ...c, exitDate: latest.dateDepart || undefined, exitReturnDate: latest.dateRetour || undefined }
+                  : c
+              ));
+            }
+          }}
           onDossierChange={status => {
             const id = modal.child!.id;
             setChildren(prev => prev.map(c =>

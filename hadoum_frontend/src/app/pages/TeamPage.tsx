@@ -1518,7 +1518,7 @@ function AttendanceModal({ member, onClose, onMemberStatusChange }: {
   const [justified,  setJustified]  = useState(false);
   const [justif,     setJustif]     = useState<File | null>(null);
   const [saving,      setSaving]      = useState(false);
-  const [records,     setRecords]     = useState<{ id: string; type: string; motif: string | null; dateDebut: string; dateFin: string | null; justifKey: string | null }[]>([]);
+  const [records,     setRecords]     = useState<{ id: string; type: string; motif: string | null; dateDebut: string; dateFin: string | null; justifKey: string | null; justified: boolean }[]>([]);
   const [loadingRec,  setLoadingRec]  = useState(true);
   const [editingId,   setEditingId]   = useState<string | null>(null);
   const [editForm,    setEditForm]    = useState<{ type: AttendanceType; debutText: string; debutIso: string; finText: string; finIso: string; motif: string; justified: boolean }>({ type: 'absence', debutText: '', debutIso: '', finText: '', finIso: '', motif: '', justified: false });
@@ -1542,7 +1542,7 @@ function AttendanceModal({ member, onClose, onMemberStatusChange }: {
       if (!map[key]) map[key] = { retards: 0, absJust: 0, absNonJust: 0, conges: 0 };
       if (r.type === 'retard')   map[key].retards++;
       if (r.type === 'conge')    map[key].conges++;
-      if (r.type === 'absence')  (r.justified || !!r.justifKey) ? map[key].absJust++ : map[key].absNonJust++;
+      if (r.type === 'absence')  r.justified ? map[key].absJust++ : map[key].absNonJust++;
     });
     return Object.entries(map)
       .sort(([a], [b]) => b.localeCompare(a))
@@ -1561,10 +1561,14 @@ function AttendanceModal({ member, onClose, onMemberStatusChange }: {
     if (!canSave) return;
     setSaving(true);
     try {
-      const created = await teamApi.createAttendance(member.apiId, {
+      let created = await teamApi.createAttendance(member.apiId, {
         type, motif: motif || undefined, dateDebut: debutIso, dateFin: finIso || undefined,
-        justified: type === 'absence' ? (justified || !!justif) : undefined,
-      }, justif ?? undefined);
+        justified: type === 'absence' ? justified : undefined,
+      });
+      if (justif) {
+        const justifResult = await teamApi.uploadAttendanceJustif(created.id, justif);
+        created = { ...created, justifKey: justifResult.justifKey };
+      }
       const newRecords = [created, ...records];
       setRecords(newRecords);
       onMemberStatusChange(computeEffectiveStatus(newRecords));
@@ -1584,7 +1588,7 @@ function AttendanceModal({ member, onClose, onMemberStatusChange }: {
       finText:   r.dateFin ? toText(r.dateFin) : '',
       finIso:    r.dateFin ? toIso(r.dateFin)  : '',
       motif:     r.motif ?? '',
-      justified: r.justified || !!r.justifKey,
+      justified: r.justified ?? false,
     });
     setEditingId(r.id);
     setEditJustifFile(null);
@@ -1597,7 +1601,7 @@ function AttendanceModal({ member, onClose, onMemberStatusChange }: {
       let updated = await teamApi.updateAttendance(editingId, {
         type: editForm.type, motif: editForm.motif || undefined,
         dateDebut: editForm.debutIso, dateFin: editForm.finIso || null,
-        justified: editForm.type === 'absence' ? (editForm.justified || !!editJustifFile) : undefined,
+        justified: editForm.type === 'absence' ? editForm.justified : undefined,
       });
       if (editJustifFile) {
         updated = { ...updated, ...await teamApi.uploadAttendanceJustif(editingId, editJustifFile) };
@@ -1817,7 +1821,7 @@ function AttendanceModal({ member, onClose, onMemberStatusChange }: {
                 <FilePicker
                   label="Joindre un justificatif…"
                   file={justif}
-                  onChange={f => { setJustif(f); if (f) setJustified(true); }}
+                  onChange={f => { setJustif(f); }}
                   accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
                 />
                 {justified && !justif && (
@@ -1843,7 +1847,7 @@ function AttendanceModal({ member, onClose, onMemberStatusChange }: {
             ) : (
               records.map(r => {
                 const meta = ATTENDANCE_LABELS[r.type as AttendanceType] ?? { label: r.type, color: '#374151', bg: '#F3F4F6' };
-                const isJustified = r.justified || !!r.justifKey;
+                const isJustified = r.justified ?? false;
                 const isDeleting = deletingIds.has(r.id);
                 const isEditing  = editingId === r.id;
 
@@ -1936,7 +1940,7 @@ function AttendanceModal({ member, onClose, onMemberStatusChange }: {
                         <FilePicker
                           label={r.justifKey ? 'Remplacer le justificatif…' : 'Joindre un justificatif…'}
                           file={editJustifFile}
-                          onChange={f => { setEditJustifFile(f); if (f) setEditForm(ef => ({ ...ef, justified: true })); }}
+                          onChange={f => { setEditJustifFile(f); }}
                           accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
                         />
                       </div>

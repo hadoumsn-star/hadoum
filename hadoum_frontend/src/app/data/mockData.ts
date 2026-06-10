@@ -176,7 +176,7 @@ export interface Child {
   gender: 'M' | 'F';
   classe: 'Maternelle' | 'Primaire 1' | 'Primaire 2' | 'Primaire 3' | 'Collège';
   attendanceStatus: 'present' | 'absent';
-  dossierStatus: 'complet' | 'partiel' | 'incomplet';
+  dossierStatus: 'complet' | 'à compléter' | 'partiel' | 'incomplet';
   tuteurName: string;
   tuteurPhone: string;
   admissionDate: string; // YYYY-MM-DD

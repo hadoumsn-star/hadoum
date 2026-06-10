@@ -50,7 +50,7 @@ export function mapSummaryToChild(api: ApiChildSummary): Child & { apiId: string
     dossierStatus:   (() => {
       const types = (api.documents ?? []).map(d => d.type as ApiDocumentType);
       if (!isDossierComplet(types)) return 'incomplet';
-      if (!isDossierEnrichi(types)) return 'partiel';
+      if (!isDossierEnrichi(types)) return 'à compléter';
       return 'complet';
     })(),
     tuteurName:      api.guardianName  ?? '',
