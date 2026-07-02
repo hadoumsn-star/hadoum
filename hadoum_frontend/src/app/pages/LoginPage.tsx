@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate, Navigate, Link } from 'react-router';
+import { Navigate, Link } from 'react-router';
 import { useAuth, UserRole, User } from '../context/AuthContext';
 
 const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3001/api';
@@ -74,7 +74,6 @@ const DEMO_PROFILES: {
 
 export function LoginPage() {
   const { login, loginWithUser, isAuthenticated } = useAuth();
-  const navigate = useNavigate();
 
   const [email, setEmail]         = useState('');
   const [password, setPassword]   = useState('');
@@ -98,7 +97,8 @@ export function LoginPage() {
     const demoRole = DEMO_EMAIL_TO_ROLE[email.trim().toLowerCase()];
     if (demoRole) {
       setLoading(true);
-      setTimeout(() => { login(demoRole); navigate('/app/children'); }, 400);
+      // isAuthenticated bascule à true ⇒ redirection gérée par le <Navigate> ci-dessus
+      setTimeout(() => { login(demoRole); }, 400);
       return;
     }
 
@@ -120,7 +120,7 @@ export function LoginPage() {
 
       const data: { token: string; user: User } = await res.json();
       loginWithUser(data.user, data.token);
-      navigate('/app/children');
+      // isAuthenticated bascule à true ⇒ redirection gérée par le <Navigate> ci-dessus
     } catch {
       setError('Impossible de joindre le serveur. Vérifiez votre connexion.');
       setLoading(false);
@@ -131,7 +131,7 @@ export function LoginPage() {
     const role = DEMO_EMAIL_TO_ROLE[demoEmail];
     if (!role) return;
     setLoading(true);
-    setTimeout(() => { login(role); navigate('/app/children'); }, 400);
+    setTimeout(() => { login(role); }, 400);
   };
 
   return (

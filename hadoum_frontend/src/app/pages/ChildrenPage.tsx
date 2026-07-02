@@ -328,18 +328,20 @@ function InfoRow({ label, value }: { label: string; value: string }) {
 
 // ─── CRM Fiche Modal ──────────────────────────────────────────────────────────
 
-function CrmFiche({ child, crm, onClose, onExitRequest, onUpdate, onReactivate, onDossierChange }: {
+function CrmFiche({ child, crm, onClose, onExitRequest, onUpdate, onChildUpdate, onReactivate, onDossierChange }: {
   child: Child;
   crm: ChildCRM;
   onClose: () => void;
   onExitRequest: () => void;
   onUpdate: (crm: ChildCRM) => void;
+  onChildUpdate: (updates: Partial<Child>) => void;
   onReactivate: () => void;
   onDossierChange: (status: 'complet' | 'partiel' | 'incomplet') => void;
 }) {
   const [activeTab, setActiveTab] = useState<CrmTab>('identite');
   const [localCrm, setLocalCrm]  = useState<ChildCRM>(crm);
   const [editing, setEditing]     = useState(false);
+  const [identity, setIdentity]   = useState({ firstName: child.firstName, lastName: child.lastName });
 
   // ── Real documents state ────────────────────────────────────────────────────
   const [docs, setDocs]           = useState<ApiDocument[]>([]);
@@ -479,7 +481,13 @@ function CrmFiche({ child, crm, onClose, onExitRequest, onUpdate, onReactivate, 
     setSaveError('');
     try {
       if (child.apiId) {
-        if (activeTab === 'sante') {
+        if (activeTab === 'identite') {
+          await childrenApi.update(child.apiId, {
+            firstName: identity.firstName,
+            lastName:  identity.lastName,
+          });
+          onChildUpdate({ firstName: identity.firstName, lastName: identity.lastName });
+        } else if (activeTab === 'sante') {
           await childrenApi.upsertMedical(child.apiId, {
             bloodType:         localCrm.groupeSanguin !== '—' ? localCrm.groupeSanguin : undefined,
             allergies:         localCrm.allergies     !== '—' ? localCrm.allergies     : undefined,
@@ -577,7 +585,16 @@ function CrmFiche({ child, crm, onClose, onExitRequest, onUpdate, onReactivate, 
                 </button>
               </div>
               <div>
-                <p style={{ color: '#1A1A1A', fontSize: 18, fontWeight: 700 }}>{child.firstName} {child.lastName}</p>
+                {editing ? (
+                  <div className="flex gap-2">
+                    <input value={identity.firstName} onChange={e => setIdentity(prev => ({ ...prev, firstName: e.target.value }))}
+                      placeholder="Prénom" style={{ ...F, fontSize: 15, fontWeight: 700, width: 120 }} />
+                    <input value={identity.lastName} onChange={e => setIdentity(prev => ({ ...prev, lastName: e.target.value }))}
+                      placeholder="Nom" style={{ ...F, fontSize: 15, fontWeight: 700, width: 120 }} />
+                  </div>
+                ) : (
+                  <p style={{ color: '#1A1A1A', fontSize: 18, fontWeight: 700 }}>{child.firstName} {child.lastName}</p>
+                )}
                 <p style={{ color: '#9CA3AF', fontSize: 12, marginTop: 2 }}>N° {String(child.id).padStart(4, '0')} · {age} ans</p>
                 <div className="flex gap-2 mt-2 flex-wrap">
                   <span className="px-2 py-0.5 rounded-full"
@@ -1114,7 +1131,7 @@ function CrmFiche({ child, crm, onClose, onExitRequest, onUpdate, onReactivate, 
           <div className="flex items-center gap-2">
             {editing ? (
               <>
-                <button onClick={() => { setLocalCrm(crm); setEditing(false); }}
+                <button onClick={() => { setLocalCrm(crm); setIdentity({ firstName: child.firstName, lastName: child.lastName }); setEditing(false); }}
                   className="px-3 py-1.5 rounded-lg"
                   style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', color: '#374151', fontSize: 13, cursor: 'pointer' }}>
                   Annuler
@@ -2046,6 +2063,11 @@ export function ChildrenPage() {
             setChildren(prev => prev.map(c =>
               c.id === id ? { ...c, dossierStatus: status } : c
             ));
+          }}
+          onChildUpdate={updates => {
+            const id = modal.child!.id;
+            setChildren(prev => prev.map(c => c.id === id ? { ...c, ...updates } : c));
+            setModal(prev => prev.child ? { ...prev, child: { ...prev.child, ...updates } } : prev);
           }}
           onReactivate={() => {
             const id = modal.child!.id;
