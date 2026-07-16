@@ -25,6 +25,24 @@ async function main() {
   });
 
   console.log('✅ User hadoum@gmail.com created/updated.');
+
+  const dounde = await bcrypt.hash('test123', 10);
+
+  await prisma.user.upsert({
+    where: { email: 'dounde.diallo@gmail.com' },
+    update: { passwordHash: dounde },
+    create: {
+      email: 'dounde.diallo@gmail.com',
+      passwordHash: dounde,
+      name: 'Dounde Diallo',
+      initials: 'DD',
+      role: 'DIRECTOR',
+      roleLabel: 'Directeur',
+      title: 'Direction générale',
+    },
+  });
+
+  console.log('✅ User dounde.diallo@gmail.com created/updated.');
 }
 
 main()

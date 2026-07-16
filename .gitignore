@@ -11,6 +11,10 @@ build/
 .env
 .env.local
 .env.*.local
+.env.dev
+
+# Local dev database dumps
+backups/
 
 # Logs
 *.log
