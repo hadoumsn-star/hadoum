@@ -14,3 +14,5 @@ services:
 
 volumes:
   postgres_data:
+    name: hadoum-api_postgres_data
+    external: true

@@ -1,4 +1,14 @@
-import { Body, Controller, Delete, Get, HttpCode, Param, Post, UploadedFile, UseInterceptors } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  HttpCode,
+  Param,
+  Post,
+  UploadedFile,
+  UseInterceptors,
+} from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ReportsService } from './reports.service';
 
@@ -7,7 +17,9 @@ export class ReportsController {
   constructor(private readonly reportsService: ReportsService) {}
 
   @Post('upload')
-  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 20 * 1024 * 1024 } }))
+  @UseInterceptors(
+    FileInterceptor('file', { limits: { fileSize: 20 * 1024 * 1024 } }),
+  )
   upload(
     @UploadedFile() file: Express.Multer.File,
     @Body('title') title: string,
@@ -15,7 +27,13 @@ export class ReportsController {
     @Body('reportDate') reportDate: string,
     @Body('uploadedBy') uploadedBy?: string,
   ) {
-    return this.reportsService.upload(file, title, type, reportDate, uploadedBy);
+    return this.reportsService.upload(
+      file,
+      title,
+      type,
+      reportDate,
+      uploadedBy,
+    );
   }
 
   @Get()
