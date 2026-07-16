@@ -5,6 +5,7 @@ on:
     branches: [main, develop]
   push:
     branches: [main, develop]
+  workflow_dispatch: {}
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -14,15 +15,24 @@ permissions:
   contents: read
 
 env:
+  # No "engines" field in either package.json. 22 is the version actually
+  # used by this project (hadoum_api/Dockerfile and hadoum_frontend/Dockerfile
+  # both pin FROM node:22-alpine).
   NODE_VERSION: "22"
 
 jobs:
-  api:
-    name: API - lint, build, unit tests
+  backend:
+    name: Backend (hadoum_api)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: hadoum_api
+    env:
+      # Placeholder only, no live database. prisma.config.ts reads
+      # DATABASE_URL to resolve its datasource config even for offline
+      # commands (generate/validate), so it must be set to something.
+      DATABASE_URL: postgresql://ci_user:ci_password@localhost:5432/hadoum_ci_placeholder
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -40,82 +50,30 @@ jobs:
       - name: Generate Prisma client
         run: npx prisma generate
 
-      # Non-blocking on purpose: 8 pre-existing @typescript-eslint/no-unsafe-*
-      # errors in children.service.ts, staff.service.ts and upload.service.ts
-      # predate this workflow. Flip to blocking once fixed - see
-      # docs/DEVELOPMENT_ENVIRONMENT.md. Uses lint:check (no --fix): CI must
-      # verify, never silently rewrite source files.
-      - name: Lint (non-blocking, known pre-existing errors)
+      - name: Validate Prisma schema
+        run: npx prisma validate
+
+      # "lint" exists but runs eslint --fix, which rewrites files - not
+      # appropriate for a check-only CI gate. "lint:check" (same rules,
+      # no --fix) already exists in package.json, so it is used here
+      # instead of inventing a new script.
+      - name: Lint (lint:check)
         run: npm run lint:check
-        continue-on-error: true
 
-      - name: Build (tsc type-check via nest build)
-        run: npm run build
-
+      # "test" (unit, jest) exists and needs no database - app.controller.spec.ts
+      # instantiates AppController directly, it never boots AppModule/Prisma.
+      # "test:e2e" exists too but requires a live Postgres and is out of
+      # scope for this minimal CI (no service container here).
       - name: Unit tests
         run: npm test -- --ci
 
-  api-e2e:
-    name: API - e2e tests (PostgreSQL)
-    runs-on: ubuntu-latest
-    needs: api
-    defaults:
-      run:
-        working-directory: hadoum_api
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_USER: ci_user
-          POSTGRES_PASSWORD: ci_password
-          POSTGRES_DB: hadoum_ci_db
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U ci_user -d hadoum_ci_db"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-    env:
-      NODE_ENV: test
-      # CI-only, throwaway values. Never real/production secrets.
-      DATABASE_URL: postgresql://ci_user:ci_password@localhost:5432/hadoum_ci_db
-      JWT_SECRET: ci-test-jwt-secret-not-for-production
-      S3_ENDPOINT: http://localhost:9000
-      S3_REGION: eu-central
-      S3_ACCESS_KEY: ci-test-access-key
-      S3_SECRET_KEY: ci-test-secret-key
-      S3_BUCKET: ci-test-bucket
-      SMTP_USER: ci-test@example.com
-      SMTP_PASS: ci-test-password
-      FRONTEND_URL: http://localhost:5173
-      PORT: 3001
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-          cache-dependency-path: hadoum_api/package-lock.json
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Generate Prisma client
-        run: npx prisma generate
-
-      - name: Apply migrations (prisma migrate deploy only - never db push/reset in CI)
-        run: npx prisma migrate deploy
-
-      - name: e2e tests
-        run: npm run test:e2e
+      - name: Build
+        run: npm run build
 
   frontend:
-    name: Frontend - build
+    name: Frontend (hadoum_frontend)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: hadoum_frontend
@@ -133,14 +91,89 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # No "lint" script and no ESLint config/dependency in hadoum_frontend
+      # at all - nothing to run. Not invented here; step intentionally
+      # omitted rather than faked.
+      # (No "test" script and no test framework installed either - same
+      # reasoning, step intentionally omitted.)
+
       - name: Build
         run: npm run build
 
-      # Non-blocking on purpose: hadoum_frontend has no tsconfig.json/eslint
-      # history, so tsc currently reports 8 pre-existing type errors
-      # (ChildrenPage.tsx, DirectorDashboard.tsx, TeamPage.tsx). This step
-      # surfaces them without failing the build until they're fixed.
-      # Flip to blocking once fixed - see docs/DEVELOPMENT_ENVIRONMENT.md.
-      - name: Typecheck (non-blocking, known pre-existing errors)
-        run: npm run typecheck
-        continue-on-error: true
+  infrastructure:
+    name: Infrastructure checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate docker-compose.dev.yml
+        run: docker compose -f docker-compose.dev.yml config -q
+        env:
+          POSTGRES_USER: ci_dev_user
+          POSTGRES_PASSWORD: ci_dev_placeholder_password
+          POSTGRES_DB: ci_dev_db
+          DATABASE_URL: postgresql://ci_dev_user:ci_dev_placeholder_password@postgres:5432/ci_dev_db
+          JWT_SECRET: ci-dev-placeholder-jwt-secret
+
+      - name: Validate docker-compose.prod.yml
+        run: docker compose -f docker-compose.prod.yml config -q
+        env:
+          POSTGRES_USER: ci_prod_placeholder_user
+          POSTGRES_PASSWORD: ci_prod_placeholder_password
+          POSTGRES_DB: ci_prod_placeholder_db
+          JWT_SECRET: ci-prod-placeholder-jwt-secret
+          S3_ENDPOINT: https://example-object-storage.invalid
+          S3_REGION: eu-central
+          S3_ACCESS_KEY: ci-placeholder-access-key
+          S3_SECRET_KEY: ci-placeholder-secret-key
+          S3_BUCKET: ci-placeholder-bucket
+          SMTP_USER: ci-placeholder@example.com
+          SMTP_PASS: ci-placeholder-password
+          FRONTEND_URL: https://example.invalid
+
+      - name: Shell syntax check (scripts/)
+        run: |
+          set -eu
+          find scripts -type f -name "*.sh" -print0 | xargs -0 -n1 bash -n
+          echo "OK: all scripts/*.sh passed bash -n."
+
+      - name: Ensure no real .env file is committed
+        run: |
+          set -eu
+          TRACKED_ENV_FILES=$(git ls-files | grep -E '(^|/)\.env(\..+)?$' | grep -vE '(^|/)\.env\.example$|(^|/)\.env\.dev\.example$|^hadoum_frontend/\.env\.production$' || true)
+          if [ -n "$TRACKED_ENV_FILES" ]; then
+            echo "Real .env file(s) are tracked in git:" >&2
+            echo "$TRACKED_ENV_FILES" >&2
+            exit 1
+          fi
+          echo "OK: no real .env file tracked (only *.example / hadoum_frontend/.env.production)."
+
+      # "db push" and "migrate reset" are forbidden everywhere in executable
+      # files. "migrate dev" is only forbidden in files that run in
+      # production (entrypoint.sh, Dockerfile, docker-compose.prod.yml) -
+      # it stays legitimate in dev-only tooling (scripts/dev/*.sh,
+      # docker-compose.dev.yml, Dockerfile.dev), per docs/DEVELOPMENT_ENVIRONMENT.md.
+      - name: Check for forbidden Prisma commands
+        run: |
+          set -eu
+          FILES_ANYWHERE=$(grep -rlE 'db push|migrate reset' \
+            --include="Dockerfile*" --include="*.sh" --include="docker-compose*.yml" --include="package.json" \
+            --exclude-dir=node_modules --exclude-dir=.git . || true)
+
+          PROD_FILES="hadoum_api/Dockerfile hadoum_api/entrypoint.sh docker-compose.prod.yml"
+          FILES_PROD_MIGRATE_DEV=""
+          for f in $PROD_FILES; do
+            if [ -f "$f" ] && grep -qE 'migrate dev' "$f"; then
+              FILES_PROD_MIGRATE_DEV="$FILES_PROD_MIGRATE_DEV $f"
+            fi
+          done
+
+          if [ -n "$FILES_ANYWHERE" ] || [ -n "$FILES_PROD_MIGRATE_DEV" ]; then
+            echo "Forbidden Prisma command(s) detected:" >&2
+            [ -n "$FILES_ANYWHERE" ] && echo "  'db push' / 'migrate reset' in: $FILES_ANYWHERE" >&2
+            [ -n "$FILES_PROD_MIGRATE_DEV" ] && echo "  'migrate dev' in production file(s): $FILES_PROD_MIGRATE_DEV" >&2
+            exit 1
+          fi
+          echo "OK: no forbidden Prisma command in executable files."
