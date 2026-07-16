@@ -55,7 +55,14 @@ export class ChildrenController {
   @Post(':id/exit')
   exitChild(
     @Param('id') id: string,
-    @Body() body: { exitType: string; exitDate: string; exitReason: string; exitResponsable?: string; dateRetour?: string },
+    @Body()
+    body: {
+      exitType: string;
+      exitDate: string;
+      exitReason: string;
+      exitResponsable?: string;
+      dateRetour?: string;
+    },
   ) {
     return this.childrenService.exitChild(id, body);
   }
@@ -70,7 +77,8 @@ export class ChildrenController {
   @Post(':id/school')
   upsertSchool(
     @Param('id') id: string,
-    @Body() dto: { currentLevel: string; schoolName?: string; schoolType?: string },
+    @Body()
+    dto: { currentLevel: string; schoolName?: string; schoolType?: string },
   ) {
     return this.childrenService.upsertSchoolRecord(id, dto);
   }
@@ -136,7 +144,9 @@ export class ChildrenController {
   }
 
   @Post(':id/documents/:docId/replace')
-  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 10 * 1024 * 1024 } }))
+  @UseInterceptors(
+    FileInterceptor('file', { limits: { fileSize: 10 * 1024 * 1024 } }),
+  )
   replaceDocument(
     @Param('id') id: string,
     @Param('docId') docId: string,
@@ -146,7 +156,9 @@ export class ChildrenController {
   }
 
   @Post(':id/documents/upload')
-  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 10 * 1024 * 1024 } }))
+  @UseInterceptors(
+    FileInterceptor('file', { limits: { fileSize: 10 * 1024 * 1024 } }),
+  )
   uploadDocument(
     @Param('id') id: string,
     @UploadedFile() file: Express.Multer.File,
@@ -154,7 +166,13 @@ export class ChildrenController {
     @Body('label') label: string,
     @Body('uploadedBy') uploadedBy?: string,
   ) {
-    return this.childrenService.uploadDocument(id, file, type, label, uploadedBy);
+    return this.childrenService.uploadDocument(
+      id,
+      file,
+      type,
+      label,
+      uploadedBy,
+    );
   }
 
   @Get(':id/documents')

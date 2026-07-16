@@ -1,4 +1,8 @@
-import { Injectable, UnauthorizedException, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  UnauthorizedException,
+  BadRequestException,
+} from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
 import * as crypto from 'crypto';
@@ -50,11 +54,17 @@ export class AuthService {
 
     // Always return the same message to avoid email enumeration
     if (!user) {
-      return { message: 'Si cette adresse est enregistrée, un lien de réinitialisation a été généré.' };
+      return {
+        message:
+          'Si cette adresse est enregistrée, un lien de réinitialisation a été généré.',
+      };
     }
 
     const rawToken = crypto.randomBytes(32).toString('hex');
-    const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
+    const tokenHash = crypto
+      .createHash('sha256')
+      .update(rawToken)
+      .digest('hex');
     const expiry = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
 
     await this.prisma.user.update({
@@ -67,11 +77,17 @@ export class AuthService {
 
     await this.mail.sendResetPasswordEmail(user.email, resetUrl);
 
-    return { message: 'Si cette adresse est enregistrée, un lien de réinitialisation a été généré.' };
+    return {
+      message:
+        'Si cette adresse est enregistrée, un lien de réinitialisation a été généré.',
+    };
   }
 
   async resetPassword(dto: ResetPasswordDto) {
-    const tokenHash = crypto.createHash('sha256').update(dto.token).digest('hex');
+    const tokenHash = crypto
+      .createHash('sha256')
+      .update(dto.token)
+      .digest('hex');
 
     const user = await this.prisma.user.findFirst({
       where: {
