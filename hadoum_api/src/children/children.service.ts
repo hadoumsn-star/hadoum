@@ -2,12 +2,16 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateChildDto } from './dto/create-child.dto';
 import { UpdateChildDto } from './dto/update-child.dto';
-import { CreateConsultationDto, CreateMedicalRecordDto, CreateVaccinationDto } from './dto/create-medical.dto';
+import {
+  CreateConsultationDto,
+  CreateMedicalRecordDto,
+  CreateVaccinationDto,
+} from './dto/create-medical.dto';
 import { CreateObservationDto } from './dto/create-observation.dto';
 import { CreateEventDto } from './dto/create-event.dto';
 import { CreateDocumentDto } from './dto/create-document.dto';
 import { UploadService } from '../upload/upload.service';
-import { DocumentType } from '@prisma/client';
+import { DocumentType, SchoolType } from '@prisma/client';
 
 @Injectable()
 export class ChildrenService {
@@ -21,7 +25,9 @@ export class ChildrenService {
       orderBy: { fileNumber: 'desc' },
       select: { fileNumber: true },
     });
-    const lastNum = last ? parseInt(last.fileNumber.replace('HAD-', ''), 10) : 0;
+    const lastNum = last
+      ? parseInt(last.fileNumber.replace('HAD-', ''), 10)
+      : 0;
     const fileNumber = `HAD-${String(lastNum + 1).padStart(4, '0')}`;
     return this.prisma.child.create({
       data: {
@@ -91,7 +97,7 @@ export class ChildrenService {
 
   async update(id: string, dto: UpdateChildDto) {
     await this.findOne(id);
-    const { exitReturnDate, exitDate, ...rest } = dto as any;
+    const { exitReturnDate, exitDate, ...rest } = dto;
     return this.prisma.child.update({
       where: { id },
       data: {
@@ -106,13 +112,16 @@ export class ChildrenService {
     });
   }
 
-  async exitChild(id: string, data: {
-    exitType: string;
-    exitDate: string;
-    exitReason: string;
-    exitResponsable?: string;
-    dateRetour?: string;
-  }) {
+  async exitChild(
+    id: string,
+    data: {
+      exitType: string;
+      exitDate: string;
+      exitReason: string;
+      exitResponsable?: string;
+      dateRetour?: string;
+    },
+  ) {
     await this.findOne(id);
     const updated = await this.prisma.child.update({
       where: { id },
@@ -146,7 +155,14 @@ export class ChildrenService {
     await this.findOne(id);
     return this.prisma.child.update({
       where: { id },
-      data: { isActive: true, exitType: null, exitDate: null, exitReturnDate: null, exitReason: null, exitResponsable: null },
+      data: {
+        isActive: true,
+        exitType: null,
+        exitDate: null,
+        exitReturnDate: null,
+        exitReason: null,
+        exitResponsable: null,
+      },
     });
   }
 
@@ -157,7 +173,10 @@ export class ChildrenService {
 
   // ─── School ───────────────────────────────────────────────────────────────
 
-  async upsertSchoolRecord(childId: string, dto: { currentLevel: string; schoolName?: string; schoolType?: string }) {
+  async upsertSchoolRecord(
+    childId: string,
+    dto: { currentLevel: string; schoolName?: string; schoolType?: string },
+  ) {
     await this.findOne(childId);
     return this.prisma.schoolRecord.upsert({
       where: { childId },
@@ -165,7 +184,8 @@ export class ChildrenService {
         childId,
         currentLevel: dto.currentLevel,
         schoolName: dto.schoolName ?? 'École Hadoum',
-        schoolType: (dto.schoolType as any) ?? 'ECOLE_PUBLIQUE',
+        schoolType:
+          (dto.schoolType as SchoolType | undefined) ?? 'ECOLE_PUBLIQUE',
       },
       update: {
         currentLevel: dto.currentLevel,
@@ -186,8 +206,11 @@ export class ChildrenService {
   }
 
   async addVaccination(childId: string, dto: CreateVaccinationDto) {
-    const medical = await this.prisma.medicalRecord.findUnique({ where: { childId } });
-    if (!medical) throw new NotFoundException(`No medical record for child ${childId}`);
+    const medical = await this.prisma.medicalRecord.findUnique({
+      where: { childId },
+    });
+    if (!medical)
+      throw new NotFoundException(`No medical record for child ${childId}`);
     return this.prisma.vaccination.create({
       data: {
         medicalRecordId: medical.id,
@@ -199,8 +222,11 @@ export class ChildrenService {
   }
 
   async addConsultation(childId: string, dto: CreateConsultationDto) {
-    const medical = await this.prisma.medicalRecord.findUnique({ where: { childId } });
-    if (!medical) throw new NotFoundException(`No medical record for child ${childId}`);
+    const medical = await this.prisma.medicalRecord.findUnique({
+      where: { childId },
+    });
+    if (!medical)
+      throw new NotFoundException(`No medical record for child ${childId}`);
     return this.prisma.consultation.create({
       data: {
         medicalRecordId: medical.id,
@@ -242,7 +268,11 @@ export class ChildrenService {
     });
   }
 
-  async updateEvent(childId: string, eventId: string, dto: Partial<CreateEventDto>) {
+  async updateEvent(
+    childId: string,
+    eventId: string,
+    dto: Partial<CreateEventDto>,
+  ) {
     return this.prisma.eventLog.update({
       where: { id: eventId },
       data: dto,
@@ -262,8 +292,14 @@ export class ChildrenService {
     });
   }
 
-  async replaceDocument(childId: string, docId: string, file: Express.Multer.File) {
-    const doc = await this.prisma.document.findFirstOrThrow({ where: { id: docId, childId } });
+  async replaceDocument(
+    childId: string,
+    docId: string,
+    file: Express.Multer.File,
+  ) {
+    const doc = await this.prisma.document.findFirstOrThrow({
+      where: { id: docId, childId },
+    });
     const newKey = await this.uploadService.upload(file, `children/${childId}`);
     return this.prisma.document.update({
       where: { id: doc.id },
@@ -281,11 +317,20 @@ export class ChildrenService {
     await this.findOne(childId);
     const s3Key = await this.uploadService.upload(file, `children/${childId}`);
     return this.prisma.document.create({
-      data: { childId, type, label, fileUrl: s3Key, uploadedBy: uploadedBy ?? 'staff' },
+      data: {
+        childId,
+        type,
+        label,
+        fileUrl: s3Key,
+        uploadedBy: uploadedBy ?? 'staff',
+      },
     });
   }
 
-  async getDocumentUrl(childId: string, docId: string): Promise<{ url: string; expiresIn: number }> {
+  async getDocumentUrl(
+    childId: string,
+    docId: string,
+  ): Promise<{ url: string; expiresIn: number }> {
     const doc = await this.prisma.document.findFirst({
       where: { id: docId, childId },
     });
@@ -308,7 +353,9 @@ export class ChildrenService {
   }
 
   async deleteDocument(childId: string, docId: string): Promise<void> {
-    const doc = await this.prisma.document.findFirst({ where: { id: docId, childId } });
+    const doc = await this.prisma.document.findFirst({
+      where: { id: docId, childId },
+    });
     if (!doc) throw new NotFoundException('Document not found');
 
     // Remove the DB record first so the slot is freed for re-upload even if S3 cleanup fails
