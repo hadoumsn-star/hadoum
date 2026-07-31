@@ -73,12 +73,10 @@ services:
     container_name: hadoum-frontend-development
     environment:
       NGINX_SERVER_NAME: ${NGINX_SERVER_NAME:-dev.hadoum.com}
-      NGINX_CERT_DOMAIN: ${NGINX_CERT_DOMAIN:-dev.hadoum.com}
     ports:
       - "${HTTP_PORT:-8080}:80"
-      - "${HTTPS_PORT:-8443}:443"
     volumes:
-      - ${TLS_CERT_PATH:-/etc/letsencrypt}:/etc/letsencrypt:ro
+      - ./hadoum_frontend/templates/default.dev.conf.template:/etc/nginx/templates/default.conf.template:ro
     depends_on:
       api:
         condition: service_healthy

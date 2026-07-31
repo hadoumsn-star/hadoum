@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Navigate, Link } from 'react-router';
 import { useAuth, UserRole, User } from '../context/AuthContext';
 
-const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3001/api';
+const API_BASE = import.meta.env.VITE_API_URL ?? '/api';
 import { HadoumLogo } from '../components/HadoumLogo';
 import {
   Shield,
