@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { pendingValidations } from '../data/mockData';
-import { CheckCircle2, XCircle, Clock, ShieldCheck, ChevronDown, X } from 'lucide-react';
+import { useAppData } from '../context/AppDataContext';
+import { CheckCircle2, XCircle, Clock, ShieldCheck, X } from 'lucide-react';
 
 const URG = {
   haute:   { bg: '#FEF2F2', color: '#B91C1C', label: 'Urgente'  },
@@ -66,29 +66,28 @@ function NoteModal({ onConfirm, onClose, action }: { onConfirm: (note: string) =
 }
 
 export function ValidationsPage() {
-  const [validated, setValidated] = useState<Record<number, string>>({});
-  const [rejected,  setRejected]  = useState<Record<number, string>>({});
+  const { validations, validateRequest, refuseRequest } = useAppData();
   const [filter, setFilter] = useState<StatusFilter>('pending');
   const [noteModal, setNoteModal] = useState<{ id: number; action: 'validate' | 'reject' } | null>(null);
 
-  const data = pendingValidations.filter((v) => {
-    if (filter === 'pending')   return !validated[v.id] && !rejected[v.id];
-    if (filter === 'validated') return !!validated[v.id];
-    if (filter === 'rejected')  return !!rejected[v.id];
+  const data = validations.filter((v) => {
+    if (filter === 'pending')   return v.status === 'en attente';
+    if (filter === 'validated') return v.status === 'validée';
+    if (filter === 'rejected')  return v.status === 'refusée';
     return true;
   });
 
   const counts = {
-    all: pendingValidations.length,
-    pending:   pendingValidations.filter(v => !validated[v.id] && !rejected[v.id]).length,
-    validated: Object.keys(validated).length,
-    rejected:  Object.keys(rejected).length,
+    all: validations.length,
+    pending:   validations.filter(v => v.status === 'en attente').length,
+    validated: validations.filter(v => v.status === 'validée').length,
+    rejected:  validations.filter(v => v.status === 'refusée').length,
   };
 
   const handleConfirm = (note: string) => {
     if (!noteModal) return;
-    if (noteModal.action === 'validate') setValidated((p) => ({ ...p, [noteModal.id]: note || 'Validé' }));
-    else setRejected((p) => ({ ...p, [noteModal.id]: note || 'Refusé' }));
+    if (noteModal.action === 'validate') validateRequest(noteModal.id, note || 'Validé');
+    else refuseRequest(noteModal.id, note || 'Refusé');
     setNoteModal(null);
   };
 
@@ -135,8 +134,8 @@ export function ValidationsPage() {
         ) : (
           data.map((v) => {
             const urg = URG[v.urgency];
-            const isVal = !!validated[v.id];
-            const isRej = !!rejected[v.id];
+            const isVal = v.status === 'validée';
+            const isRej = v.status === 'refusée';
             return (
               <div key={v.id} className="rounded-xl p-5" style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', opacity: isVal || isRej ? 0.7 : 1 }}>
                 <div className="flex items-start gap-4">
@@ -159,9 +158,9 @@ export function ValidationsPage() {
                         <Clock size={11} /> {v.date}
                       </span>
                     </div>
-                    {(isVal || isRej) && (
+                    {(isVal || isRej) && v.note && (
                       <p style={{ color: '#6B7280', fontSize: 12, marginTop: 6, fontStyle: 'italic' }}>
-                        Note : {validated[v.id] || rejected[v.id]}
+                        Note : {v.note}
                       </p>
                     )}
                   </div>

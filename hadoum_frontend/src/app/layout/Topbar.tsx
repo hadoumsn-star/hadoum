@@ -2,6 +2,7 @@ import { Menu, Bell, ChevronDown, LogOut, User, ChevronLeft, ChevronRight, X } f
 import { useAuth } from '../context/AuthContext';
 import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router';
+import { notificationsApi, type ApiNotification } from '../services/notifications.api';
 
 interface TopbarProps {
   onMenuClick: () => void;
@@ -16,13 +17,6 @@ const ROLE_COLOR: Record<string, string> = {
   board:      '#92400E',
 };
 
-// Notifications list (no messaging — spec 6a)
-const NOTIFICATIONS = [
-  { id: 1, text: 'Dossier médical incomplet — Sara Ouali nécessite une mise à jour urgente.', time: '30 min', unread: true },
-  { id: 2, text: 'Rapport mensuel de mai 2026 en attente de soumission. Échéance dans 2 jours.', time: '2h',    unread: true },
-  { id: 3, text: 'Sortie scolaire du 15 mai approuvée pour la classe Primaire 3.', time: '3h',    unread: false },
-];
-
 function useClickOutside(ref: React.RefObject<HTMLElement | null>, handler: () => void) {
   useEffect(() => {
     const listener = (e: MouseEvent) => {
@@ -34,35 +28,35 @@ function useClickOutside(ref: React.RefObject<HTMLElement | null>, handler: () =
   }, [ref, handler]);
 }
 
+function timeAgo(iso: string): string {
+  const diffMs = Date.now() - new Date(iso).getTime();
+  const minutes = Math.floor(diffMs / 60000);
+  if (minutes < 1) return "à l'instant";
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  return `${Math.floor(hours / 24)}j`;
+}
+
 // ─── Notification Panel ───────────────────────────────────────────────────────
 
-function NotificationPanel({ onClose }: { onClose: () => void }) {
+function NotificationPanel({ notifications, onDismiss }: {
+  notifications: ApiNotification[];
+  onDismiss: (id: string) => void;
+}) {
   const [index, setIndex] = useState(0);
-  const [dismissed, setDismissed] = useState<number[]>([]);
 
-  const visible = NOTIFICATIONS.filter((n) => !dismissed.includes(n.id));
+  const safeIndex = Math.min(index, Math.max(0, notifications.length - 1));
+  const current = notifications[safeIndex];
 
-  // Keep index in bounds after dismiss
-  const safeIndex = Math.min(index, Math.max(0, visible.length - 1));
-  const current = visible[safeIndex];
-
-  // Auto-fermeture quand toutes les notifications sont dismissées (point 6)
-  useEffect(() => {
-    if (visible.length === 0) {
-      const t = setTimeout(onClose, 300);
-      return () => clearTimeout(t);
-    }
-  }, [visible.length, onClose]);
-
-  const dismiss = (id: number) => {
-    setDismissed((prev) => [...prev, id]);
-    // If dismissing current and it's last, go back
-    if (safeIndex >= visible.length - 1 && safeIndex > 0) {
+  const dismiss = (id: string) => {
+    onDismiss(id);
+    if (safeIndex >= notifications.length - 1 && safeIndex > 0) {
       setIndex(safeIndex - 1);
     }
   };
 
-  if (visible.length === 0) {
+  if (notifications.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-8 px-4 text-center">
         <Bell size={24} style={{ color: '#D1D5DB', marginBottom: 8 }} />
@@ -76,20 +70,21 @@ function NotificationPanel({ onClose }: { onClose: () => void }) {
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3" style={{ borderBottom: '1px solid #F3F4F6' }}>
         <p style={{ color: '#1A1A1A', fontSize: 14, fontWeight: 600 }}>Notifications</p>
-        <span style={{ color: '#9CA3AF', fontSize: 12 }}>{safeIndex + 1} / {visible.length}</span>
+        <span style={{ color: '#9CA3AF', fontSize: 12 }}>{safeIndex + 1} / {notifications.length}</span>
       </div>
 
       {/* Current notification — full text, no truncation */}
       {current && (
         <div className="px-4 py-4">
           <div className="flex items-start gap-3">
-            {current.unread && (
+            {!current.isRead && (
               <div className="w-2 h-2 rounded-full mt-1.5 flex-shrink-0" style={{ background: '#3E5A78' }} />
             )}
-            {!current.unread && <div className="w-2 flex-shrink-0" />}
-            <p style={{ color: '#1A1A1A', fontSize: 13, lineHeight: 1.6, flex: 1 }}>
-              {current.text}
-            </p>
+            {current.isRead && <div className="w-2 flex-shrink-0" />}
+            <div className="flex-1">
+              <p style={{ color: '#1A1A1A', fontSize: 13, fontWeight: 600, lineHeight: 1.5 }}>{current.title}</p>
+              <p style={{ color: '#374151', fontSize: 13, lineHeight: 1.6, marginTop: 2 }}>{current.message}</p>
+            </div>
             <button
               onClick={() => dismiss(current.id)}
               className="flex-shrink-0 p-1 rounded-md hover:bg-gray-100 ml-1"
@@ -98,12 +93,12 @@ function NotificationPanel({ onClose }: { onClose: () => void }) {
               <X size={14} style={{ color: '#9CA3AF' }} />
             </button>
           </div>
-          <p style={{ color: '#9CA3AF', fontSize: 11, marginTop: 8, paddingLeft: 20 }}>Il y a {current.time}</p>
+          <p style={{ color: '#9CA3AF', fontSize: 11, marginTop: 8, paddingLeft: 20 }}>Il y a {timeAgo(current.createdAt)}</p>
         </div>
       )}
 
       {/* Navigation chevrons */}
-      {visible.length > 1 && (
+      {notifications.length > 1 && (
         <div className="flex items-center justify-between px-4 pb-3 pt-1" style={{ borderTop: '1px solid #F9F7F3' }}>
           <button
             onClick={() => setIndex(Math.max(0, safeIndex - 1))}
@@ -117,7 +112,7 @@ function NotificationPanel({ onClose }: { onClose: () => void }) {
 
           {/* Dots */}
           <div className="flex items-center gap-1.5">
-            {visible.map((_, i) => (
+            {notifications.map((_, i) => (
               <button
                 key={i}
                 onClick={() => setIndex(i)}
@@ -134,10 +129,10 @@ function NotificationPanel({ onClose }: { onClose: () => void }) {
           </div>
 
           <button
-            onClick={() => setIndex(Math.min(visible.length - 1, safeIndex + 1))}
-            disabled={safeIndex >= visible.length - 1}
+            onClick={() => setIndex(Math.min(notifications.length - 1, safeIndex + 1))}
+            disabled={safeIndex >= notifications.length - 1}
             className="flex items-center gap-1 px-2 py-1.5 rounded-lg disabled:opacity-30 hover:bg-gray-50 transition-colors"
-            style={{ border: '1px solid #E5E7EB', background: '#FFFFFF', cursor: safeIndex >= visible.length - 1 ? 'not-allowed' : 'pointer' }}
+            style={{ border: '1px solid #E5E7EB', background: '#FFFFFF', cursor: safeIndex >= notifications.length - 1 ? 'not-allowed' : 'pointer' }}
             aria-label="Notification suivante"
           >
             <ChevronRight size={14} style={{ color: '#374151' }} />
@@ -155,6 +150,7 @@ export function Topbar({ onMenuClick, pageTitle = 'Tableau de bord', breadcrumb 
   const navigate = useNavigate();
   const [notifOpen, setNotifOpen]     = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+  const [notifications, setNotifications] = useState<ApiNotification[]>([]);
 
   const notifRef   = useRef<HTMLDivElement>(null);
   const profileRef = useRef<HTMLDivElement>(null);
@@ -162,8 +158,25 @@ export function Topbar({ onMenuClick, pageTitle = 'Tableau de bord', breadcrumb 
   useClickOutside(notifRef,   () => setNotifOpen(false));
   useClickOutside(profileRef, () => setProfileOpen(false));
 
+  const loadNotifications = () => {
+    notificationsApi.list().then(setNotifications).catch(() => {});
+  };
+
+  useEffect(() => {
+    loadNotifications();
+  }, []);
+
+  useEffect(() => {
+    if (notifOpen) loadNotifications();
+  }, [notifOpen]);
+
   const roleColor = user ? ROLE_COLOR[user.role] : '#3E5A78';
-  const unreadCount = NOTIFICATIONS.filter((n) => n.unread).length;
+  const unreadCount = notifications.filter((n) => !n.isRead).length;
+
+  const handleDismiss = (id: string) => {
+    notificationsApi.markRead(id).catch(() => {});
+    setNotifications((prev) => prev.filter((n) => n.id !== id));
+  };
 
   const handleLogout = () => {
     logout();
@@ -211,7 +224,7 @@ export function Topbar({ onMenuClick, pageTitle = 'Tableau de bord', breadcrumb 
       <div className="flex items-center gap-1.5 flex-shrink-0">
 
         {/* ── Notification bell ── */}
-        {/* <div className="relative" ref={notifRef}>
+        <div className="relative" ref={notifRef}>
           <button
             onClick={() => { setNotifOpen(!notifOpen); setProfileOpen(false); }}
             className="relative p-2 rounded-lg hover:bg-gray-50 transition-colors"
@@ -252,11 +265,11 @@ export function Topbar({ onMenuClick, pageTitle = 'Tableau de bord', breadcrumb 
                 }
               `}</style>
               <div className="hadoum-notif-panel">
-                <NotificationPanel onClose={() => setNotifOpen(false)} />
+                <NotificationPanel notifications={notifications} onDismiss={handleDismiss} />
               </div>
             </>
           )}
-        </div> */}
+        </div>
 
         {/* ── Profile dropdown ── */}
         {user && (

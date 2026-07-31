@@ -621,7 +621,7 @@ export function DirectorDashboard() {
 
       {showAddChild && (
         <AddModal
-          onSave={(_form: any, _docs: any) => {
+          onCreated={() => {
             setShowAddChild(false);
             navigate('/app/children');
           }}

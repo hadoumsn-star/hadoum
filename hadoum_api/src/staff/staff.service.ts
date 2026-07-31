@@ -118,15 +118,17 @@ export class StaffService {
     staffId: string,
     docId: string,
   ): Promise<{ url: string }> {
-    const doc = await this.prisma.staffDoc.findUniqueOrThrow({
-      where: { id: docId },
+    const doc = await this.prisma.staffDoc.findFirstOrThrow({
+      where: { id: docId, staffId },
     });
     return { url: await this.uploadService.getPresignedUrl(doc.key) };
   }
 
   async deleteStaffDoc(staffId: string, docId: string): Promise<void> {
-    await this.prisma.staffDoc.findUniqueOrThrow({ where: { id: docId } });
-    await this.prisma.staffDoc.delete({ where: { id: docId } });
+    const doc = await this.prisma.staffDoc.findFirstOrThrow({
+      where: { id: docId, staffId },
+    });
+    await this.prisma.staffDoc.delete({ where: { id: doc.id } });
   }
 
   // ─── Attendance ────────────────────────────────────────────────────────────

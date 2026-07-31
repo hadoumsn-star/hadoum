@@ -336,7 +336,7 @@ function CrmFiche({ child, crm, onClose, onExitRequest, onUpdate, onChildUpdate,
   onUpdate: (crm: ChildCRM) => void;
   onChildUpdate: (updates: Partial<Child>) => void;
   onReactivate: () => void;
-  onDossierChange: (status: 'complet' | 'partiel' | 'incomplet') => void;
+  onDossierChange: (status: 'complet' | 'partiel' | 'incomplet' | 'à compléter') => void;
 }) {
   const [activeTab, setActiveTab] = useState<CrmTab>('identite');
   const [localCrm, setLocalCrm]  = useState<ChildCRM>(crm);

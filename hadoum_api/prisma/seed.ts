@@ -30,15 +30,20 @@ async function main() {
 
   await prisma.user.upsert({
     where: { email: 'dounde.diallo@gmail.com' },
-    update: { passwordHash: dounde },
+    update: {
+      passwordHash: dounde,
+      role: 'SUPERVISOR',
+      roleLabel: 'Superviseur',
+      title: 'Supervision générale',
+    },
     create: {
       email: 'dounde.diallo@gmail.com',
       passwordHash: dounde,
       name: 'Dounde Diallo',
       initials: 'DD',
-      role: 'DIRECTOR',
-      roleLabel: 'Directeur',
-      title: 'Direction générale',
+      role: 'SUPERVISOR',
+      roleLabel: 'Superviseur',
+      title: 'Supervision générale',
     },
   });
 

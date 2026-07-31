@@ -8,13 +8,19 @@ import {
   Post,
   Query,
   UploadedFile,
+  UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { StaffService } from './staff.service';
 import { StaffStatus, CandidateStatus } from '@prisma/client';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
 
 @Controller('staff')
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles('DIRECTOR', 'SUPERVISOR')
 export class StaffController {
   constructor(private readonly staffService: StaffService) {}
 

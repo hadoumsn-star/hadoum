@@ -1,12 +1,17 @@
+# Standalone Postgres container for the "run backend directly on the host"
+# workflow (npm run start:dev against a containerized DB only). This is
+# distinct from docker-compose.local.yml, which containerizes the full
+# stack (postgres + api + frontend). Credentials are read from a local
+# hadoum_api/.env (gitignored, never committed) - see hadoum_api/README.md.
 services:
   postgres:
     image: postgres:16
     container_name: hadoum-db
     restart: always
     environment:
-      POSTGRES_USER: hadoum_user
-      POSTGRES_PASSWORD: hadoum1990
-      POSTGRES_DB: hadoum_db
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required in hadoum_api/.env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required in hadoum_api/.env}
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required in hadoum_api/.env}
     ports:
       - "5432:5432"
     volumes:
