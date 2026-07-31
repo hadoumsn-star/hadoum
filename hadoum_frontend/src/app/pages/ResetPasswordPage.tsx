@@ -3,7 +3,7 @@ import { Link, useSearchParams, useNavigate } from 'react-router';
 import { HadoumLogo } from '../components/HadoumLogo';
 import { Lock, Eye, EyeOff, CheckCircle2 } from 'lucide-react';
 
-const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3001/api';
+const API_BASE = import.meta.env.VITE_API_URL ?? '/api';
 
 export function ResetPasswordPage() {
   const [searchParams] = useSearchParams();
