@@ -1542,7 +1542,10 @@ function AttendanceModal({ member, onClose, onMemberStatusChange }: {
       if (!map[key]) map[key] = { retards: 0, absJust: 0, absNonJust: 0, conges: 0 };
       if (r.type === 'retard')   map[key].retards++;
       if (r.type === 'conge')    map[key].conges++;
-      if (r.type === 'absence')  r.justified ? map[key].absJust++ : map[key].absNonJust++;
+      if (r.type === 'absence') {
+        if (r.justified) map[key].absJust++;
+        else map[key].absNonJust++;
+      }
     });
     return Object.entries(map)
       .sort(([a], [b]) => b.localeCompare(a))
@@ -2024,11 +2027,11 @@ function AttendanceModal({ member, onClose, onMemberStatusChange }: {
 // ─── Member Card ──────────────────────────────────────────────────────────────
 
 function MemberCard({ m, effectiveStatus, onAttendance, onEdit, onExit }: {
-  m: TeamMember;
+  m: TeamMember & { apiId: string };
   effectiveStatus?: 'present' | 'absent' | 'conge';
-  onAttendance: (m: TeamMember) => void;
-  onEdit: (m: TeamMember) => void;
-  onExit: (m: TeamMember) => void;
+  onAttendance: (m: TeamMember & { apiId: string }) => void;
+  onEdit: (m: TeamMember & { apiId: string }) => void;
+  onExit: (m: TeamMember & { apiId: string }) => void;
 }) {
   const st = STATUS[effectiveStatus ?? m.status];
   const rs = getRoleStyle(m.role);
@@ -2109,11 +2112,11 @@ function MemberCard({ m, effectiveStatus, onAttendance, onEdit, onExit }: {
 // ─── Tab: Active Members ───────────────────────────────────────────────────────
 
 function ActiveTab({ members, onExit, onEdit, onAdd, onAttendance }: {
-  members: TeamMember[];
-  onExit: (m: TeamMember) => void;
-  onEdit: (m: TeamMember) => void;
+  members: (TeamMember & { apiId: string })[];
+  onExit: (m: TeamMember & { apiId: string }) => void;
+  onEdit: (m: TeamMember & { apiId: string }) => void;
   onAdd: () => void;
-  onAttendance: (m: TeamMember) => void;
+  onAttendance: (m: TeamMember & { apiId: string }) => void;
 }) {
   const [search,        setSearch]        = useState('');
   const [filter,        setFilter]        = useState<'all' | 'present' | 'absent' | 'conge'>('all');
@@ -2453,9 +2456,9 @@ function CandidatesTab({ candidates, onAdd, onIntegrate, onIntegrateNow, onEdit 
 // ─── Tab: Former Members ───────────────────────────────────────────────────────
 
 function FormerTab({ former, onReintegrate, onReintegrateNow }: {
-  former: FormerMember[];
-  onReintegrate: (m: FormerMember) => void;
-  onReintegrateNow: (m: FormerMember) => void;
+  former: (FormerMember & { apiId: string })[];
+  onReintegrate: (m: FormerMember & { apiId: string }) => void;
+  onReintegrateNow: (m: FormerMember & { apiId: string }) => void;
 }) {
   return (
     <div className="rounded-xl overflow-hidden" style={{ background: '#FFFFFF', border: '1px solid #E5E7EB' }}>

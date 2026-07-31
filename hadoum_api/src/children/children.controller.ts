@@ -7,10 +7,14 @@ import {
   Patch,
   Post,
   UploadedFile,
+  UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { DocumentType } from '@prisma/client';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
 import { ChildrenService } from './children.service';
 import { CreateChildDto } from './dto/create-child.dto';
 import { UpdateChildDto } from './dto/update-child.dto';
@@ -24,6 +28,8 @@ import { CreateEventDto } from './dto/create-event.dto';
 import { CreateDocumentDto } from './dto/create-document.dto';
 
 @Controller('children')
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles('DIRECTOR', 'SUPERVISOR')
 export class ChildrenController {
   constructor(private readonly childrenService: ChildrenService) {}
 

@@ -20,6 +20,13 @@ import { DesignSystemPage }from './pages/DesignSystemPage';
 import { PlaceholderPage } from './pages/PlaceholderPage';
 import { ProfilePage }     from './pages/ProfilePage';
 import { MessagesPage }    from './pages/MessagesPage';
+import { AdministrationPage } from './pages/AdministrationPage';
+import { LocauxPage } from './pages/LocauxPage';
+import { TicketsMaintenancePage } from './pages/TicketsMaintenancePage';
+import { SupplierContractsPage } from './pages/SupplierContractsPage';
+import { DemarchesAdministrativesPage } from './pages/DemarchesAdministrativesPage';
+import { StocksInventairePage } from './pages/StocksInventairePage';
+import { RegistreEntreesSortiesPage } from './pages/RegistreEntreesSortiesPage';
 
 export const router = createBrowserRouter([
   { path: '/',                 element: <Navigate to="/login" replace /> },
@@ -47,6 +54,13 @@ export const router = createBrowserRouter([
       { path: 'exports',          Component: ExportsPage },
       { path: 'design-system',    Component: DesignSystemPage },
       { path: 'messages',          Component: MessagesPage },
+      { path: 'administration',              Component: AdministrationPage },
+      { path: 'locaux-espaces',              Component: LocauxPage },
+      { path: 'tickets-maintenance',         Component: TicketsMaintenancePage },
+      { path: 'contrats-fournisseurs',       Component: SupplierContractsPage },
+      { path: 'demarches-administratives',   Component: DemarchesAdministrativesPage },
+      { path: 'stocks-inventaire',           Component: StocksInventairePage },
+      { path: 'registre-entrees-sorties',    Component: RegistreEntreesSortiesPage },
       { path: 'educators',        element: <PlaceholderPage title="Éducateurs" /> },
       { path: 'settings',         element: <PlaceholderPage title="Paramètres" /> },
       { path: 'profile',          Component: ProfilePage },

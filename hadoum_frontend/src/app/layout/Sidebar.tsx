@@ -4,7 +4,7 @@ import {
   LayoutDashboard, Users, UsersRound, CalendarCheck,
   DollarSign, FileText, BookOpen, Activity,
   BarChart2, Download, AlertTriangle,
-  MessageSquare,
+  MessageSquare, Building2,
 } from 'lucide-react';
 import { useAuth, UserRole } from '../context/AuthContext';
 import { HadoumLogo } from '../components/HadoumLogo';
@@ -37,7 +37,11 @@ const NAV_BY_ROLE: Record<UserRole, { primary: NavItem[]; secondary: NavItem[] }
       { label: 'Consulter les rapports', path: '/app/reports',    icon: FileText },
       // { label: 'Messagerie',             path: '/app/messages',   icon: MessageSquare },
     ],
-    secondary: []
+    secondary: [
+      { label: 'Suivi des incidents',    path: '/app/incidents',  icon: AlertTriangle },
+      { label: 'Suivre les finances',    path: '/app/finances',   icon: DollarSign },
+      { label: 'Administration & Locaux', path: '/app/administration', icon: Building2 },
+    ]
   },
   educator: {
     primary: [
@@ -57,6 +61,8 @@ const NAV_BY_ROLE: Record<UserRole, { primary: NavItem[]; secondary: NavItem[] }
     secondary: [
       { label: 'Suivi des incidents',    path: '/app/incidents',   icon: AlertTriangle },
       { label: 'Consulter les rapports', path: '/app/reports',     icon: FileText },
+      { label: 'Suivre les finances',    path: '/app/finances',    icon: DollarSign },
+      { label: 'Administration & Locaux', path: '/app/administration', icon: Building2 },
     ],
   },
   board: {

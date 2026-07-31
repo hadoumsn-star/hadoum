@@ -1,0 +1,7 @@
+export const PROCEDURE_EXPIRATION_WARNING_DAYS = Number(
+  process.env.PROCEDURE_EXPIRATION_WARNING_DAYS ?? 30,
+);
+
+export const PROCEDURE_RENEWAL_WARNING_DAYS = Number(
+  process.env.PROCEDURE_RENEWAL_WARNING_DAYS ?? 30,
+);

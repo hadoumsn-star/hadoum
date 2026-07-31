@@ -60,15 +60,80 @@ jobs:
       - name: Lint (lint:check)
         run: npm run lint:check
 
-      # "test" (unit, jest) exists and needs no database - app.controller.spec.ts
-      # instantiates AppController directly, it never boots AppModule/Prisma.
-      # "test:e2e" exists too but requires a live Postgres and is out of
-      # scope for this minimal CI (no service container here).
-      - name: Unit tests
-        run: npm test -- --ci
+      # Unit tests (Jest, mocked PrismaService — no live database needed)
+      # with coverage + the per-service coverageThreshold gate defined in
+      # package.json's "jest" block. Fails the build if any of the nine
+      # core services drops below its configured threshold.
+      - name: Unit tests with coverage
+        run: npm run test:cov -- --ci
+
+      - name: Upload backend coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage
+          path: coverage/
+          retention-days: 14
 
       - name: Build
         run: npm run build
+
+  backend-e2e:
+    name: Backend integration/e2e tests (hadoum_api)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: hadoum_api
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ci_user
+          POSTGRES_PASSWORD: ci_password
+          POSTGRES_DB: hadoum_ci_e2e
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ci_user -d hadoum_ci_e2e"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://ci_user:ci_password@localhost:5432/hadoum_ci_e2e
+      JWT_SECRET: ci-e2e-placeholder-jwt-secret
+      S3_ENDPOINT: https://example-object-storage.invalid
+      S3_REGION: eu-central
+      S3_ACCESS_KEY: ci-placeholder-access-key
+      S3_SECRET_KEY: ci-placeholder-secret-key
+      S3_BUCKET: ci-placeholder-bucket
+      SMTP_USER: ci-placeholder@example.com
+      SMTP_PASS: ci-placeholder-password
+      FRONTEND_URL: https://example.invalid
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: hadoum_api/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      # Formal migration workflow only — no "db push"/"migrate reset", per
+      # the infrastructure job's forbidden-command check below.
+      - name: Apply migrations
+        run: npx prisma migrate deploy
+
+      - name: Integration & e2e tests (Jest + Supertest, real Postgres)
+        run: npm run test:e2e
 
   frontend:
     name: Frontend (hadoum_frontend)
@@ -91,14 +156,108 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # No "lint" script and no ESLint config/dependency in hadoum_frontend
-      # at all - nothing to run. Not invented here; step intentionally
-      # omitted rather than faked.
-      # (No "test" script and no test framework installed either - same
-      # reasoning, step intentionally omitted.)
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
 
       - name: Build
         run: npm run build
+
+  e2e:
+    name: Full-stack Playwright E2E (frontend + backend + Postgres)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ci_user
+          POSTGRES_PASSWORD: ci_password
+          POSTGRES_DB: hadoum_ci_playwright
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ci_user -d hadoum_ci_playwright"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://ci_user:ci_password@localhost:5432/hadoum_ci_playwright
+      JWT_SECRET: ci-playwright-placeholder-jwt-secret
+      S3_ENDPOINT: https://example-object-storage.invalid
+      S3_REGION: eu-central
+      S3_ACCESS_KEY: ci-placeholder-access-key
+      S3_SECRET_KEY: ci-placeholder-secret-key
+      S3_BUCKET: ci-placeholder-bucket
+      SMTP_USER: ci-placeholder@example.com
+      SMTP_PASS: ci-placeholder-password
+      FRONTEND_URL: http://localhost:5173
+      PORT: 3001
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install backend dependencies
+        working-directory: hadoum_api
+        run: npm ci
+
+      - name: Apply backend migrations
+        working-directory: hadoum_api
+        run: npx prisma migrate deploy
+
+      - name: Build backend
+        working-directory: hadoum_api
+        run: npm run build
+
+      - name: Start backend
+        working-directory: hadoum_api
+        run: |
+          nohup node dist/main.js > ../backend.log 2>&1 &
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:3001/api >/dev/null && exit 0
+            sleep 2
+          done
+          echo "Backend did not become healthy in time" >&2
+          cat ../backend.log >&2
+          exit 1
+
+      # NOTE: the Playwright login/validation specs authenticate as the two
+      # accounts prisma/seed.ts creates (hadoum@gmail.com / dounde.diallo@gmail.com,
+      # overridable via E2E_DIRECTOR_EMAIL etc. — see hadoum_frontend/e2e/helpers.ts).
+      # A migrated-but-empty CI database has neither account, so this step
+      # seeds them before Playwright runs. See docs/testing.md.
+      - name: Seed Playwright test accounts
+        working-directory: hadoum_api
+        run: npx ts-node prisma/seed.ts
+
+      - name: Install frontend dependencies
+        working-directory: hadoum_frontend
+        run: npm ci
+
+      - name: Install Playwright browsers
+        working-directory: hadoum_frontend
+        run: npx playwright install --with-deps chromium
+
+      - name: Run Playwright E2E tests
+        working-directory: hadoum_frontend
+        env:
+          CI: true
+        run: npm run test:e2e
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: hadoum_frontend/playwright-report/
+          retention-days: 14
 
   infrastructure:
     name: Infrastructure checks
@@ -108,14 +267,22 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Validate docker-compose.dev.yml
-        run: docker compose -f docker-compose.dev.yml config -q
+      - name: Validate docker-compose.local.yml
+        run: docker compose -f docker-compose.local.yml config -q
         env:
-          POSTGRES_USER: ci_dev_user
-          POSTGRES_PASSWORD: ci_dev_placeholder_password
-          POSTGRES_DB: ci_dev_db
-          DATABASE_URL: postgresql://ci_dev_user:ci_dev_placeholder_password@postgres:5432/ci_dev_db
-          JWT_SECRET: ci-dev-placeholder-jwt-secret
+          POSTGRES_USER: ci_local_user
+          POSTGRES_PASSWORD: ci_local_placeholder_password
+          POSTGRES_DB: ci_local_db
+          DATABASE_URL: postgresql://ci_local_user:ci_local_placeholder_password@postgres:5432/ci_local_db
+          JWT_SECRET: ci-local-placeholder-jwt-secret
+
+      - name: Validate docker-compose.development.yml
+        run: docker compose -f docker-compose.development.yml config -q
+        env:
+          POSTGRES_USER: ci_development_user
+          POSTGRES_PASSWORD: ci_development_placeholder_password
+          POSTGRES_DB: ci_development_db
+          JWT_SECRET: ci-development-placeholder-jwt-secret
 
       - name: Validate docker-compose.prod.yml
         run: docker compose -f docker-compose.prod.yml config -q
@@ -136,13 +303,13 @@ jobs:
       - name: Shell syntax check (scripts/)
         run: |
           set -eu
-          find scripts -type f -name "*.sh" -print0 | xargs -0 -n1 bash -n
-          echo "OK: all scripts/*.sh passed bash -n."
+          find scripts hadoum_api/scripts -type f -name "*.sh" -print0 | xargs -0 -n1 bash -n
+          echo "OK: all *.sh scripts passed bash -n."
 
       - name: Ensure no real .env file is committed
         run: |
           set -eu
-          TRACKED_ENV_FILES=$(git ls-files | grep -E '(^|/)\.env(\..+)?$' | grep -vE '(^|/)\.env\.example$|(^|/)\.env\.dev\.example$|^hadoum_frontend/\.env\.production$' || true)
+          TRACKED_ENV_FILES=$(git ls-files | grep -E '(^|/)\.env(\..+)?$' | grep -vE '\.env\.example$|\.env\.local\.example$|\.env\.development\.example$|\.env\.dev\.example$|^hadoum_frontend/\.env\.production$' || true)
           if [ -n "$TRACKED_ENV_FILES" ]; then
             echo "Real .env file(s) are tracked in git:" >&2
             echo "$TRACKED_ENV_FILES" >&2
@@ -151,10 +318,11 @@ jobs:
           echo "OK: no real .env file tracked (only *.example / hadoum_frontend/.env.production)."
 
       # "db push" and "migrate reset" are forbidden everywhere in executable
-      # files. "migrate dev" is only forbidden in files that run in
-      # production (entrypoint.sh, Dockerfile, docker-compose.prod.yml) -
-      # it stays legitimate in dev-only tooling (scripts/dev/*.sh,
-      # docker-compose.dev.yml, Dockerfile.dev), per docs/DEVELOPMENT_ENVIRONMENT.md.
+      # files. "migrate dev" is only forbidden in files that run in a
+      # deployed environment (entrypoint.sh, Dockerfile, docker-compose.prod.yml,
+      # docker-compose.development.yml) - it stays legitimate in local-only
+      # tooling (scripts/local/*.sh, docker-compose.local.yml, Dockerfile.dev),
+      # per docs/LOCAL_ENVIRONMENT.md.
       - name: Check for forbidden Prisma commands
         run: |
           set -eu
@@ -162,7 +330,7 @@ jobs:
             --include="Dockerfile*" --include="*.sh" --include="docker-compose*.yml" --include="package.json" \
             --exclude-dir=node_modules --exclude-dir=.git . || true)
 
-          PROD_FILES="hadoum_api/Dockerfile hadoum_api/entrypoint.sh docker-compose.prod.yml"
+          PROD_FILES="hadoum_api/Dockerfile hadoum_api/entrypoint.sh docker-compose.prod.yml docker-compose.development.yml"
           FILES_PROD_MIGRATE_DEV=""
           for f in $PROD_FILES; do
             if [ -f "$f" ] && grep -qE 'migrate dev' "$f"; then

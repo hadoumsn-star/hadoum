@@ -12,9 +12,20 @@ build/
 .env.local
 .env.*.local
 .env.dev
+.env.development
+.env.prod
 
-# Local dev database dumps
+# Local/dev/prod database dumps
 backups/
+
+# Ad hoc schema/migration diff scratch output
+audit/
+
+# Deploy/monitor-host state (written by scripts/deploy/deploy.sh and
+# scripts/monitor/check-containers.sh on the server, never meaningful in a
+# local checkout)
+.last_good_tag.*
+.monitor_state.*
 
 # Logs
 *.log

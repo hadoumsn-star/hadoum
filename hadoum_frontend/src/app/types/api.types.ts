@@ -162,4 +162,5 @@ export interface CreateChildPayload {
   guardianName?: string;
   guardianPhone?: string;
   guardianRelation?: string;
+  familyComposition?: string;
 }

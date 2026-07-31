@@ -1,18 +1,61 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useAppData } from '../context/AppDataContext';
-import { pendingValidations, openIncidents } from '../data/mockData';
 import { Link } from 'react-router';
 import {
   ShieldCheck, AlertTriangle, CheckCircle2, XCircle,
   ChevronRight, Clock, Activity, TrendingUp, DollarSign, X,
 } from 'lucide-react';
+import { financesApi, type ApiDashboard } from '../services/finances.api';
+import { incidentsApi } from '../services/incidents.api';
+import { validationsApi, type ApiPendingValidation } from '../services/validations.api';
+import { formatXof } from '../config/financeCategories.config';
 
-const URGENCY_STYLE: Record<string, { bg: string; color: string; label: string }> = {
-  haute:   { bg: '#FEF2F2', color: '#B91C1C', label: 'Urgente' },
-  normale: { bg: '#EEF2F7', color: '#3E5A78', label: 'Normale' },
-  basse:   { bg: '#F9F7F3', color: '#6B7280', label: 'Basse' },
+const RESOURCE_TYPE_LABELS: Record<string, string> = {
+  MAINTENANCE_TICKET: 'Ticket',
+  SUPPLIER_CONTRACT: 'Contrat',
+  ADMINISTRATIVE_PROCEDURE: 'Démarche',
+  STOCK_ITEM: 'Stock',
+  INVENTORY_ASSET: 'Bien',
+  ENTRY_LOG: 'Registre',
+  GOODS_MOVEMENT_LOG: 'Mouvement',
 };
+
+const RESOURCE_TYPE_LINKS: Record<string, string> = {
+  MAINTENANCE_TICKET: '/app/tickets-maintenance',
+  SUPPLIER_CONTRACT: '/app/contrats-fournisseurs',
+  ADMINISTRATIVE_PROCEDURE: '/app/demarches-administratives',
+  STOCK_ITEM: '/app/stocks-inventaire',
+  INVENTORY_ASSET: '/app/stocks-inventaire',
+  ENTRY_LOG: '/app/registre-entrees-sorties',
+  GOODS_MOVEMENT_LOG: '/app/registre-entrees-sorties',
+};
+
+const LATE_THRESHOLD_MS = 24 * 60 * 60 * 1000;
+
+function pendingValidationLabel(v: ApiPendingValidation): string {
+  if (!v.resource) return RESOURCE_TYPE_LABELS[v.resourceType] ?? v.resourceType;
+  if (v.resourceType === 'SUPPLIER_CONTRACT') {
+    return [v.resource.contractName, v.resource.supplierName].filter(Boolean).join(' — ');
+  }
+  if (v.resourceType === 'ADMINISTRATIVE_PROCEDURE') {
+    return [v.resource.title, v.resource.authority].filter(Boolean).join(' — ');
+  }
+  if (v.resourceType === 'STOCK_ITEM') {
+    const qty = v.resource.pendingValidationPayload?.quantity;
+    return [v.resource.name, qty != null ? `${qty} ${v.resource.unit ?? ''}`.trim() : null].filter(Boolean).join(' — ');
+  }
+  if (v.resourceType === 'INVENTORY_ASSET') {
+    return [v.resource.name, v.resource.assetCode].filter(Boolean).join(' — ');
+  }
+  if (v.resourceType === 'ENTRY_LOG') {
+    return [v.resource.fullName, v.resource.organization].filter(Boolean).join(' — ');
+  }
+  if (v.resourceType === 'GOODS_MOVEMENT_LOG') {
+    return [v.resource.description, v.resource.destination].filter(Boolean).join(' — ');
+  }
+  return v.resource.title ?? RESOURCE_TYPE_LABELS[v.resourceType] ?? v.resourceType;
+}
 
 const SEVERITY_STYLE: Record<string, { bg: string; color: string }> = {
   'élevé': { bg: '#FEF2F2', color: '#B91C1C' },
@@ -26,17 +69,23 @@ function VueEconomique() {
   const { fundRequests, validateFund, refuseFund } = useAppData();
   const [refuseNote, setRefuseNote] = useState('');
   const [refuseTarget, setRefuseTarget] = useState<number | null>(null);
+  const [dashboard, setDashboard] = useState<ApiDashboard | null>(null);
+
+  useEffect(() => {
+    financesApi.getDashboard().then(setDashboard).catch(() => {});
+  }, []);
 
   const pendingFunds = fundRequests.filter(r => r.status === 'en attente');
 
-  const BUDGET = { alloue: 840000, consomme: 653400 };
-  const restant = BUDGET.alloue - BUDGET.consomme;
-  const pct = Math.round((BUDGET.consomme / BUDGET.alloue) * 100);
+  const alloue   = dashboard ? dashboard.byCategory.reduce((s, c) => s + (c.budgetXof ?? 0), 0) : 0;
+  const consomme = dashboard ? dashboard.byCategory.reduce((s, c) => s + c.realizedXof, 0) : 0;
+  const restant  = alloue - consomme;
+  const pct      = alloue > 0 ? Math.round((consomme / alloue) * 100) : 0;
 
   const kpis = [
-    { label: 'Budget alloué',   value: `${(BUDGET.alloue / 1000).toFixed(0)} 000 DA`, color: '#3E5A78', bg: '#EEF2F7', icon: DollarSign },
-    { label: 'Budget consommé', value: `${(BUDGET.consomme / 1000).toFixed(0)} 000 DA`, color: '#D97706', bg: '#FFFBEB', icon: TrendingUp },
-    { label: 'Budget restant',  value: `${(restant / 1000).toFixed(0)} 000 DA`, color: '#065F46', bg: '#ECFDF5', icon: CheckCircle2 },
+    { label: 'Budget alloué',   value: formatXof(alloue),   color: '#3E5A78', bg: '#EEF2F7', icon: DollarSign },
+    { label: 'Budget consommé', value: formatXof(consomme), color: '#D97706', bg: '#FFFBEB', icon: TrendingUp },
+    { label: 'Budget restant',  value: formatXof(restant),  color: '#065F46', bg: '#ECFDF5', icon: CheckCircle2 },
   ];
 
   return (
@@ -146,19 +195,27 @@ function VueEconomique() {
 
 export function SupervisorDashboard() {
   const { user } = useAuth();
-  const [validated, setValidated] = useState<number[]>([]);
-  const [rejected,  setRejected]  = useState<number[]>([]);
+  const [openCount, setOpenCount] = useState(0);
+  const [lateCount, setLateCount] = useState(0);
+  const [pendingValidations, setPendingValidations] = useState<ApiPendingValidation[]>([]);
+
+  useEffect(() => {
+    incidentsApi.list().then(data => {
+      setOpenCount(data.filter(i => i.status !== 'RESOLU').length);
+      setLateCount(data.filter(i => i.status === 'EN_RETARD').length);
+    }).catch(() => {});
+    validationsApi.pending().then(setPendingValidations).catch(() => {});
+  }, []);
 
   const today = new Date().toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' });
 
-  const pending = pendingValidations.filter((v) => !validated.includes(v.id) && !rejected.includes(v.id));
-  const urgentCount = pending.filter((v) => v.urgency === 'haute').length;
-  const openCount   = openIncidents.filter((i) => i.status === 'en cours').length;
-
-  const sortedPending = [...pending].sort((a, b) => {
-    const ord = { haute: 0, normale: 1, basse: 2 };
-    return ord[a.urgency] - ord[b.urgency];
-  }).slice(0, 3);
+  const now = Date.now();
+  const pending = [...pendingValidations].sort(
+    (a, b) => new Date(a.submittedAt).getTime() - new Date(b.submittedAt).getTime(),
+  );
+  const lateValidationsCount = pending.filter(
+    v => now - new Date(v.submittedAt).getTime() > LATE_THRESHOLD_MS,
+  ).length;
 
   return (
     <div className="px-4 md:px-6 py-6 space-y-5" style={{ maxWidth: 1100 }}>
@@ -190,9 +247,9 @@ export function SupervisorDashboard() {
                 </span>
               </p>
               <p style={{ color: '#6B7280', fontSize: 13, marginTop: 4 }}>
-                {urgentCount > 0
-                  ? `${urgentCount} urgente${urgentCount > 1 ? 's' : ''} · action immédiate requise`
-                  : 'Aucune demande urgente en ce moment'
+                {lateValidationsCount > 0
+                  ? `${lateValidationsCount} en retard · action immédiate requise`
+                  : 'Aucune demande en retard en ce moment'
                 }
               </p>
             </div>
@@ -221,13 +278,9 @@ export function SupervisorDashboard() {
       <div className="rounded-xl" style={{ background: '#FFFFFF', border: '1px solid #E5E7EB' }}>
         <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: '1px solid #F3F4F6' }}>
           <h3 style={{ color: '#1A1A1A', fontSize: 15, fontWeight: 600 }}>Demandes à traiter</h3>
-          {pending.length > 3 && (
-            <button className="flex items-center gap-1" style={{ color: '#3E5A78', fontSize: 12, fontWeight: 500 }}>
-              Voir tout ({pending.length}) <ChevronRight size={13} />
-            </button>
-          )}
+          <span style={{ color: '#9CA3AF', fontSize: 12 }}>{pending.length} au total</span>
         </div>
-        {sortedPending.length === 0 ? (
+        {pending.length === 0 ? (
           <div className="px-5 py-10 text-center">
             <CheckCircle2 size={28} style={{ color: '#065F46', margin: '0 auto 8px' }} />
             <p style={{ color: '#374151', fontSize: 14, fontWeight: 500 }}>Aucune demande en attente</p>
@@ -235,36 +288,36 @@ export function SupervisorDashboard() {
           </div>
         ) : (
           <ul>
-            {sortedPending.map((v, i) => {
-              const urg = URGENCY_STYLE[v.urgency];
+            {pending.map((v, i) => {
+              const isLate = now - new Date(v.submittedAt).getTime() > LATE_THRESHOLD_MS;
               return (
                 <li key={v.id} className="flex items-start gap-4 px-5 py-4 hover:bg-gray-50"
-                  style={{ borderBottom: i < sortedPending.length - 1 ? '1px solid #F9F7F3' : 'none' }}>
+                  style={{ borderBottom: i < pending.length - 1 ? '1px solid #F9F7F3' : 'none' }}>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1 flex-wrap">
                       <span className="px-2 py-0.5 rounded-full" style={{ background: '#F3F4F6', color: '#374151', fontSize: 10, fontWeight: 600 }}>
-                        {v.type.toUpperCase()}
+                        {(RESOURCE_TYPE_LABELS[v.resourceType] ?? v.resourceType).toUpperCase()}
                       </span>
-                      <span className="px-2 py-0.5 rounded-full" style={{ background: urg.bg, color: urg.color, fontSize: 10, fontWeight: 600 }}>
-                        {urg.label.toUpperCase()}
-                      </span>
+                      {isLate && (
+                        <span className="px-2 py-0.5 rounded-full" style={{ background: '#FEF2F2', color: '#B91C1C', fontSize: 10, fontWeight: 600 }}>
+                          EN RETARD
+                        </span>
+                      )}
                     </div>
-                    <p style={{ color: '#1A1A1A', fontSize: 13, fontWeight: 500 }}>{v.description}</p>
+                    <p style={{ color: '#1A1A1A', fontSize: 13, fontWeight: 500 }}>{pendingValidationLabel(v)}</p>
                     <div className="flex items-center gap-2 mt-1">
-                      <span style={{ color: '#6B7280', fontSize: 11 }}>Par {v.submittedBy}</span>
-                      <span style={{ color: '#9CA3AF', fontSize: 11 }}>· <Clock size={9} style={{ display: 'inline', verticalAlign: 'middle' }} /> {v.date}</span>
+                      <span style={{ color: '#6B7280', fontSize: 11 }}>Par {v.submittedBy.name}</span>
+                      <span style={{ color: '#9CA3AF', fontSize: 11 }}>
+                        · <Clock size={9} style={{ display: 'inline', verticalAlign: 'middle' }} /> {new Date(v.submittedAt).toLocaleDateString('fr-FR')}
+                      </span>
                     </div>
                   </div>
                   <div className="flex items-center gap-2 flex-shrink-0">
-                    <button onClick={() => setValidated(p => [...p, v.id])}
+                    <Link to={RESOURCE_TYPE_LINKS[v.resourceType] ?? '/app/dashboard'}
                       className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg"
-                      style={{ background: '#ECFDF5', color: '#065F46', fontSize: 12, fontWeight: 600, border: 'none', cursor: 'pointer' }}>
-                      <CheckCircle2 size={13} /> Valider
-                    </button>
-                    <button onClick={() => setRejected(p => [...p, v.id])} className="p-1.5 rounded-lg"
-                      style={{ background: '#F3F4F6', border: 'none', cursor: 'pointer' }} title="Refuser">
-                      <XCircle size={15} style={{ color: '#6B7280' }} />
-                    </button>
+                      style={{ background: '#EEF2F7', color: '#3E5A78', fontSize: 12, fontWeight: 600, textDecoration: 'none' }}>
+                      Voir <ChevronRight size={13} />
+                    </Link>
                   </div>
                 </li>
               );
@@ -286,7 +339,15 @@ export function SupervisorDashboard() {
         </div>
         <div className="px-5 py-6 flex items-center justify-between">
           <p style={{ color: '#6B7280', fontSize: 13 }}>
-            Consultez et signalez les incidents en cours.
+            {openCount > 0
+              ? <>
+                  {openCount} incident{openCount > 1 ? 's' : ''} ouvert{openCount > 1 ? 's' : ''}
+                  {lateCount > 0 && (
+                    <span style={{ color: '#B91C1C', fontWeight: 600 }}> · {lateCount} en retard</span>
+                  )}
+                </>
+              : 'Aucun incident ouvert.'
+            }
           </p>
           <Link to="/app/incidents"
             className="flex items-center gap-1.5 px-4 py-2 rounded-lg flex-shrink-0 ml-4"
