@@ -86,6 +86,7 @@ model Child {
   dailyObservations DailyObservation[]
   documents         Document[]
   eventLogs         EventLog[]
+  attendanceRecords ChildAttendance[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -273,6 +274,9 @@ model StaffMember {
   scheduleJson String?
   notes        String?
 
+  activities            Activity[]
+  presenceConfirmations StaffPresenceConfirmation[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -335,7 +339,85 @@ model StaffAttendance {
   justifKey String?
   justified Boolean   @default(false)
 
+  // null = pre-approved (created via the direct admin POST /staff/:id/attendance
+  // endpoint); set when created via POST /staff/:id/leave-requests instead.
+  validationStatus ValidationStatus?
+
   createdAt DateTime @default(now())
+
+  @@index([validationStatus])
+}
+
+// ─── Activities (pedagogical activities pending director validation) ─────────
+
+model Activity {
+  id         String      @id @default(uuid())
+  title      String
+  type       String
+  className  String
+  educatorId String
+  educator   StaffMember @relation(fields: [educatorId], references: [id], onDelete: Restrict)
+  date       DateTime
+
+  validationStatus ValidationStatus?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([validationStatus])
+  @@index([educatorId])
+}
+
+// ─── Fund requests (director asks for funds, supervisor approves) ────────────
+
+model FundRequest {
+  id            String   @id @default(uuid())
+  amountXof     Int
+  motif         String
+  requestedById String
+  requestedBy   User     @relation("FundRequestRequestedBy", fields: [requestedById], references: [id])
+  date          DateTime @default(now())
+
+  validationStatus ValidationStatus?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([validationStatus])
+}
+
+// ─── Daily attendance (children + staff presence-confirmation) ───────────────
+
+model ChildAttendance {
+  id           String   @id @default(uuid())
+  childId      String
+  child        Child    @relation(fields: [childId], references: [id], onDelete: Cascade)
+  date         DateTime
+  present      Boolean
+  recordedById String
+  recordedBy   User     @relation("ChildAttendanceRecordedBy", fields: [recordedById], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([childId, date])
+  @@index([date])
+}
+
+model StaffPresenceConfirmation {
+  id            String      @id @default(uuid())
+  staffId       String
+  staffMember   StaffMember @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  date          DateTime
+  confirmed     Boolean
+  confirmedById String
+  confirmedBy   User        @relation("StaffPresenceConfirmedBy", fields: [confirmedById], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([staffId, date])
+  @@index([date])
 }
 
 // ─── Reports ─────────────────────────────────────────────────────────────────
@@ -504,6 +586,10 @@ model User {
   goodsMovementsAuthorized       GoodsMovementLog[]      @relation("GoodsMovementAuthorizedBy")
   goodsMovementDocumentsUploaded GoodsMovementDocument[] @relation("GoodsMovementDocumentUploadedBy")
 
+  fundRequestsRequested   FundRequest[]               @relation("FundRequestRequestedBy")
+  childAttendanceRecorded ChildAttendance[]           @relation("ChildAttendanceRecordedBy")
+  staffPresenceConfirmed  StaffPresenceConfirmation[] @relation("StaffPresenceConfirmedBy")
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -647,6 +733,9 @@ enum ValidationResourceType {
   INVENTORY_ASSET
   ENTRY_LOG
   GOODS_MOVEMENT_LOG
+  ACTIVITY
+  LEAVE_REQUEST
+  FUND_REQUEST
 }
 
 model ValidationRequest {
@@ -1447,4 +1536,58 @@ model GoodsMovementDocument {
   uploadedBy   User?   @relation("GoodsMovementDocumentUploadedBy", fields: [uploadedById], references: [id])
 
   createdAt DateTime @default(now())
+}
+
+// ─── Répertoire des contacts (shared external-contact directory) ───────────
+//
+// PR 1 scope: the directory itself only. No consuming module (SupplierContract,
+// AdministrativeProcedure, MaintenanceTicket, Transaction) is given a relation
+// to Contact yet — that is deliberately deferred to later PRs, one module at a
+// time, per the approved implementation plan. Nothing here touches any
+// existing model or field.
+
+model ContactCategory {
+  id        String  @id @default(uuid())
+  key       String  @unique
+  label     String
+  color     String?
+  sortOrder Int     @default(0)
+  active    Boolean @default(true)
+
+  contacts Contact[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Contact {
+  id String @id @default(uuid())
+
+  fullName      String
+  organization  String?
+  functionTitle String?
+
+  categoryId String
+  category   ContactCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+
+  phone           String?
+  whatsappEnabled Boolean @default(false)
+  email           String?
+  address         String?
+  city            String?
+  notes           String?
+
+  photoKey  String?
+  photoMime String?
+
+  active Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([fullName])
+  @@index([organization])
+  @@index([phone])
+  @@index([categoryId])
+  @@index([active])
 }

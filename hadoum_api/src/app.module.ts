@@ -26,6 +26,9 @@ import { StockItemsModule } from './stock-items/stock-items.module';
 import { InventoryAssetsModule } from './inventory-assets/inventory-assets.module';
 import { EntryLogsModule } from './entry-logs/entry-logs.module';
 import { GoodsMovementLogsModule } from './goods-movement-logs/goods-movement-logs.module';
+import { ActivitiesModule } from './activities/activities.module';
+import { FundRequestsModule } from './fund-requests/fund-requests.module';
+import { ContactsModule } from './contacts/contacts.module';
 
 @Module({
   imports: [
@@ -85,6 +88,9 @@ import { GoodsMovementLogsModule } from './goods-movement-logs/goods-movement-lo
     InventoryAssetsModule,
     EntryLogsModule,
     GoodsMovementLogsModule,
+    ActivitiesModule,
+    FundRequestsModule,
+    ContactsModule,
   ],
   controllers: [AppController],
   providers: [AppService, { provide: APP_GUARD, useClass: ThrottlerGuard }],
