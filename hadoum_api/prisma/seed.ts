@@ -49,6 +49,42 @@ async function main() {
 
   console.log('✅ User dounde.diallo@gmail.com created/updated.');
 
+  // EDUCATOR / BOARD dev accounts — needed for PR 2's role-restriction
+  // Playwright coverage, which drives the real dev API (see
+  // hadoum_frontend/e2e/helpers.ts). Neither role existed as a seeded user
+  // before; only DIRECTOR and SUPERVISOR did.
+  const educatorPass = await bcrypt.hash('test123', 10);
+  await prisma.user.upsert({
+    where: { email: 'educateur.demo@hadoum.org' },
+    update: { passwordHash: educatorPass, role: 'EDUCATOR' },
+    create: {
+      email: 'educateur.demo@hadoum.org',
+      passwordHash: educatorPass,
+      name: 'Éducateur Démo',
+      initials: 'ED',
+      role: 'EDUCATOR',
+      roleLabel: 'Éducateur',
+      title: 'Équipe éducative',
+    },
+  });
+  console.log('✅ User educateur.demo@hadoum.org created/updated.');
+
+  const boardPass = await bcrypt.hash('test123', 10);
+  await prisma.user.upsert({
+    where: { email: 'conseil.demo@hadoum.org' },
+    update: { passwordHash: boardPass, role: 'BOARD' },
+    create: {
+      email: 'conseil.demo@hadoum.org',
+      passwordHash: boardPass,
+      name: 'Membre CA Démo',
+      initials: 'CA',
+      role: 'BOARD',
+      roleLabel: "Conseil d'Administration",
+      title: "Membre du Conseil",
+    },
+  });
+  console.log('✅ User conseil.demo@hadoum.org created/updated.');
+
   // Initial ContactCategory rows for the "Répertoire des contacts" module.
   // Deliberately `update: {}` on the upsert (unlike the User upserts above,
   // which do overwrite): a category's label/color/sortOrder is meant to be

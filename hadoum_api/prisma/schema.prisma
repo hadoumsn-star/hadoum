@@ -87,6 +87,7 @@ model Child {
   documents         Document[]
   eventLogs         EventLog[]
   attendanceRecords ChildAttendance[]
+  incidentLinks     IncidentChild[] // PR 11
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -253,6 +254,15 @@ enum StaffStatus {
   CONGE
 }
 
+// PR 10 — daily presence confirmation status. NON_CONFIRMED is deliberately
+// not a value here: it's the default represented by no
+// StaffPresenceConfirmation row existing for a given (staffId, date) — see
+// the model's own comment.
+enum StaffPresenceStatus {
+  PRESENT
+  ABSENT
+}
+
 enum CandidateStatus {
   NOUVEAU
   PRESELECTIONNE
@@ -276,6 +286,7 @@ model StaffMember {
 
   activities            Activity[]
   presenceConfirmations StaffPresenceConfirmation[]
+  incidentLinks         IncidentStaff[] // PR 11
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -404,14 +415,25 @@ model ChildAttendance {
   @@index([date])
 }
 
+// PR 10 — daily presence confirmation, distinct from StaffAttendance
+// (Congé/Retard/Absence leave records above). A row only ever exists once a
+// DIRECTOR has explicitly confirmed PRESENT or ABSENT for that staff/date;
+// "non confirmée" is never stored — it's simply the absence of a row for a
+// given (staffId, date), which is what makes "reset to non-confirmed" a
+// plain delete rather than a third stored state. `status` is nullable only
+// to keep this migration additive (no default needed on the ALTER); the
+// application always sets it on every row it ever creates. `confirmed`
+// (legacy, unused before this PR) is kept populated as a derived mirror of
+// `status === PRESENT` for backward compatibility — nothing reads it.
 model StaffPresenceConfirmation {
-  id            String      @id @default(uuid())
+  id            String               @id @default(uuid())
   staffId       String
-  staffMember   StaffMember @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  staffMember   StaffMember          @relation(fields: [staffId], references: [id], onDelete: Cascade)
   date          DateTime
   confirmed     Boolean
+  status        StaffPresenceStatus?
   confirmedById String
-  confirmedBy   User        @relation("StaffPresenceConfirmedBy", fields: [confirmedById], references: [id])
+  confirmedBy   User                 @relation("StaffPresenceConfirmedBy", fields: [confirmedById], references: [id])
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -452,11 +474,47 @@ enum TransactionCategory {
   VIREMENT
   APPORT
   AUTRE
+  // PR 6 — the default monthly budget category set needed four concepts
+  // this enum had no room for (clothing, transport, sport, leisure, office/
+  // bills); ETUDES is kept distinct from the existing PEDAGOGIE (school
+  // costs vs. pedagogical activities are different budget lines even though
+  // the words are close). All four are also valid DEPENSE categories, not
+  // budget-only labels — a budget with nothing that can ever be tagged
+  // against it could never show real reserved/consumed amounts.
+  VETEMENTS
+  TRANSPORT
+  ETUDES
+  SPORT
+  LOISIRS
+  BUREAU_FACTURES
 }
 
 enum TransactionStatus {
   VALIDE
   EN_ATTENTE
+}
+
+// PR 4: stable, product-defined set — not intended to be user-configurable,
+// so an enum matches every other Finance/status field in this schema
+// (TransactionType, TransactionCategory, TransactionStatus) rather than a
+// free-text column.
+//
+// MOBILE_MONEY is kept (not renamed/removed) purely for historical rows —
+// Postgres enum values can't be safely dropped in place, and removing it
+// would also break any existing Transaction still carrying it. New
+// transactions choose WAVE_MOBILE_MONEY or ORANGE_MOBILE_MONEY instead; the
+// frontend's "new transaction" dropdown is what actually enforces that
+// (MOBILE_MONEY stays selectable when editing an existing transaction that
+// already has it).
+enum PaymentMethod {
+  ESPECES
+  VIREMENT
+  CHEQUE
+  MOBILE_MONEY
+  WAVE_MOBILE_MONEY
+  ORANGE_MOBILE_MONEY
+  CARTE
+  AUTRE
 }
 
 model Transaction {
@@ -474,10 +532,56 @@ model Transaction {
   donorName        String?
   isAnonymousDonor Boolean?
 
+  // PR 4 (Contact directory + expense documents). Additive and optional
+  // throughout — see FinancesService for why paymentMethod stays optional
+  // for both DEPENSE and RECETTE in this transitional PR, and why
+  // supplierContactId is only ever set for DEPENSE. onDelete: SetNull for
+  // the same reason as MaintenanceTicket.assignedContact (PR 3): a
+  // financial record must stay valid even if the referenced Contact is
+  // ever hard-deleted administratively.
+  supplierContactId String?
+  supplierContact   Contact?       @relation(fields: [supplierContactId], references: [id], onDelete: SetNull)
+  paymentMethod     PaymentMethod?
+
+  // Dedicated expense documents, additive alongside the legacy
+  // justifKey/justifMime pair above (never removed). Each pair mirrors the
+  // Contact.photoKey/photoMime convention exactly.
+  purchaseOrderKey  String?
+  purchaseOrderMime String?
+  invoiceKey        String?
+  invoiceMime       String?
+  deliveryNoteKey   String?
+  deliveryNoteMime  String?
+
   createdBy String?
+
+  // PR 5A (Expense Approval Workflow foundation). Nullable and additive —
+  // does NOT replace `status` above, which keeps its exact current meaning
+  // for RECETTE and for every transaction outside this workflow. NULL means
+  // "not part of the workflow" (every pre-PR-5A row, and every RECETTE
+  // forever) — such rows are untouched by transition logic and stay fully
+  // usable through the existing create/update/delete endpoints. See
+  // ExpenseWorkflowService for the state machine this field is driven by.
+  expenseWorkflowStatus ExpenseWorkflowStatus?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([supplierContactId])
+  @@index([expenseWorkflowStatus])
+}
+
+// PR 5A: intentionally does not include PURCHASE_IN_PROGRESS — the approved
+// business workflow has no intermediate purchase state (see the PR 5
+// design). Kept separate from TransactionStatus (VALIDE/EN_ATTENTE), which
+// is a different concept (does this count as realized cash movement) that
+// this PR does not touch.
+enum ExpenseWorkflowStatus {
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+  COMPLETED
+  CANCELLED
 }
 
 model BudgetLine {
@@ -501,13 +605,31 @@ enum IncidentType {
   SCOLAIRE
   LOGISTIQUE
   AUTRE
+  // PR 11 — this enum doubles as the incident "category" in the product
+  // language; kept as IncidentType rather than renamed to avoid touching the
+  // existing column/consumers for a label-only distinction.
+  SECURITE
 }
 
+// PR 11 replaces the incident workflow with EN_COURS / EN_ATTENTE / RESOLU.
+// PLANIFIE and EN_RETARD are kept in the enum ONLY so historical rows created
+// before this PR keep loading correctly (removing a Postgres enum value in
+// place is not a safe operation) — the application layer (DTOs + frontend)
+// rejects them for new incidents and status changes; see
+// IncidentsService/CreateIncidentDto/ChangeIncidentStatusDto.
 enum IncidentStatus {
   EN_COURS
-  PLANIFIE
-  EN_RETARD
+  PLANIFIE // legacy — no longer selectable, preserved for historical incidents
+  EN_RETARD // legacy — no longer selectable, preserved for historical incidents
   RESOLU
+  EN_ATTENTE
+}
+
+// PR 11 — SLA-style triage priority, independent of status/category.
+enum IncidentPriority {
+  N1 // à traiter aujourd'hui
+  N2 // à traiter sous 3 jours
+  N3 // suivi normal
 }
 
 model Incident {
@@ -519,17 +641,40 @@ model Incident {
   date        DateTime       @default(now())
   status      IncidentStatus @default(EN_COURS)
 
+  // PR 11 — defaults new/legacy rows to the lowest urgency rather than
+  // leaving priority nullable, so every incident (old or new) always has one
+  // to display and filter on.
+  priority IncidentPriority @default(N3)
+
+  // PR 11 — nullable: incidents created before this PR have no recorded
+  // creator. Distinct from `signaledBy` (free-text "reported by", unchanged)
+  // — this is the authenticated user who filled the form, used to drive the
+  // SUPERVISOR edit restriction and the "created by SUPERVISOR" highlight.
+  createdById String?
+  createdBy   User?   @relation("IncidentCreatedBy", fields: [createdById], references: [id])
+
   attachmentKey  String?
   attachmentMime String?
 
   notes          IncidentNote[]
+  statusHistory  IncidentStatusHistory[]
+  children       IncidentChild[]
+  staffLinks     IncidentStaff[]
+  spaces         IncidentSpace[]
   entryLogs      EntryLog[]
   goodsMovements GoodsMovementLog[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([priority])
+  @@index([type])
 }
 
+// Legacy free-form note log, kept only so any pre-PR-11 notes stay readable.
+// PR 11 no longer writes to this model — status changes now carry their
+// mandatory note through IncidentStatusHistory instead.
 model IncidentNote {
   id         String   @id @default(uuid())
   incidentId String
@@ -539,6 +684,71 @@ model IncidentNote {
   author String
 
   createdAt DateTime @default(now())
+}
+
+// PR 11 — timestamped status-change history. A row only exists for an actual
+// transition (create doesn't produce one — there is no previous status yet).
+model IncidentStatusHistory {
+  id         String   @id @default(uuid())
+  incidentId String
+  incident   Incident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+
+  previousStatus IncidentStatus
+  newStatus      IncidentStatus
+  note           String
+
+  userId String
+  user   User   @relation("IncidentStatusChangedBy", fields: [userId], references: [id])
+
+  createdAt DateTime @default(now())
+
+  @@index([incidentId])
+}
+
+// PR 11 — "persons concerned": links to real Child/StaffMember records
+// instead of free text. Explicit join models (rather than an implicit
+// Prisma m-n) so each link can be indexed and queried directly for the
+// child/staff filters.
+model IncidentChild {
+  id         String   @id @default(uuid())
+  incidentId String
+  incident   Incident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+  childId    String
+  child      Child    @relation(fields: [childId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([incidentId, childId])
+  @@index([childId])
+}
+
+model IncidentStaff {
+  id          String      @id @default(uuid())
+  incidentId  String
+  incident    Incident    @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+  staffId     String
+  staffMember StaffMember @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([incidentId, staffId])
+  @@index([staffId])
+}
+
+// "Spaces concerned" — same pattern as IncidentChild/IncidentStaff above:
+// links to real Space records (the existing "Locaux et espaces" module),
+// never free text, with its own index for the location filter.
+model IncidentSpace {
+  id         String   @id @default(uuid())
+  incidentId String
+  incident   Incident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+  spaceId    String
+  space      Space    @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([incidentId, spaceId])
+  @@index([spaceId])
 }
 
 // ─── Auth ─────────────────────────────────────────────────────────────────────
@@ -590,6 +800,11 @@ model User {
   childAttendanceRecorded ChildAttendance[]           @relation("ChildAttendanceRecordedBy")
   staffPresenceConfirmed  StaffPresenceConfirmation[] @relation("StaffPresenceConfirmedBy")
 
+  incidentsCreated      Incident[]              @relation("IncidentCreatedBy") // PR 11
+  incidentStatusChanges IncidentStatusHistory[] @relation("IncidentStatusChangedBy") // PR 11
+
+  auditLogs AuditLog[] @relation("AuditLogUser") // PR 13
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -634,6 +849,7 @@ model Space {
   stockItems         StockItem[]
   inventoryAssets    InventoryAsset[]
   entryLogs          EntryLog[]
+  incidentLinks      IncidentSpace[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -686,6 +902,17 @@ model MaintenanceTicket {
   reportedBy   String
   assignedTo   String?
 
+  // PR 3 (Contact directory integration): nullable so existing/legacy tickets
+  // keep working unchanged. `assignedTo` is kept as-is — see the service for
+  // the dual-write rule (assignedContactId is the source of truth for the
+  // relation, assignedTo becomes a derived display snapshot once a real
+  // Contact is selected). onDelete: SetNull, not Restrict — a ticket must
+  // stay valid even if its referenced contact is ever hard-deleted
+  // administratively (Contact itself only supports soft deactivation today,
+  // which doesn't touch this FK at all).
+  assignedContactId String?
+  assignedContact   Contact? @relation(fields: [assignedContactId], references: [id], onDelete: SetNull)
+
   plannedDate     DateTime?
   resolvedDate    DateTime?
   resolutionNotes String?
@@ -702,6 +929,7 @@ model MaintenanceTicket {
 
   @@index([spaceId])
   @@index([status])
+  @@index([assignedContactId])
 }
 
 model TicketAttachment {
@@ -736,6 +964,11 @@ enum ValidationResourceType {
   ACTIVITY
   LEAVE_REQUEST
   FUND_REQUEST
+  // PR 5B: an expense (DEPENSE) Transaction going through the approval
+  // workflow. Named for the business meaning, like LEAVE_REQUEST wraps
+  // StaffAttendance — not a bare TRANSACTION, since RECETTE transactions
+  // never enter this workflow and never get a ValidationRequest.
+  EXPENSE_TRANSACTION
 }
 
 model ValidationRequest {
@@ -787,6 +1020,13 @@ enum NotificationType {
   EXPECTED_VISITOR_NO_SHOW
   GOODS_RETURN_OVERDUE
   REGISTER_INCIDENT_UNRESOLVED
+  // PR 5D: expense submit/approve/reject/resubmit reuse the existing
+  // VALIDATION_SUBMITTED/APPROVED/REJECTED types (resourceType
+  // EXPENSE_TRANSACTION disambiguates them) — only complete/cancel are new
+  // concepts, since those two transitions never touch a ValidationRequest
+  // (PR 5B/5C) and so have no existing VALIDATION_* type to reuse.
+  EXPENSE_COMPLETED
+  EXPENSE_CANCELLED
 }
 
 model Notification {
@@ -874,6 +1114,16 @@ model SupplierContract {
   email         String?
   address       String?
 
+  // PR 8 (Contact directory integration): nullable — supplierName/
+  // contactPerson/phone/email/address stay as legacy free-text fields for
+  // back-compat and become a display snapshot once a real Contact is
+  // selected (same dual-write pattern as MaintenanceTicket.assignedContact
+  // — see the service). onDelete: SetNull, not Restrict: a contract must
+  // stay valid even if its referenced Contact is ever hard-deleted
+  // administratively.
+  supplierContactId String?
+  supplierContact   Contact? @relation(fields: [supplierContactId], references: [id], onDelete: SetNull)
+
   status ContractStatus @default(ACTIF)
   notes  String?
 
@@ -887,6 +1137,7 @@ model SupplierContract {
   updatedAt DateTime @updatedAt
 
   @@index([status])
+  @@index([supplierContactId])
 }
 
 model ContractDocument {
@@ -973,7 +1224,24 @@ model AdministrativeProcedure {
   status     ProcedureStatus   @default(A_PREPARER)
   priority   ProcedurePriority @default(NORMALE)
   assignedTo String?
-  notes      String?
+
+  // Operational tracking only (not part of the validation workflow): the
+  // external body a procedure is waiting on once status = EN_ATTENTE_REPONSE
+  // (Mairie, Préfecture, CAF, Tribunal, …). Free text, not an enum — the
+  // set of organizations isn't closed. Left populated after the status
+  // moves on; nothing clears it automatically.
+  pendingResponseOrganization String?
+
+  // PR 9 (Contact directory integration): nullable — assignedTo stays as
+  // the legacy free-text field for back-compat and becomes a display
+  // snapshot once a real Contact is selected (same dual-write pattern as
+  // MaintenanceTicket.assignedContact — see the service). onDelete:
+  // SetNull, not Restrict: a procedure must stay valid even if its
+  // referenced Contact is ever hard-deleted administratively.
+  assignedContactId String?
+  assignedContact   Contact? @relation(fields: [assignedContactId], references: [id], onDelete: SetNull)
+
+  notes String?
 
   validationStatus        ValidationStatus?
   pendingValidationAction ProcedureValidationAction?
@@ -989,6 +1257,7 @@ model AdministrativeProcedure {
   updatedAt DateTime @updatedAt
 
   @@index([status])
+  @@index([assignedContactId])
 }
 
 model ProcedureDocument {
@@ -1582,6 +1851,19 @@ model Contact {
 
   active Boolean @default(true)
 
+  // PR 3: first consuming-module relation (Maintenance Tickets). See
+  // MaintenanceTicket.assignedContact for the FK side and onDelete rule.
+  maintenanceTickets       MaintenanceTicket[]
+  // PR 4: second consuming-module relation (Finance/Expenses). See
+  // Transaction.supplierContact for the FK side and onDelete rule.
+  transactions             Transaction[]
+  // PR 8: third consuming-module relation (Supplier Contracts). See
+  // SupplierContract.supplierContact for the FK side and onDelete rule.
+  supplierContracts        SupplierContract[]
+  // PR 9: fourth consuming-module relation (Administrative Procedures). See
+  // AdministrativeProcedure.assignedContact for the FK side and onDelete rule.
+  administrativeProcedures AdministrativeProcedure[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -1590,4 +1872,48 @@ model Contact {
   @@index([phone])
   @@index([categoryId])
   @@index([active])
+}
+
+// ─── Audit Logs (PR 13) ────────────────────────────────────────────────────────
+// Generic, cross-cutting audit trail — no business workflow changes. Entries
+// are written by a single global interceptor (AuditLogInterceptor) reading
+// @Audited(...) metadata off individual controller route handlers; the
+// covered modules' own services are never touched. `action` is a free-form
+// string (CREATE/UPDATE/DELETE plus module-specific transitions like
+// APPROVE/REJECT/ASSIGN/ARCHIVE/...) rather than an enum, since the set of
+// meaningful actions differs per module and grows without needing a
+// migration. `module` is the fixed, PR-defined set of covered modules.
+
+enum AuditModule {
+  FINANCE
+  CONTACTS
+  MAINTENANCE
+  ADMINISTRATIVE_PROCEDURES
+  SUPPLIER_CONTRACTS
+  STOCK
+  INCIDENTS
+}
+
+model AuditLog {
+  id       String      @id @default(uuid())
+  module   AuditModule
+  action   String
+  entity   String
+  // Nullable: a handful of bulk/no-single-id actions (e.g. "ensure default
+  // budget lines") have no single entity to point at.
+  entityId String?
+
+  // Snapshots as JSON — null `before` on create, null `after` on delete.
+  before Json?
+  after  Json?
+
+  userId String?
+  user   User?   @relation("AuditLogUser", fields: [userId], references: [id])
+
+  createdAt DateTime @default(now())
+
+  @@index([module])
+  @@index([entity, entityId])
+  @@index([userId])
+  @@index([createdAt])
 }
