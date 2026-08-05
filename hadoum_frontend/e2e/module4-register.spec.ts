@@ -1,7 +1,12 @@
 import { test, expect } from '@playwright/test';
 import { loginAsDirector } from './helpers';
 
-test.describe('Module 4 — Registre d\'entrées/sorties', () => {
+// "Registre d'entrées/sorties" was removed from Administration & Locaux
+// (Director/Supervisor menu simplification) and /app/registre-entrees-sorties
+// now redirects to /app/administration for everyone — RegistreEntreesSortiesPage,
+// its backend module/API, and this suite are preserved for reuse once/if the
+// route is wired back up; skipped rather than deleted.
+test.describe.skip('Module 4 — Registre d\'entrées/sorties', () => {
   test('DIRECTOR creates a visitor entry and sees it in the presence list', async ({ page }) => {
     await loginAsDirector(page);
     await page.goto('/app/registre-entrees-sorties');

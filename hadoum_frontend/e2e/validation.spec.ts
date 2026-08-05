@@ -1,7 +1,13 @@
 import { test, expect } from '@playwright/test';
 import { loginAsDirector, loginAsSupervisor } from './helpers';
 
-test.describe('Validation workflow (two-actor)', () => {
+// Uses /app/registre-entrees-sorties (Biens et marchandises) as its vehicle
+// for a generic two-actor DIRECTOR-submits/SUPERVISOR-approves check — that
+// route now redirects to /app/administration (Registre menu entry removed,
+// see supervisor.spec.ts). Skipped rather than deleted; the backend
+// validation engine itself is untouched and still exercised end-to-end by
+// other two-actor suites (e.g. expense-workflow.spec.ts).
+test.describe.skip('Validation workflow (two-actor)', () => {
   test('DIRECTOR submits a sensitive goods movement; SUPERVISOR approves it', async ({
     browser,
   }) => {

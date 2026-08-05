@@ -1,7 +1,13 @@
 import { test, expect } from '@playwright/test';
 import { loginAsDirector } from './helpers';
 
-test.describe('Documents', () => {
+// Uses /app/registre-entrees-sorties as its vehicle for a generic
+// "upload a document" check — that route now redirects to
+// /app/administration (Registre menu entry removed, see supervisor.spec.ts),
+// so this is skipped rather than deleted; document upload itself is still
+// covered elsewhere (e.g. finances.spec.ts's purchase-order/invoice/
+// delivery-note document tests).
+test.describe.skip('Documents', () => {
   test('uploads a document to a visitor entry and views it', async ({ page }) => {
     await loginAsDirector(page);
     await page.goto('/app/registre-entrees-sorties');
