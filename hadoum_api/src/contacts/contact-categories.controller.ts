@@ -11,6 +11,7 @@ import {
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { Audited } from '../audit-logs/decorators/audited.decorator';
 import { ContactCategoriesService } from './contact-categories.service';
 import { CreateContactCategoryDto } from './dto/create-contact-category.dto';
 import { UpdateContactCategoryDto } from './dto/update-contact-category.dto';
@@ -31,18 +32,25 @@ export class ContactCategoriesController {
 
   @Post()
   @Roles('DIRECTOR')
+  @Audited({ module: 'CONTACTS', entity: 'ContactCategory', action: 'CREATE' })
   create(@Body() dto: CreateContactCategoryDto) {
     return this.categoriesService.create(dto);
   }
 
   @Patch(':id')
   @Roles('DIRECTOR')
+  @Audited({ module: 'CONTACTS', entity: 'ContactCategory', action: 'UPDATE' })
   update(@Param('id') id: string, @Body() dto: UpdateContactCategoryDto) {
     return this.categoriesService.update(id, dto);
   }
 
   @Patch(':id/deactivate')
   @Roles('DIRECTOR')
+  @Audited({
+    module: 'CONTACTS',
+    entity: 'ContactCategory',
+    action: 'DEACTIVATE',
+  })
   deactivate(@Param('id') id: string) {
     return this.categoriesService.deactivate(id);
   }

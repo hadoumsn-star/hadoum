@@ -15,6 +15,7 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { Audited } from '../audit-logs/decorators/audited.decorator';
 import { ContactsService } from './contacts.service';
 import { CreateContactDto } from './dto/create-contact.dto';
 import { UpdateContactDto } from './dto/update-contact.dto';
@@ -39,24 +40,28 @@ export class ContactsController {
 
   @Post()
   @Roles('DIRECTOR', 'SUPERVISOR')
+  @Audited({ module: 'CONTACTS', entity: 'Contact', action: 'CREATE' })
   create(@Body() dto: CreateContactDto, @Query('force') force?: string) {
     return this.contactsService.create(dto, force === 'true');
   }
 
   @Patch(':id')
   @Roles('DIRECTOR', 'SUPERVISOR')
+  @Audited({ module: 'CONTACTS', entity: 'Contact', action: 'UPDATE' })
   update(@Param('id') id: string, @Body() dto: UpdateContactDto) {
     return this.contactsService.update(id, dto);
   }
 
   @Patch(':id/deactivate')
   @Roles('DIRECTOR')
+  @Audited({ module: 'CONTACTS', entity: 'Contact', action: 'DEACTIVATE' })
   deactivate(@Param('id') id: string) {
     return this.contactsService.deactivate(id);
   }
 
   @Patch(':id/reactivate')
   @Roles('DIRECTOR')
+  @Audited({ module: 'CONTACTS', entity: 'Contact', action: 'REACTIVATE' })
   reactivate(@Param('id') id: string) {
     return this.contactsService.reactivate(id);
   }
