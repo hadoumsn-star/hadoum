@@ -1,4 +1,5 @@
 import { api } from './api';
+import type { ApiContact } from '../types/contacts.types';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -47,6 +48,11 @@ export interface ApiMaintenanceTicket {
   reportedDate: string;
   reportedBy: string;
   assignedTo: string | null;
+  // Source of truth for the relation; assignedTo above becomes a display
+  // snapshot derived from it once set (see MaintenanceTicketsService). Kept
+  // as the shared ApiContact type from PR 2 — no second Contact interface.
+  assignedContactId: string | null;
+  assignedContact: ApiContact | null;
   plannedDate: string | null;
   resolvedDate: string | null;
   resolutionNotes: string | null;
@@ -68,7 +74,13 @@ export interface CreateMaintenanceTicketInput {
   problemType?: string;
   urgency: ApiTicketUrgency;
   reportedBy: string;
+  // assignedTo kept for backward compatibility with any other API client
+  // still submitting free text — the ticket form itself no longer sends it
+  // (see TicketsMaintenancePage), sending assignedContactId instead.
   assignedTo?: string;
+  // string: assign/replace. null: explicitly clear an existing assignment.
+  // undefined/omitted: leave the current assignment untouched.
+  assignedContactId?: string | null;
   plannedDate?: string;
   estimatedCost?: number;
 }

@@ -12,10 +12,23 @@ import {
   TICKET_STATUS_LABELS,
 } from '../config/maintenanceTickets.config';
 import { VALIDATION_STATUS_LABELS, VALIDATION_STATUS_STYLE } from '../config/validations.config';
+import { ContactAutocomplete } from '../components/contacts/ContactAutocomplete';
+import { categoryBadgeStyle } from '../components/contacts/contacts.utils';
+import type { ApiContactLike } from '../types/contacts.types';
 import {
   Plus, X, Search, Eye, Pencil, Wrench, CheckCircle2,
   Upload, Paperclip, Trash2, Send, ShieldCheck, ShieldAlert, MessageSquareWarning,
 } from 'lucide-react';
+
+// Categories relevant to a maintenance provider — resolved by key through
+// ContactAutocomplete's own categoryKeys prop (against GET /contacts/categories),
+// never hardcoded ids.
+const TICKET_PROVIDER_CATEGORY_KEYS = ['MAINTENANCE', 'PRESTATAIRE', 'ARTISAN'];
+
+// PR 1-3 priority: linked Contact's name > legacy free-text snapshot > none.
+function ticketProviderLabel(ticket: ApiMaintenanceTicket): string {
+  return ticket.assignedContact?.fullName || ticket.assignedTo || 'Non assigné';
+}
 
 const INPUT: React.CSSProperties = {
   width: '100%', padding: '8px 12px', borderRadius: 8,
@@ -38,11 +51,28 @@ function TicketModal({ initial, spaces, onSave, onClose }: {
     urgency: initial?.urgency ?? ('MOYENNE' as ApiTicketUrgency),
     description: initial?.description ?? '',
     problemType: initial?.problemType ?? '',
-    assignedTo: initial?.assignedTo ?? '',
     plannedDate: initial?.plannedDate?.slice(0, 10) ?? '',
     estimatedCost: initial?.estimatedCost != null ? String(initial.estimatedCost) : '',
   });
   const set = (k: string, v: string) => setForm(p => ({ ...p, [k]: v }));
+
+  // Separate from `form` because ContactAutocomplete is controlled by an
+  // id + the full contact object together, not a single string field like
+  // the rest of this form. `undefined` = untouched this session (omitted
+  // from the payload, existing relation left alone); `null` = explicitly
+  // cleared; a string = assigned/replaced.
+  const [assignedContactId, setAssignedContactId] = useState<string | null | undefined>(
+    initial?.assignedContactId ?? undefined,
+  );
+  const [assignedContact, setAssignedContact] = useState<ApiContactLike | null>(
+    initial?.assignedContact ?? null,
+  );
+  // A pre-PR-3 ticket can have free-text assignedTo with no linked Contact.
+  // Selecting any contact in this session — even before saving — resolves
+  // that state, so the notice disappears immediately rather than waiting
+  // for a round-trip.
+  const showLegacyProviderNotice =
+    isEdit && !!initial?.assignedTo && !initial?.assignedContactId && !assignedContact;
 
   const canSave = form.title.trim().length > 0 && form.spaceId.length > 0;
 
@@ -54,7 +84,7 @@ function TicketModal({ initial, spaces, onSave, onClose }: {
       urgency: form.urgency,
       description: form.description.trim() || undefined,
       problemType: form.problemType.trim() || undefined,
-      assignedTo: form.assignedTo.trim() || undefined,
+      assignedContactId,
       plannedDate: form.plannedDate || undefined,
       estimatedCost: form.estimatedCost ? parseInt(form.estimatedCost, 10) : undefined,
     });
@@ -62,6 +92,7 @@ function TicketModal({ initial, spaces, onSave, onClose }: {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      data-testid="ticket-modal"
       style={{ background: 'rgba(0,0,0,0.45)' }}
       onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="w-full max-w-md rounded-2xl overflow-hidden shadow-xl flex flex-col" style={{ background: '#FFFFFF', maxHeight: '92vh' }}>
@@ -98,19 +129,35 @@ function TicketModal({ initial, spaces, onSave, onClose }: {
             <textarea value={form.description} onChange={e => set('description', e.target.value)}
               rows={3} placeholder="Décrivez le problème…" style={{ ...INPUT, resize: 'none' }} />
           </div>
+          <div>
+            <ContactAutocomplete
+              label="Prestataire assigné"
+              placeholder="Rechercher un prestataire"
+              value={assignedContactId ?? null}
+              selectedContact={assignedContact}
+              onChange={contact => {
+                setAssignedContact(contact);
+                setAssignedContactId(contact?.id ?? null);
+              }}
+              allowCreate
+              includeInactiveSelected={isEdit}
+              categoryKeys={TICKET_PROVIDER_CATEGORY_KEYS}
+            />
+            {showLegacyProviderNotice && (
+              <p style={{ color: '#D97706', fontSize: 11, marginTop: 5 }}>
+                Prestataire actuel : {initial?.assignedTo} — non lié au répertoire
+              </p>
+            )}
+          </div>
           <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label style={{ color: '#374151', fontSize: 12, fontWeight: 500, display: 'block', marginBottom: 5 }}>Assigné à</label>
-              <input value={form.assignedTo} onChange={e => set('assignedTo', e.target.value)} placeholder="Nom du prestataire" style={INPUT} />
-            </div>
             <div>
               <label style={{ color: '#374151', fontSize: 12, fontWeight: 500, display: 'block', marginBottom: 5 }}>Date prévue</label>
               <input type="date" value={form.plannedDate} onChange={e => set('plannedDate', e.target.value)} style={INPUT} />
             </div>
-          </div>
-          <div>
-            <label style={{ color: '#374151', fontSize: 12, fontWeight: 500, display: 'block', marginBottom: 5 }}>Coût estimé (FCFA)</label>
-            <input type="number" min={0} value={form.estimatedCost} onChange={e => set('estimatedCost', e.target.value)} placeholder="0" style={INPUT} />
+            <div>
+              <label style={{ color: '#374151', fontSize: 12, fontWeight: 500, display: 'block', marginBottom: 5 }}>Coût estimé (FCFA)</label>
+              <input type="number" min={0} value={form.estimatedCost} onChange={e => set('estimatedCost', e.target.value)} placeholder="0" style={INPUT} />
+            </div>
           </div>
         </div>
         <div className="flex gap-2 px-6 py-4 flex-shrink-0" style={{ borderTop: '1px solid #F3F4F6' }}>
@@ -311,6 +358,7 @@ function TicketDetailModal({ ticketId, isDirector, isSupervisor, onClose, onEdit
   return (
     <>
       <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
+        data-testid="ticket-detail-modal"
         style={{ background: 'rgba(0,0,0,0.45)' }}
         onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
         <div className="w-full max-w-lg rounded-2xl overflow-hidden shadow-xl flex flex-col" style={{ background: '#FFFFFF', maxHeight: '90vh' }}>
@@ -347,7 +395,27 @@ function TicketDetailModal({ ticketId, isDirector, isSupervisor, onClose, onEdit
               <p style={{ color: '#9CA3AF', fontSize: 11, fontWeight: 600, letterSpacing: '0.05em', marginBottom: 6 }}>DESCRIPTION</p>
               <p style={{ color: '#374151', fontSize: 13, lineHeight: 1.6 }}>{detail.description || '—'}</p>
               {detail.problemType && <p style={{ color: '#6B7280', fontSize: 12, marginTop: 4 }}>Type : {detail.problemType}</p>}
-              {detail.assignedTo && <p style={{ color: '#6B7280', fontSize: 12, marginTop: 2 }}>Assigné à : {detail.assignedTo}</p>}
+              {(detail.assignedContact || detail.assignedTo) && (
+                <div style={{ marginTop: 2 }}>
+                  <p style={{ color: '#6B7280', fontSize: 12 }}>
+                    Prestataire assigné : {ticketProviderLabel(detail)}
+                    {detail.assignedContact && !detail.assignedContact.active && (
+                      <span className="ml-1.5 px-1.5 py-0.5 rounded-full" style={{ background: '#FEF2F2', color: '#B91C1C', fontSize: 9, fontWeight: 700 }}>
+                        INACTIF
+                      </span>
+                    )}
+                  </p>
+                  {detail.assignedContact?.organization && (
+                    <p style={{ color: '#9CA3AF', fontSize: 11, marginTop: 1 }}>{detail.assignedContact.organization}</p>
+                  )}
+                  {detail.assignedContact?.category && (
+                    <span className="inline-block mt-1 px-1.5 py-0.5 rounded-full"
+                      style={{ ...categoryBadgeStyle(detail.assignedContact.category.color), fontSize: 9, fontWeight: 700 }}>
+                      {detail.assignedContact.category.label.toUpperCase()}
+                    </span>
+                  )}
+                </div>
+              )}
               {detail.estimatedCost != null && <p style={{ color: '#6B7280', fontSize: 12, marginTop: 2 }}>Coût estimé : {detail.estimatedCost.toLocaleString('fr-FR')} FCFA</p>}
               {detail.resolutionNotes && <p style={{ color: '#6B7280', fontSize: 12, marginTop: 4 }}>Notes de résolution : {detail.resolutionNotes}</p>}
             </div>
@@ -642,6 +710,12 @@ export function TicketsMaintenancePage() {
                   <p style={{ color: '#1A1A1A', fontSize: 14, fontWeight: 600 }}>{ticket.title}</p>
                   <p style={{ color: '#9CA3AF', fontSize: 12, marginTop: 2 }}>
                     {ticket.space.name} · Signalé par {ticket.reportedBy}
+                    {ticket.assignedContact || ticket.assignedTo ? (
+                      <>
+                        {' · '}{ticketProviderLabel(ticket)}
+                        {ticket.assignedContact && !ticket.assignedContact.active && ' (inactif)'}
+                      </>
+                    ) : null}
                   </p>
                 </div>
                 <button

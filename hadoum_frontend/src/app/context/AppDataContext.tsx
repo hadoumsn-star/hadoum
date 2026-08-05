@@ -33,17 +33,6 @@ export interface FundRequest {
   note?: string;
 }
 
-export interface Validation {
-  id: number;
-  type: string;
-  description: string;
-  submittedBy: string;
-  date: string;
-  urgency: 'haute' | 'normale' | 'basse';
-  status: 'en attente' | 'validée' | 'refusée';
-  note?: string;
-}
-
 // ─── Context ──────────────────────────────────────────────────────────────────
 
 interface AppDataContextType {
@@ -61,14 +50,6 @@ interface AppDataContextType {
   addFundRequest: (r: Omit<FundRequest, 'id' | 'status'>) => void;
   validateFund: (id: number, note: string) => void;
   refuseFund: (id: number, note: string) => void;
-
-  validations: Validation[];
-  validateRequest: (id: number, note?: string) => void;
-  refuseRequest: (id: number, note?: string) => void;
-
-  // Team attendance (point 5)
-  teamAttendanceConfirmed: Record<number, boolean>;
-  updateTeamAttendanceConfirmed: (id: number, val: boolean) => void;
 }
 
 const AppDataContext = createContext<AppDataContextType | null>(null);
@@ -86,16 +67,12 @@ const INIT_LEAVE: LeaveRequest[] = [
 
 const INIT_FUND: FundRequest[] = [];
 
-const INIT_VALIDATIONS: Validation[] = [];
-
 // ─── Provider ────────────────────────────────────────────────────────────────
 
 export function AppDataProvider({ children }: { children: React.ReactNode }) {
   const [pendingActivities, setPendingActivities] = useState<PendingActivity[]>(INIT_ACTIVITIES);
   const [leaveRequests, setLeaveRequests]         = useState<LeaveRequest[]>(INIT_LEAVE);
   const [fundRequests, setFundRequests]           = useState<FundRequest[]>(INIT_FUND);
-  const [validations, setValidations]             = useState<Validation[]>(INIT_VALIDATIONS);
-  const [teamAttendanceConfirmed, setTeamAttendanceConfirmed] = useState<Record<number, boolean>>({});
 
   const addActivity = (a: Omit<PendingActivity, 'id' | 'status'>) => {
     setPendingActivities(prev => [{ ...a, id: Date.now(), status: 'en attente' }, ...prev]);
@@ -121,21 +98,11 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
   const refuseFund = (id: number, note: string) =>
     setFundRequests(prev => prev.map(r => r.id === id ? { ...r, status: 'refusé', note } : r));
 
-  const validateRequest = (id: number, note?: string) =>
-    setValidations(prev => prev.map(v => v.id === id ? { ...v, status: 'validée', note } : v));
-  const refuseRequest = (id: number, note?: string) =>
-    setValidations(prev => prev.map(v => v.id === id ? { ...v, status: 'refusée', note } : v));
-
-  const updateTeamAttendanceConfirmed = (id: number, val: boolean) =>
-    setTeamAttendanceConfirmed(prev => ({ ...prev, [id]: val }));
-
   return (
     <AppDataContext.Provider value={{
       pendingActivities, addActivity, validateActivity, refuseActivity,
       leaveRequests, addLeaveRequest, validateLeave, refuseLeave,
       fundRequests, addFundRequest, validateFund, refuseFund,
-      validations, validateRequest, refuseRequest,
-      teamAttendanceConfirmed, updateTeamAttendanceConfirmed,
     }}>
       {children}
     </AppDataContext.Provider>

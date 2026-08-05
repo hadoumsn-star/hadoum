@@ -15,6 +15,22 @@ export function setUnauthorizedHandler(handler: (() => void) | null) {
   onUnauthorized = handler;
 }
 
+// Carries the HTTP status and parsed response body alongside the message, so
+// callers that need to branch on a specific status (e.g. the Contacts 409
+// duplicate-warning) don't have to re-parse anything or lose information —
+// `instanceof Error` still holds, so every existing `catch (e) { e instanceof
+// Error ? e.message : … }` call site keeps working unchanged.
+export class ApiError extends Error {
+  status: number;
+  body: unknown;
+  constructor(message: string, status: number, body: unknown) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.body = body;
+  }
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const isFormData = options?.body instanceof FormData;
   const headers: Record<string, string> = {};
@@ -28,7 +44,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   if (!res.ok) {
     const error = await res.json().catch(() => ({ message: res.statusText }));
     if (res.status === 401) onUnauthorized?.();
-    throw new Error(error.message ?? `API error ${res.status}`);
+    throw new ApiError(error.message ?? `API error ${res.status}`, res.status, error);
   }
   const text = await res.text();
   return text ? JSON.parse(text) : undefined;

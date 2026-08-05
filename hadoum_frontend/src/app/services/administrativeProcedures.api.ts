@@ -1,5 +1,6 @@
 import { api } from './api';
 import type { ApiValidationRequest, ApiValidationStatus } from './maintenanceTickets.api';
+import type { ApiContact } from '../types/contacts.types';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -46,7 +47,16 @@ export interface ApiAdministrativeProcedure {
   effectiveStatus: ApiProcedureStatus;
   priority: ApiProcedurePriority;
   assignedTo: string | null;
+  // PR 9 (Contact directory integration): nullable — null on legacy
+  // procedures that predate this PR and were never linked. assignedTo
+  // stays as the legacy free-text snapshot field for back-compat.
+  assignedContactId: string | null;
+  assignedContact: ApiContact | null;
   notes: string | null;
+  // Operational tracking only — the external body a procedure is waiting
+  // on once status = EN_ATTENTE_REPONSE (Mairie, Préfecture, CAF, …). Free
+  // text, not part of the validation workflow.
+  pendingResponseOrganization: string | null;
   validationStatus: ApiValidationStatus | null;
   pendingValidationAction: ApiProcedureValidationAction | null;
   createdById: string | null;
@@ -71,6 +81,10 @@ export interface CreateAdministrativeProcedureInput {
   title: string;
   procedureType: ApiProcedureType;
   authority: string;
+  // Operational tracking status — restricted server-side to the
+  // pre-submission subset (A_PREPARER / EN_COURS / EN_ATTENTE_REPONSE).
+  // Every other status is workflow-only and never sent through this field.
+  status?: ApiProcedureStatus;
   description?: string;
   referenceNumber?: string;
   submissionDate?: string;
@@ -79,7 +93,14 @@ export interface CreateAdministrativeProcedureInput {
   renewalDate?: string;
   priority?: ApiProcedurePriority;
   assignedTo?: string;
+  // Source of truth for the relation once set. string: assign/replace.
+  // null: explicitly clear an existing assignment (also clears assignedTo).
+  // undefined/omitted: leave the current relation untouched.
+  assignedContactId?: string | null;
   notes?: string;
+  // Free text — only meaningful when status = EN_ATTENTE_REPONSE. null
+  // explicitly clears it; undefined/omitted leaves it untouched.
+  pendingResponseOrganization?: string | null;
 }
 
 export interface ProcedureFilters {

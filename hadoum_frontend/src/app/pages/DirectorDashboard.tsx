@@ -1,56 +1,50 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
+import { toast } from 'sonner';
 import { AddModal } from './ChildrenPage';
 import {
-  Users, UserCheck, GraduationCap, TrendingUp, TrendingDown,
-  AlertCircle, AlertTriangle, X, ArrowRight, Plus, CalendarCheck,
-  FileText, Clock, CheckCircle2, Circle, ChevronRight,
-  Minus, ChevronDown, DollarSign, XCircle, Send,
+  TrendingUp, TrendingDown, Plus, CalendarCheck,
+  FileText, Clock, CheckCircle2, ChevronRight,
+  Minus, DollarSign, XCircle, Wallet, Hourglass,
+  UserCheck, UserX, Circle, X, Eye, ShieldAlert, AlertCircle,
 } from 'lucide-react';
-import {
-  AreaChart, Area, BarChart, Bar, XAxis, YAxis,
-  CartesianGrid, Tooltip, ResponsiveContainer, Cell,
-} from 'recharts';
-import {
-  staffAttendanceData, classDistributionData,
-  activeAlerts, priorityTasks, teamMembers,
-} from '../data/mockData';
 import { useAuth } from '../context/AuthContext';
-import { useAppData } from '../context/AppDataContext';
-
-// ─── Attendance Inconsistency Badge ──────────────────────────────────────────
-
-function AttendanceBadge() {
-  const { teamAttendanceConfirmed } = useAppData();
-  const inconsistencies = teamMembers.filter(m => {
-    const confirmed = teamAttendanceConfirmed[m.id] ?? false;
-    return (m.status === 'present' && !confirmed) ||
-           ((m.status === 'absent' || m.status === 'conge') && confirmed);
-  }).length;
-  if (inconsistencies === 0) return null;
-  return (
-    <span
-      className="flex items-center justify-center rounded-full flex-shrink-0"
-      style={{ minWidth: 20, height: 20, background: '#B91C1C', color: '#FFFFFF', fontSize: 11, fontWeight: 700, padding: '0 5px' }}
-    >
-      {inconsistencies}
-    </span>
-  );
-}
+import { financesApi, type ApiDashboard, type ApiTransaction } from '../services/finances.api';
+import {
+  teamApi, summarizeDailyPresence, nonConfirmedEligibleEntries,
+  type ApiDailyPresence, type ApiDailyPresenceEntry,
+} from '../services/team.api';
+import { formatXof } from '../config/financeCategories.config';
+import { incidentsApi, type ApiIncident } from '../services/incidents.api';
+import {
+  INCIDENT_STATUS_LABELS, INCIDENT_STATUS_STYLE,
+  INCIDENT_PRIORITY_BADGE_LABELS, INCIDENT_PRIORITY_STYLE, INCIDENT_PRIORITY_LABELS,
+  incidentConcernedSummary,
+} from '../config/incidents.config';
 
 // ─── KPI Card ────────────────────────────────────────────────────────────────
 
 function KPICard({
-  title, value, subtitle, trend, icon: Icon, iconColor, iconBg,
+  title, value, subtitle, trend, icon: Icon, iconColor, iconBg, testId, onClick, highlight,
 }: {
   title: string; value: string | number; subtitle: string;
   trend?: { value: string; positive: boolean | null };
-  icon: React.ElementType; iconColor: string; iconBg: string;
+  icon: React.ElementType; iconColor: string; iconBg: string; testId?: string;
+  onClick?: () => void; highlight?: boolean;
 }) {
+  const Wrapper: 'button' | 'div' = onClick ? 'button' : 'div';
   return (
-    <div
+    <Wrapper
+      data-testid={testId}
+      onClick={onClick}
       className="rounded-xl p-5 flex flex-col gap-4"
-      style={{ background: '#FFFFFF', border: '1px solid #E5E7EB' }}
+      style={{
+        background: '#FFFFFF',
+        border: highlight ? '1.5px solid #D97706' : '1px solid #E5E7EB',
+        textAlign: 'left',
+        width: '100%',
+        cursor: onClick ? 'pointer' : 'default',
+      }}
     >
       <div className="flex items-start justify-between">
         <div
@@ -75,166 +69,99 @@ function KPICard({
         )}
       </div>
       <div>
-        <p style={{ color: '#1A1A1A', fontSize: 28, fontWeight: 700, lineHeight: 1.1 }}>{value}</p>
+        <p style={{ color: '#1A1A1A', fontSize: 24, fontWeight: 700, lineHeight: 1.1 }}>{value}</p>
         <p style={{ color: '#1A1A1A', fontSize: 14, fontWeight: 500, marginTop: 4 }}>{title}</p>
         <p style={{ color: '#6B7280', fontSize: 12, marginTop: 2 }}>{subtitle}</p>
       </div>
-    </div>
+    </Wrapper>
   );
 }
 
-// ─── Compact Alerts Bar ───────────────────────────────────────────────────────
-// Max 1 line visible, +N autres se déploient en accordéon
+// ─── "Non confirmées" modal ────────────────────────────────────────────────
+// Lists exactly the staff members counted in the "Non confirmées" KPI —
+// `entries` is `nonConfirmedEligibleEntries(presence)`, the same helper
+// (team.api.ts) the "Présences" tab's own bulk-confirm button is built
+// from, applied to the exact same `presence` object the KPI's own count
+// comes from (via `summarizeDailyPresence`). No second fetch, no
+// re-derived predicate — see DirectorDashboard's `presence` state.
+//
+// "Confirmer" never confirms anything itself (that stays DIRECTOR-only,
+// same permissions, same workflow, on the "Présences" tab) — it navigates
+// there with today's date (the tab's own default) and the person's name
+// pre-filled into the search box, so they're the only row showing and
+// ready for the existing Présent/Absent buttons.
 
-// Routing par type d'alerte
-function getAlertRoute(alert: typeof activeAlerts[0]): string {
-  const t = (alert.title + ' ' + alert.description).toLowerCase();
-  if (t.includes('dossier') || t.includes('médical') || t.includes('enfant')) return '/app/children';
-  if (t.includes('rapport') || t.includes('document') || t.includes('déclaration')) return '/app/reports';
-  if (t.includes('éducateur') || t.includes('absence') || t.includes('équipe') || t.includes('congé') || t.includes('planning')) return '/app/team';
-  return '/app/reports';
-}
-
-function CompactAlertsBar({
-  alerts,
-  onDismiss,
-}: {
-  alerts: typeof activeAlerts;
-  onDismiss: (id: number) => void;
+function NonConfirmedModal({ entries, onClose }: {
+  entries: ApiDailyPresenceEntry[];
+  onClose: () => void;
 }) {
-  const [extraOpen, setExtraOpen] = useState(false);
   const navigate = useNavigate();
 
-  if (alerts.length === 0) return null;
-
-  const primary = alerts[0];
-  const rest    = alerts.slice(1);
-  const isError = primary.level === 'error';
+  const goConfirm = (entry: ApiDailyPresenceEntry) => {
+    onClose();
+    navigate(`/app/team?tab=attendance&status=NON_CONFIRMED&search=${encodeURIComponent(`${entry.firstName} ${entry.lastName}`)}`);
+  };
 
   return (
-    <div className="space-y-1.5">
-      {/* Primary alert — 1 line */}
-      <div
-        className="flex items-center gap-3 px-4 py-2.5 rounded-xl"
-        style={{
-          background: isError ? '#FEF2F2' : '#FFFBEB',
-          border: `1px solid ${isError ? '#FECACA' : '#FDE68A'}`,
-        }}
-      >
-        {isError
-          ? <AlertCircle size={15} style={{ color: '#B91C1C', flexShrink: 0 }} />
-          : <AlertTriangle size={15} style={{ color: '#D97706', flexShrink: 0 }} />
-        }
-        <p className="flex-1 min-w-0" style={{ color: '#1A1A1A', fontSize: 13, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-          <strong>{primary.title}</strong>
-          <span style={{ color: '#6B7280' }}> — {primary.description.slice(0, 55)}{primary.description.length > 55 ? '…' : ''}</span>
-        </p>
-        <button
-          onClick={() => navigate(getAlertRoute(primary))}
-          className="flex items-center gap-1 flex-shrink-0"
-          style={{ color: isError ? '#B91C1C' : '#D97706', fontSize: 12, fontWeight: 600, background: 'none', border: 'none', cursor: 'pointer' }}
-        >
-          {primary.action} <ArrowRight size={11} />
-        </button>
-        {rest.length > 0 && (
-          <button
-            onClick={() => setExtraOpen(!extraOpen)}
-            className="flex items-center gap-1 flex-shrink-0 px-2 py-0.5 rounded-full"
-            style={{ background: '#FFFFFF', color: '#6B7280', fontSize: 11, fontWeight: 600, border: '1px solid #E5E7EB' }}
-          >
-            +{rest.length} <ChevronDown size={10} style={{ transform: extraOpen ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 150ms' }} />
-          </button>
-        )}
-        <button onClick={() => onDismiss(primary.id)} className="flex-shrink-0 p-1 rounded-md hover:bg-black/5">
-          <X size={13} style={{ color: '#9CA3AF' }} />
-        </button>
-      </div>
-
-      {/* Extra alerts */}
-      {extraOpen && rest.map((alert) => (
-        <div
-          key={alert.id}
-          className="flex items-center gap-3 px-4 py-2 rounded-xl ml-6"
-          style={{
-            background: alert.level === 'error' ? '#FEF2F2' : '#FFFBEB',
-            border: `1px solid ${alert.level === 'error' ? '#FECACA' : '#FDE68A'}`,
-          }}
-        >
-          {alert.level === 'error'
-            ? <AlertCircle size={13} style={{ color: '#B91C1C', flexShrink: 0 }} />
-            : <AlertTriangle size={13} style={{ color: '#D97706', flexShrink: 0 }} />
-          }
-          <p className="flex-1 min-w-0" style={{ color: '#374151', fontSize: 12 }}>
-            <strong>{alert.title}</strong>
-          </p>
-          <button
-            onClick={() => navigate(getAlertRoute(alert))}
-            style={{ color: alert.level === 'error' ? '#B91C1C' : '#D97706', fontSize: 11, fontWeight: 600, flexShrink: 0, background: 'none', border: 'none', cursor: 'pointer' }}
-          >
-            {alert.action} <ArrowRight size={10} />
-          </button>
-          <button onClick={() => onDismiss(alert.id)} className="flex-shrink-0 p-1 rounded-md hover:bg-black/5">
-            <X size={12} style={{ color: '#9CA3AF' }} />
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      data-testid="non-confirmed-modal"
+      style={{ background: 'rgba(26,26,26,0.55)', backdropFilter: 'blur(2px)' }}
+      onClick={e => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="w-full max-w-md rounded-2xl overflow-hidden shadow-xl flex flex-col" style={{ background: '#FFFFFF', maxHeight: '85vh' }}>
+        <div className="flex items-center justify-between px-6 py-5 flex-shrink-0" style={{ borderBottom: '1px solid #F3F4F6' }}>
+          <h3 data-testid="non-confirmed-modal-title" style={{ color: '#1A1A1A', fontSize: 16, fontWeight: 700 }}>
+            Présences non confirmées ({entries.length})
+          </h3>
+          <button onClick={onClose} aria-label="Fermer" style={{ background: 'none', border: 'none', cursor: 'pointer' }}>
+            <X size={18} style={{ color: '#9CA3AF' }} />
           </button>
         </div>
-      ))}
-
-      {/* Bouton "Voir toutes les notifications" — style secondaire 13px, bleu primaire */}
-      <div className="flex justify-end pt-1">
-        <button
-          onClick={() => navigate('/app/incidents')}
-          className="hover:underline"
-          style={{ color: '#1E3A8A', fontSize: 13, fontWeight: 500, background: 'none', border: 'none', cursor: 'pointer' }}
-        >
-          Voir toutes les notifications
-        </button>
+        <div className="overflow-y-auto flex-1 px-6 py-2">
+          {entries.length === 0 ? (
+            <div className="py-10 text-center">
+              <CheckCircle2 size={26} style={{ color: '#065F46', margin: '0 auto 8px' }} />
+              <p style={{ color: '#374151', fontSize: 13 }}>Aucune présence en attente de confirmation.</p>
+            </div>
+          ) : (
+            <ul className="divide-y" style={{ borderColor: '#F9F7F3' }}>
+              {entries.map(entry => {
+                const initials = `${entry.firstName[0] ?? '?'}${entry.lastName[0] ?? '?'}`.toUpperCase();
+                return (
+                  <li key={entry.staffId} data-testid={`non-confirmed-row-${entry.staffId}`} className="flex items-center gap-3 py-3.5">
+                    <div className="flex items-center justify-center rounded-full flex-shrink-0"
+                      style={{ width: 36, height: 36, background: '#F3F4F6', color: '#6B7280', fontSize: 12, fontWeight: 700 }}>
+                      {initials}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p style={{ color: '#1A1A1A', fontSize: 13, fontWeight: 600 }}>{entry.firstName} {entry.lastName}</p>
+                      {/* Job title — team/service isn't part of the daily-presence
+                          payload (only staffId/firstName/lastName/role/onLeave/
+                          status), so it's omitted rather than fetched separately —
+                          see the module docstring on why this never issues a
+                          second query. */}
+                      <p style={{ color: '#9CA3AF', fontSize: 11, marginTop: 1 }}>{entry.role}</p>
+                      <span className="inline-block px-2 py-0.5 rounded-full mt-1"
+                        style={{ background: '#F3F4F6', color: '#6B7280', fontSize: 10, fontWeight: 600 }}>
+                        Non confirmée
+                      </span>
+                    </div>
+                    <button
+                      data-testid={`confirm-nav-${entry.staffId}`}
+                      onClick={() => goConfirm(entry)}
+                      className="flex items-center gap-1 px-3 py-1.5 rounded-lg flex-shrink-0"
+                      style={{ background: '#3E5A78', color: '#FFFFFF', fontSize: 12, fontWeight: 600, border: 'none', cursor: 'pointer' }}
+                    >
+                      Confirmer <ChevronRight size={13} />
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
       </div>
-    </div>
-  );
-}
-
-// ─── Priority Tasks ───────────────────────────────────────────────────────────
-
-function PriorityTasks() {
-  const [checked, setChecked] = useState<number[]>([]);
-  const toggle = (id: number) =>
-    setChecked((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
-  const remaining = priorityTasks.length - checked.length;
-
-  return (
-    <div className="rounded-xl flex flex-col h-full" style={{ background: '#FFFFFF', border: '1px solid #E5E7EB' }}>
-      <div className="px-5 py-4" style={{ borderBottom: '1px solid #F3F4F6' }}>
-        <h3 style={{ color: '#1A1A1A', fontSize: 15, fontWeight: 600 }}>Tâches à faire</h3>
-        <p style={{ color: '#6B7280', fontSize: 12, marginTop: 2 }}>
-          {remaining > 0 ? `${remaining} tâche${remaining > 1 ? 's' : ''} restante${remaining > 1 ? 's' : ''}` : '✓ Tout est fait'}
-        </p>
-      </div>
-      <ul className="divide-y px-5 flex-1" style={{ borderColor: '#F9F7F3' }}>
-        {priorityTasks.map((task) => {
-          const isDone = checked.includes(task.id);
-          return (
-            <li key={task.id} className="flex items-center gap-3 py-3">
-              <button onClick={() => toggle(task.id)} className="flex-shrink-0">
-                {isDone
-                  ? <CheckCircle2 size={18} style={{ color: '#065F46' }} />
-                  : <Circle size={18} style={{ color: '#D1D5DB' }} />
-                }
-              </button>
-              <p className="flex-1 min-w-0" style={{ color: isDone ? '#9CA3AF' : '#1A1A1A', fontSize: 13, textDecoration: isDone ? 'line-through' : 'none' }}>
-                {task.task}
-              </p>
-              <div className="flex items-center gap-2 flex-shrink-0">
-                {task.status === 'urgent' && !isDone && (
-                  <span className="px-2 py-0.5 rounded-full" style={{ background: '#FEF2F2', color: '#B91C1C', fontSize: 10, fontWeight: 600 }}>
-                    URGENT
-                  </span>
-                )}
-                <span style={{ color: '#9CA3AF', fontSize: 11 }}>{task.dueDate}</span>
-              </div>
-            </li>
-          );
-        })}
-      </ul>
     </div>
   );
 }
@@ -245,9 +172,9 @@ function QuickActions({ onAddChild }: { onAddChild: () => void }) {
   const navigate = useNavigate();
 
   const actions = [
-    { label: 'Ajouter un enfant', icon: Plus,          color: '#3E5A78', bg: '#EEF2F7', desc: 'Nouveau dossier',    onClick: onAddChild },
-    { label: 'Saisir présences',  icon: CalendarCheck, color: '#065F46', bg: '#ECFDF5', desc: 'Pointage du jour',   onClick: () => navigate('/app/attendance') },
-    { label: 'Générer un rapport',icon: FileText,      color: '#7C3AED', bg: '#F5F3FF', desc: 'PDF / Export',       onClick: () => navigate('/app/reports') },
+    { key: 'add-child',  label: 'Ajouter un enfant', icon: Plus,          color: '#3E5A78', bg: '#EEF2F7', desc: 'Nouveau dossier', onClick: onAddChild },
+    { key: 'attendance', label: 'Saisir présences',  icon: CalendarCheck, color: '#065F46', bg: '#ECFDF5', desc: 'Pointage du jour', onClick: () => navigate('/app/team?tab=attendance') },
+    { key: 'reports',    label: 'Générer un rapport',icon: FileText,      color: '#7C3AED', bg: '#F5F3FF', desc: 'PDF / Export',     onClick: () => navigate('/app/reports') },
   ];
 
   return (
@@ -255,12 +182,13 @@ function QuickActions({ onAddChild }: { onAddChild: () => void }) {
       <p style={{ color: '#9CA3AF', fontSize: 11, fontWeight: 600, letterSpacing: '0.05em', marginBottom: 10 }}>
         ACTIONS RAPIDES
       </p>
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
         {actions.map((action) => {
           const Icon = action.icon;
           return (
             <button
-              key={action.label}
+              key={action.key}
+              data-testid={`quick-action-${action.key}`}
               onClick={action.onClick}
               className="flex items-center gap-3 px-4 py-4 rounded-xl text-left transition-all hover:shadow-md hover:-translate-y-0.5 active:translate-y-0"
               style={{ background: '#FFFFFF', border: '1.5px solid #3E5A78', cursor: 'pointer' }}
@@ -284,217 +212,270 @@ function QuickActions({ onAddChild }: { onAddChild: () => void }) {
   );
 }
 
-// ─── Custom Tooltip ───────────────────────────────────────────────────────────
+// ─── Demandes à traiter ─────────────────────────────────────────────────────
+// Incidents needing the Director's attention: still open (status !==
+// RESOLU — there is no "archived" incident status in this system, so
+// "not archived" is already satisfied by that same check), reusing the
+// unmodified GET /incidents endpoint (incidentsApi.list) — no new backend
+// route, no re-implementation of incident business logic. Sorting and
+// filtering below are purely client-side presentation over that same data.
+// "Voir" reuses IncidentsPage's own existing detail modal — it navigates
+// to /app/incidents?open=<id>, which auto-opens that exact modal (see
+// IncidentsPage's own `open` query-param handling) rather than building a
+// second detail screen.
 
-function CustomTooltip({ active, payload, label }: any) {
-  if (active && payload?.length) {
-    return (
-      <div className="rounded-lg px-3 py-2 shadow-lg" style={{ background: '#1A1A1A' }}>
-        <p style={{ color: '#9CA3AF', fontSize: 11, marginBottom: 4 }}>{label}</p>
-        {payload.map((p: any) => (
-          <p key={p.dataKey} style={{ color: '#FFFFFF', fontSize: 13 }}>
-            {p.dataKey === 'presents' ? 'Présents' : p.dataKey === 'absents' ? 'Absents' : p.dataKey}: {p.value}
-          </p>
-        ))}
-      </div>
-    );
-  }
-  return null;
+function attentionIncidentSort(a: ApiIncident, b: ApiIncident): number {
+  const aSupervisor = a.createdBy?.role === 'SUPERVISOR' ? 0 : 1;
+  const bSupervisor = b.createdBy?.role === 'SUPERVISOR' ? 0 : 1;
+  if (aSupervisor !== bSupervisor) return aSupervisor - bSupervisor;
+  return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
 }
 
-// ─── Activités à valider ──────────────────────────────────────────────────────
-
-function ActivitesAValider() {
-  const { pendingActivities, validateActivity, refuseActivity } = useAppData();
-  const [refuseTarget, setRefuseTarget] = useState<number | null>(null);
-  const [motifRefus, setMotifRefus]     = useState('');
-
-  const toValidate = pendingActivities.filter(a => a.status === 'en attente');
-
-  if (toValidate.length === 0) return null;
+function AttentionIncidentCard({ incident }: { incident: ApiIncident }) {
+  const navigate = useNavigate();
+  const isSupervisorCreated = incident.createdBy?.role === 'SUPERVISOR';
+  const statusStyle = INCIDENT_STATUS_STYLE[incident.status];
+  const priorityStyle = INCIDENT_PRIORITY_STYLE[incident.priority];
+  const concerned = incidentConcernedSummary(incident);
+  const createdAt = new Date(incident.createdAt).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' });
 
   return (
-    <div className="rounded-xl" style={{ background: '#FFFFFF', border: '1px solid #E5E7EB' }}>
-      <div className="flex items-center gap-2 px-5 py-4" style={{ borderBottom: '1px solid #F3F4F6' }}>
-        <Circle size={14} style={{ color: '#D97706' }} />
-        <h3 style={{ color: '#1A1A1A', fontSize: 15, fontWeight: 600 }}>
-          Activités à valider
-          <span className="ml-2 px-2 py-0.5 rounded-full" style={{ background: '#FFFBEB', color: '#D97706', fontSize: 10, fontWeight: 700 }}>
-            {toValidate.length}
-          </span>
-        </h3>
-      </div>
-      <ul>
-        {toValidate.map((a, i) => (
-          <li key={a.id} className="flex items-center gap-4 px-5 py-4"
-            style={{ borderBottom: i < toValidate.length - 1 ? '1px solid #F9F7F3' : 'none' }}>
-            <div className="flex-1 min-w-0">
-              <p style={{ color: '#1A1A1A', fontSize: 13, fontWeight: 600 }}>{a.title}</p>
-              <p style={{ color: '#9CA3AF', fontSize: 12, marginTop: 1 }}>{a.educator} · {a.class} · {a.date}</p>
-            </div>
-            <div className="flex items-center gap-2 flex-shrink-0">
-              <button onClick={() => validateActivity(a.id)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg"
-                style={{ background: '#ECFDF5', color: '#065F46', fontSize: 12, fontWeight: 600, border: 'none', cursor: 'pointer' }}>
-                <CheckCircle2 size={13} /> Valider
-              </button>
-              <button onClick={() => setRefuseTarget(a.id)}
-                className="p-1.5 rounded-lg"
-                style={{ background: '#F3F4F6', border: 'none', cursor: 'pointer' }} title="Refuser">
-                <XCircle size={15} style={{ color: '#6B7280' }} />
-              </button>
-            </div>
-          </li>
-        ))}
-      </ul>
-
-      {/* Refus modale */}
-      {refuseTarget !== null && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
-          style={{ background: 'rgba(0,0,0,0.45)' }}
-          onClick={e => { if (e.target === e.currentTarget) setRefuseTarget(null); }}>
-          <div className="w-full max-w-sm rounded-2xl overflow-hidden shadow-xl" style={{ background: '#FFFFFF' }}>
-            <div className="flex items-center justify-between px-6 py-5" style={{ borderBottom: '1px solid #F3F4F6' }}>
-              <h3 style={{ color: '#1A1A1A', fontSize: 16, fontWeight: 700 }}>Refuser l'activité</h3>
-              <button onClick={() => setRefuseTarget(null)}><X size={18} style={{ color: '#9CA3AF' }} /></button>
-            </div>
-            <div className="px-6 py-5">
-              <label style={{ color: '#374151', fontSize: 12, fontWeight: 500, display: 'block', marginBottom: 5 }}>Motif de refus *</label>
-              <textarea value={motifRefus} onChange={e => setMotifRefus(e.target.value)} rows={3}
-                placeholder="Expliquez le motif de refus…"
-                style={{ width: '100%', padding: '8px 12px', borderRadius: 8, border: '1px solid #E5E7EB', background: '#FFFFFF', color: '#1A1A1A', fontSize: 13, outline: 'none', resize: 'none', boxSizing: 'border-box' }} />
-            </div>
-            <div className="flex gap-2 px-6 pb-6">
-              <button onClick={() => setRefuseTarget(null)} className="flex-1 py-2.5 rounded-lg"
-                style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', color: '#374151', fontSize: 13, cursor: 'pointer' }}>Annuler</button>
-              <button disabled={!motifRefus.trim()}
-                onClick={() => { if (motifRefus.trim()) { refuseActivity(refuseTarget, motifRefus); setRefuseTarget(null); setMotifRefus(''); } }}
-                className="flex-1 py-2.5 rounded-lg"
-                style={{ background: motifRefus.trim() ? '#B91C1C' : '#E5E7EB', color: motifRefus.trim() ? '#FFFFFF' : '#9CA3AF', fontSize: 13, fontWeight: 600, border: 'none', cursor: motifRefus.trim() ? 'pointer' : 'not-allowed' }}>
-                Refuser
-              </button>
-            </div>
+    <div data-testid={`attention-incident-${incident.id}`} className="rounded-xl p-4"
+      style={{ background: '#FFFFFF', border: `1px solid ${isSupervisorCreated ? '#FED7AA' : '#E5E7EB'}` }}>
+      <div className="flex flex-col sm:flex-row items-start justify-between gap-3">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap mb-2">
+            <span className="px-2 py-0.5 rounded-full" title={INCIDENT_PRIORITY_LABELS[incident.priority]}
+              style={{ background: priorityStyle.bg, color: priorityStyle.color, fontSize: 10, fontWeight: 700 }}>
+              {INCIDENT_PRIORITY_BADGE_LABELS[incident.priority]}
+            </span>
+            <span className="flex items-center gap-1 px-2 py-0.5 rounded-full"
+              style={{ background: statusStyle.bg, color: statusStyle.color, fontSize: 10, fontWeight: 700 }}>
+              <AlertCircle size={10} /> {INCIDENT_STATUS_LABELS[incident.status].toUpperCase()}
+            </span>
+            {isSupervisorCreated && (
+              <span data-testid={`attention-incident-supervisor-badge-${incident.id}`}
+                className="flex items-center gap-1 px-2 py-0.5 rounded-full"
+                style={{ background: '#FFF7ED', color: '#C2410C', fontSize: 10, fontWeight: 700 }}>
+                <ShieldAlert size={10} /> Créé par le superviseur
+              </span>
+            )}
           </div>
+          <p style={{ color: '#1A1A1A', fontSize: 14, fontWeight: 600 }}>{incident.title}</p>
+          <p style={{ color: '#9CA3AF', fontSize: 12, marginTop: 2 }}>
+            Créé par {incident.createdBy?.name ?? incident.signaledBy} · {createdAt}
+          </p>
+          {concerned && <p style={{ color: '#9CA3AF', fontSize: 11, marginTop: 4 }}>{concerned}</p>}
+          {incident.description && (
+            <p style={{ color: '#6B7280', fontSize: 12, marginTop: 4 }} className="line-clamp-2">
+              {incident.description}
+            </p>
+          )}
+        </div>
+        <button
+          data-testid={`attention-incident-voir-${incident.id}`}
+          onClick={() => navigate(`/app/incidents?open=${incident.id}`)}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg flex-shrink-0 self-end sm:self-auto"
+          style={{ background: '#F3F4F6', color: '#374151', fontSize: 12, fontWeight: 500, border: 'none', cursor: 'pointer' }}>
+          <Eye size={13} /> Voir
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function DemandesATraiter({ incidents, loading }: { incidents: ApiIncident[]; loading: boolean }) {
+  const active = incidents.filter(i => i.status !== 'RESOLU').sort(attentionIncidentSort);
+
+  return (
+    <div>
+      <p style={{ color: '#9CA3AF', fontSize: 11, fontWeight: 600, letterSpacing: '0.05em', marginBottom: 10 }}>
+        DEMANDES À TRAITER
+      </p>
+      {loading ? (
+        // Distinct from the real empty state below — avoids claiming
+        // "Aucune demande en cours." before the fetch has even resolved.
+        <div data-testid="demandes-a-traiter-loading" className="rounded-xl py-8 text-center" style={{ background: '#FFFFFF', border: '1px solid #E5E7EB' }}>
+          <p style={{ color: '#9CA3AF', fontSize: 13 }}>Chargement…</p>
+        </div>
+      ) : active.length === 0 ? (
+        <div data-testid="demandes-a-traiter-empty" className="rounded-xl py-8 text-center" style={{ background: '#FFFFFF', border: '1px solid #E5E7EB' }}>
+          <CheckCircle2 size={22} style={{ color: '#065F46', margin: '0 auto 8px' }} />
+          <p style={{ color: '#6B7280', fontSize: 13 }}>Aucune demande en cours.</p>
+        </div>
+      ) : (
+        <div data-testid="demandes-a-traiter" className="space-y-3">
+          {active.map(incident => <AttentionIncidentCard key={incident.id} incident={incident} />)}
         </div>
       )}
     </div>
   );
 }
 
-// ─── Demandes RH en attente ───────────────────────────────────────────────────
+// ─── Recent Activity ──────────────────────────────────────────────────────────
+// Director Dashboard cleanup: only rejected and pending expenses are shown
+// here now — every other activity kind (approved/completed expenses,
+// maintenance) has been deliberately dropped, per the current spec.
 
-function DemandesRH() {
-  const { leaveRequests, validateLeave, refuseLeave } = useAppData();
-  const pending = leaveRequests.filter(r => r.status === 'en attente');
+interface ActivityItem {
+  id: string;
+  kind: 'expense-rejected' | 'expense-pending';
+  label: string;
+  detail: string;
+  at: string;
+  to: string;
+}
 
-  if (pending.length === 0) return null;
+function ActivityRow({ item }: { item: ActivityItem }) {
+  const navigate = useNavigate();
+  const style: Record<ActivityItem['kind'], { icon: React.ElementType; color: string; bg: string; verb: string }> = {
+    'expense-rejected': { icon: XCircle,   color: '#B91C1C', bg: '#FEF2F2', verb: 'Dépense refusée' },
+    'expense-pending':  { icon: Hourglass, color: '#D97706', bg: '#FFFBEB', verb: 'En attente' },
+  };
+  const s = style[item.kind];
+  const Icon = s.icon;
+  const date = new Date(item.at).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
 
   return (
-    <div className="rounded-xl" style={{ background: '#FFFFFF', border: '1px solid #E5E7EB' }}>
-      <div className="flex items-center gap-2 px-5 py-4" style={{ borderBottom: '1px solid #F3F4F6' }}>
-        <Users size={14} style={{ color: '#7C3AED' }} />
-        <h3 style={{ color: '#1A1A1A', fontSize: 15, fontWeight: 600 }}>
-          Demandes RH
-          <span className="ml-2 px-2 py-0.5 rounded-full" style={{ background: '#F5F3FF', color: '#7C3AED', fontSize: 10, fontWeight: 700 }}>
-            {pending.length}
-          </span>
-        </h3>
-      </div>
-      <ul>
-        {pending.map((r, i) => (
-          <li key={r.id} className="flex items-center gap-4 px-5 py-3.5"
-            style={{ borderBottom: i < pending.length - 1 ? '1px solid #F9F7F3' : 'none' }}>
-            <div className="flex-1 min-w-0">
-              <p style={{ color: '#1A1A1A', fontSize: 13, fontWeight: 600, textTransform: 'capitalize' }}>{r.type} — {r.educator}</p>
-              <p style={{ color: '#9CA3AF', fontSize: 12, marginTop: 1 }}>{r.dateFrom}{r.dateTo ? ` → ${r.dateTo}` : ''} · {r.motif}</p>
-            </div>
-            <div className="flex items-center gap-2 flex-shrink-0">
-              <button onClick={() => validateLeave(r.id)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg"
-                style={{ background: '#ECFDF5', color: '#065F46', fontSize: 12, fontWeight: 600, border: 'none', cursor: 'pointer' }}>
-                <CheckCircle2 size={13} /> Valider
-              </button>
-              <button onClick={() => refuseLeave(r.id)} className="p-1.5 rounded-lg"
-                style={{ background: '#F3F4F6', border: 'none', cursor: 'pointer' }}>
-                <XCircle size={15} style={{ color: '#6B7280' }} />
-              </button>
-            </div>
-          </li>
-        ))}
-      </ul>
-    </div>
+    <li>
+      <button
+        onClick={() => navigate(item.to)}
+        className="w-full flex items-center gap-3 py-3 text-left"
+        style={{ background: 'none', border: 'none', cursor: 'pointer' }}
+      >
+        <div className="flex items-center justify-center rounded-lg flex-shrink-0" style={{ width: 32, height: 32, background: s.bg }}>
+          <Icon size={15} style={{ color: s.color }} />
+        </div>
+        <div className="flex-1 min-w-0">
+          <p style={{ color: '#1A1A1A', fontSize: 13, fontWeight: 500 }}>
+            {s.verb} <span style={{ color: '#6B7280', fontWeight: 400 }}>— {item.label}</span>
+          </p>
+          <p style={{ color: '#9CA3AF', fontSize: 11, marginTop: 1 }}>{item.detail} · {date}</p>
+        </div>
+      </button>
+    </li>
   );
 }
 
-// ─── Demande de fonds ─────────────────────────────────────────────────────────
-
-function DemanderFonds({ userName }: { userName: string }) {
-  const { addFundRequest } = useAppData();
-  const [show, setShow]     = useState(false);
-  const [montant, setMontant] = useState('');
-  const [motif, setMotif]     = useState('');
-  const canSave = montant.trim() && motif.trim();
-
-  if (!show) {
-    return (
-      <button onClick={() => setShow(true)}
-        className="flex items-center gap-2 px-4 py-2 rounded-lg"
-        style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', color: '#374151', fontSize: 13, fontWeight: 500, cursor: 'pointer' }}>
-        <DollarSign size={14} /> Demander des fonds
-      </button>
-    );
-  }
-
+function RecentActivity({ items }: { items: ActivityItem[] }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      style={{ background: 'rgba(0,0,0,0.45)' }}
-      onClick={e => { if (e.target === e.currentTarget) setShow(false); }}>
-      <div className="w-full max-w-sm rounded-2xl overflow-hidden shadow-xl" style={{ background: '#FFFFFF' }}>
-        <div className="flex items-center justify-between px-6 py-5" style={{ borderBottom: '1px solid #F3F4F6' }}>
-          <h3 style={{ color: '#1A1A1A', fontSize: 16, fontWeight: 700 }}>Demander des fonds</h3>
-          <button onClick={() => setShow(false)}><X size={18} style={{ color: '#9CA3AF' }} /></button>
-        </div>
-        <div className="px-6 py-5 space-y-4">
-          <div>
-            <label style={{ color: '#374151', fontSize: 12, fontWeight: 500, display: 'block', marginBottom: 5 }}>Montant (DA) *</label>
-            <input value={montant} onChange={e => setMontant(e.target.value)} placeholder="Ex : 50 000"
-              style={{ width: '100%', padding: '8px 12px', borderRadius: 8, border: '1px solid #E5E7EB', background: '#FFFFFF', color: '#1A1A1A', fontSize: 13, outline: 'none', boxSizing: 'border-box' }} />
-          </div>
-          <div>
-            <label style={{ color: '#374151', fontSize: 12, fontWeight: 500, display: 'block', marginBottom: 5 }}>Motif *</label>
-            <textarea value={motif} onChange={e => setMotif(e.target.value)} rows={3} placeholder="Justification de la demande…"
-              style={{ width: '100%', padding: '8px 12px', borderRadius: 8, border: '1px solid #E5E7EB', background: '#FFFFFF', color: '#1A1A1A', fontSize: 13, outline: 'none', resize: 'none', boxSizing: 'border-box' }} />
-          </div>
-        </div>
-        <div className="flex gap-2 px-6 pb-6">
-          <button onClick={() => setShow(false)} className="flex-1 py-2.5 rounded-lg"
-            style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', color: '#374151', fontSize: 13, cursor: 'pointer' }}>Annuler</button>
-          <button disabled={!canSave}
-            onClick={() => { if (canSave) { addFundRequest({ montant, motif, requestedBy: userName, date: new Date().toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' }) }); setShow(false); setMontant(''); setMotif(''); } }}
-            className="flex-1 py-2.5 rounded-lg flex items-center justify-center gap-2"
-            style={{ background: canSave ? '#3E5A78' : '#E5E7EB', color: canSave ? '#FFFFFF' : '#9CA3AF', fontSize: 13, fontWeight: 600, border: 'none', cursor: canSave ? 'pointer' : 'not-allowed' }}>
-            <Send size={13} /> Envoyer
-          </button>
-        </div>
+    <div data-testid="recent-activity" className="rounded-xl" style={{ background: '#FFFFFF', border: '1px solid #E5E7EB' }}>
+      <div className="px-5 py-4" style={{ borderBottom: '1px solid #F3F4F6' }}>
+        <h3 style={{ color: '#1A1A1A', fontSize: 15, fontWeight: 600 }}>Activité récente</h3>
+        <p style={{ color: '#6B7280', fontSize: 12, marginTop: 2 }}>Dernières décisions et interventions</p>
       </div>
+      {items.length === 0 ? (
+        <div className="px-5 py-8 text-center">
+          <CheckCircle2 size={22} style={{ color: '#065F46', margin: '0 auto 8px' }} />
+          <p style={{ color: '#6B7280', fontSize: 13 }}>Aucune dépense refusée ou en attente</p>
+        </div>
+      ) : (
+        <ul className="divide-y px-5" style={{ borderColor: '#F9F7F3' }}>
+          {items.map((item) => <ActivityRow key={`${item.kind}-${item.id}`} item={item} />)}
+        </ul>
+      )}
     </div>
   );
 }
 
 // ─── Main Dashboard ───────────────────────────────────────────────────────────
-// Question centrale : "Tout va bien aujourd'hui ?"
 
 export function DirectorDashboard() {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const [dismissedAlerts, setDismissedAlerts] = useState<number[]>([]);
   const [showAddChild, setShowAddChild] = useState(false);
+  const [showNonConfirmed, setShowNonConfirmed] = useState(false);
 
-  const visibleAlerts = activeAlerts.filter((a) => !dismissedAlerts.includes(a.id));
+  // Finance KPIs / Recent Activity data. All values are read from existing,
+  // unmodified APIs (finances dashboard + DEPENSE transactions) — every
+  // number below is a client-side sum/filter over that data, never a
+  // reimplementation of backend budget or workflow logic.
+  const [dashboard, setDashboard] = useState<ApiDashboard | null>(null);
+  const [expenses, setExpenses] = useState<ApiTransaction[]>([]);
+  const [loadingFinanceData, setLoadingFinanceData] = useState(true);
+
+  // Staff attendance for today — same daily-presence API and the same
+  // summarizeDailyPresence() tally used by the "Présences" tab of Mon
+  // équipe, so the counts never diverge between the two places.
+  const [presence, setPresence] = useState<ApiDailyPresence | null>(null);
+  const [loadingPresence, setLoadingPresence] = useState(true);
+
+  // "Demandes à traiter" — same unmodified GET /incidents (incidentsApi.
+  // list) IncidentsPage itself uses; filtering/sorting into "active,
+  // supervisor-created first" happens client-side in DemandesATraiter,
+  // never a second incidents endpoint. loadingIncidents matters here (not
+  // just cosmetic, like the other loading* flags): without it, the section
+  // would render its "Aucune demande en cours." empty state for the one
+  // instant before the real list arrives, then pop to full size — a
+  // misleading flash of "nothing to do" and a layout shift for whatever
+  // renders below it.
+  const [incidents, setIncidents] = useState<ApiIncident[]>([]);
+  const [loadingIncidents, setLoadingIncidents] = useState(true);
+
+  useEffect(() => {
+    const now = new Date();
+    const from = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
+    const to = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().slice(0, 10);
+
+    Promise.all([
+      financesApi.getDashboard(),
+      financesApi.listTransactions({ type: 'DEPENSE', from, to }),
+    ])
+      .then(([dashboardRes, expensesRes]) => {
+        setDashboard(dashboardRes);
+        setExpenses(expensesRes);
+      })
+      .catch(() => toast.error('Erreur de chargement des données du tableau de bord.'))
+      .finally(() => setLoadingFinanceData(false));
+
+    teamApi.listDailyPresence(new Date().toISOString().slice(0, 10))
+      .then(setPresence)
+      .catch(() => toast.error('Erreur de chargement des présences.'))
+      .finally(() => setLoadingPresence(false));
+
+    incidentsApi.list()
+      .then(setIncidents)
+      .catch(() => toast.error('Erreur de chargement des incidents.'))
+      .finally(() => setLoadingIncidents(false));
+  }, []);
 
   const today = new Date().toLocaleDateString('fr-FR', {
     weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
   });
+
+  // ── Finance KPI aggregates ──
+  const budgetTotal     = dashboard ? dashboard.byCategory.reduce((sum, c) => sum + (c.budgetXof ?? 0), 0) : 0;
+  const budgetReserved  = dashboard ? dashboard.byCategory.reduce((sum, c) => sum + c.reservedXof, 0) : 0;
+  const budgetConsumed  = dashboard ? dashboard.byCategory.reduce((sum, c) => sum + c.consumedXof, 0) : 0;
+  const budgetAvailable = dashboard ? dashboard.byCategory.reduce((sum, c) => sum + (c.availableXof ?? 0), 0) : 0;
+
+  // ── Staff attendance aggregates (shared helper — see team.api.ts) ──
+  const presenceSummary = presence ? summarizeDailyPresence(presence) : { present: 0, absent: 0, nonConfirmed: 0 };
+  // Same `presence` object, same predicate the KPI's own count is built
+  // from (see nonConfirmedEligibleEntries's docstring) — never a second
+  // fetch, never a re-derived condition, so this list can never disagree
+  // with `presenceSummary.nonConfirmed` above.
+  const nonConfirmedEntries = presence ? nonConfirmedEligibleEntries(presence) : [];
+
+  // ── Recent activity feed — rejected and pending expenses only ──
+  const recentActivity: ActivityItem[] = expenses
+    .filter(t => t.expenseWorkflowStatus === 'REJECTED' || t.expenseWorkflowStatus === 'PENDING_APPROVAL')
+    .map((t): ActivityItem => ({
+      id: t.id,
+      kind: t.expenseWorkflowStatus === 'REJECTED' ? 'expense-rejected' : 'expense-pending',
+      label: t.label,
+      detail: formatXof(t.amountXof),
+      at: t.updatedAt,
+      to: '/app/finances',
+    }))
+    .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())
+    .slice(0, 6);
+
+  // 'NON_CONFIRMED' no longer navigates directly — that KPI opens
+  // `NonConfirmedModal` instead (below), whose own "Confirmer" button is
+  // what navigates onward, one specific person at a time.
+  const goToAttendance = (status: 'PRESENT' | 'ABSENT') =>
+    navigate(`/app/team?tab=attendance&status=${status}`);
 
   return (
     <div className="px-4 md:px-6 py-6 space-y-5" style={{ maxWidth: 1400 }}>
@@ -509,115 +490,65 @@ export function DirectorDashboard() {
             {today} · Vue globale Hadoum
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <DemanderFonds userName={user?.name ?? 'Directrice'} />
-          <button
-            className="flex items-center gap-2 px-4 py-2 rounded-lg"
-            style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', color: '#374151', fontSize: 13, fontWeight: 500 }}
-          >
-            <FileText size={14} /> Exporter
-          </button>
-        </div>
       </div>
 
-      {/* ── Compact alerts ── */}
-      <CompactAlertsBar
-        alerts={visibleAlerts}
-        onDismiss={(id) => setDismissedAlerts((prev) => [...prev, id])}
-      />
-
-      {/* ── Activités à valider + Demandes RH (si en attente) ── */}
-      <ActivitesAValider />
-      <DemandesRH />
-
-      {/* ── KPIs ── */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-        <KPICard title="Enfants enregistrés"  value="87"     subtitle="En charge à ce jour"     trend={{ value: '+2 ce mois', positive: true }}          icon={Users}        iconColor="#3E5A78" iconBg="#EEF2F7" />
-        <KPICard title="Présence aujourd'hui" value="74 / 87" subtitle="Taux : 85%"              trend={{ value: '-3% vs hier', positive: false }}        icon={UserCheck}    iconColor="#065F46" iconBg="#ECFDF5" />
-        <KPICard title="Éducateurs actifs"    value="12 / 14" subtitle="2 en congé"             trend={{ value: 'Stable', positive: null }}              icon={GraduationCap} iconColor="#7C3AED" iconBg="#F5F3FF" />
-        <KPICard title="Budget consommé"      value="82%"    subtitle="18% restant ce mois"      trend={{ value: '+4% vs dernier', positive: false }}     icon={TrendingUp}   iconColor="#D97706" iconBg="#FFFBEB" />
-      </div>
-
-      {/* ── Quick actions ── */}
+      {/* ── Quick actions (first content block below the header) ── */}
       <QuickActions onAddChild={() => setShowAddChild(true)} />
 
-      {/* ── Row : Présences équipe + Tâches ── */}
-      <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
+      {/* ── Demandes à traiter ── */}
+      <DemandesATraiter incidents={incidents} />
 
-        {/* Staff attendance chart — Point 8a */}
-        <div className="lg:col-span-3 rounded-xl p-5" style={{ background: '#FFFFFF', border: '1px solid #E5E7EB' }}>
-          <div className="flex items-center justify-between mb-5">
-            <div>
-              <div className="flex items-center gap-2">
-                <h3 style={{ color: '#1A1A1A', fontSize: 15, fontWeight: 600 }}>Présences équipe aujourd'hui</h3>
-                <AttendanceBadge />
-              </div>
-              <p style={{ color: '#6B7280', fontSize: 12, marginTop: 2 }}>Éducateurs et personnel — semaine en cours</p>
-            </div>
-            <div className="flex items-center gap-4">
-              <div className="flex items-center gap-1.5">
-                <div className="w-2.5 h-2.5 rounded-full" style={{ background: '#3E5A78' }} />
-                <span style={{ color: '#6B7280', fontSize: 11 }}>Présents</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <div className="w-2.5 h-2.5 rounded-full" style={{ background: '#FECACA' }} />
-                <span style={{ color: '#6B7280', fontSize: 11 }}>Absents</span>
-              </div>
-            </div>
-          </div>
-          <ResponsiveContainer width="100%" height={210}>
-            <AreaChart data={staffAttendanceData} margin={{ top: 5, right: 5, left: -20, bottom: 0 }}>
-              <CartesianGrid key="grid" strokeDasharray="3 3" stroke="#F3F4F6" vertical={false} />
-              <XAxis key="xaxis" dataKey="day" tick={{ fill: '#9CA3AF', fontSize: 12 }} axisLine={false} tickLine={false} />
-              <YAxis key="yaxis" domain={[0, 14]} tick={{ fill: '#9CA3AF', fontSize: 12 }} axisLine={false} tickLine={false} />
-              <Tooltip key="tooltip" content={<CustomTooltip />} cursor={{ stroke: '#E5E7EB', strokeWidth: 1 }} />
-              <Area key="area-presents" type="monotone" dataKey="presents" stroke="#3E5A78" strokeWidth={2.5}
-                fill="#3E5A78" fillOpacity={0.1}
-                dot={{ fill: '#3E5A78', r: 3, strokeWidth: 0 }} activeDot={{ r: 5, fill: '#3E5A78' }} isAnimationActive={false} />
-              <Area key="area-absents" type="monotone" dataKey="absents" stroke="#B91C1C" strokeWidth={1.5}
-                fill="#B91C1C" fillOpacity={0.07}
-                dot={{ fill: '#B91C1C', r: 3, strokeWidth: 0 }} activeDot={{ r: 5, fill: '#B91C1C' }} isAnimationActive={false} />
-            </AreaChart>
-          </ResponsiveContainer>
-        </div>
-
-        {/* Priority tasks */}
-        <div className="lg:col-span-2">
-          <PriorityTasks />
+      {/* ── Finance KPIs ── */}
+      <div>
+        <p style={{ color: '#9CA3AF', fontSize: 11, fontWeight: 600, letterSpacing: '0.05em', marginBottom: 10 }}>
+          FINANCES
+        </p>
+        <div data-testid="finance-kpis" className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+          <KPICard testId="kpi-budget-total"     title="Budget total"      value={loadingFinanceData ? '—' : formatXof(budgetTotal)}     subtitle="Toutes catégories · mois en cours" icon={DollarSign}   iconColor="#3E5A78" iconBg="#EEF2F7" />
+          <KPICard testId="kpi-budget-reserved"  title="Budget réservé"    value={loadingFinanceData ? '—' : formatXof(budgetReserved)}  subtitle="Dépenses approuvées non clôturées" icon={Clock}        iconColor="#D97706" iconBg="#FFFBEB" />
+          <KPICard testId="kpi-budget-consumed"  title="Budget consommé"   value={loadingFinanceData ? '—' : formatXof(budgetConsumed)}  subtitle="Dépenses clôturées ce mois"        icon={TrendingDown} iconColor="#374151" iconBg="#F3F4F6" />
+          <KPICard testId="kpi-budget-available" title="Budget disponible" value={loadingFinanceData ? '—' : formatXof(budgetAvailable)} subtitle="Restant à engager"                  icon={Wallet}       iconColor="#065F46" iconBg="#ECFDF5" />
         </div>
       </div>
 
-      {/* ── Row : Répartition par classe ── */}
-      <div className="rounded-xl p-5" style={{ background: '#FFFFFF', border: '1px solid #E5E7EB' }}>
-        <div className="flex items-center justify-between mb-5">
-          <div>
-            <h3 style={{ color: '#1A1A1A', fontSize: 15, fontWeight: 600 }}>Répartition par classe</h3>
-            <p style={{ color: '#6B7280', fontSize: 12, marginTop: 2 }}>87 enfants · 5 niveaux</p>
-          </div>
-          <button
-            onClick={() => navigate('/app/children')}
-            className="flex items-center gap-1"
-            style={{ color: '#3E5A78', fontSize: 12, fontWeight: 500, background: 'none', border: 'none', cursor: 'pointer' }}
-          >
-            Voir les enfants <ChevronRight size={13} />
-          </button>
+      {/* ── Présence de l'équipe (team attendance) ── */}
+      <div>
+        <p style={{ color: '#9CA3AF', fontSize: 11, fontWeight: 600, letterSpacing: '0.05em', marginBottom: 10 }}>
+          PRÉSENCE DE L'ÉQUIPE
+        </p>
+        <div data-testid="team-presence-kpis" className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <KPICard
+            testId="kpi-presence-present"
+            title="Présents" value={loadingPresence ? '—' : presenceSummary.present} subtitle="Aujourd'hui"
+            icon={UserCheck} iconColor="#065F46" iconBg="#ECFDF5"
+            onClick={() => goToAttendance('PRESENT')}
+          />
+          <KPICard
+            testId="kpi-presence-absent"
+            title="Absents" value={loadingPresence ? '—' : presenceSummary.absent} subtitle="Aujourd'hui"
+            icon={UserX} iconColor="#B91C1C" iconBg="#FEF2F2"
+            onClick={() => goToAttendance('ABSENT')}
+          />
+          <KPICard
+            testId="kpi-presence-non-confirmed"
+            title="Non confirmées" value={loadingPresence ? '—' : presenceSummary.nonConfirmed} subtitle="Aujourd'hui"
+            icon={Circle}
+            iconColor={presenceSummary.nonConfirmed > 0 ? '#D97706' : '#6B7280'}
+            iconBg={presenceSummary.nonConfirmed > 0 ? '#FFFBEB' : '#F3F4F6'}
+            highlight={presenceSummary.nonConfirmed > 0}
+            onClick={loadingPresence ? undefined : () => setShowNonConfirmed(true)}
+          />
         </div>
-        <ResponsiveContainer width="100%" height={160}>
-          <BarChart data={classDistributionData} layout="vertical" margin={{ top: 0, right: 10, left: 0, bottom: 0 }}>
-            <CartesianGrid key="grid" strokeDasharray="3 3" stroke="#F3F4F6" horizontal={false} />
-            <XAxis key="xaxis" type="number" tick={{ fill: '#9CA3AF', fontSize: 11 }} axisLine={false} tickLine={false} domain={[0, 30]} />
-            <YAxis key="yaxis" type="category" dataKey="classe" tick={{ fill: '#374151', fontSize: 11 }} axisLine={false} tickLine={false} width={80} />
-            <Tooltip key="tooltip" content={<CustomTooltip />} cursor={{ fill: '#F3F4F6' }} />
-            <Bar key="bar-effectif" dataKey="effectif" radius={[0, 4, 4, 0]} barSize={14} isAnimationActive={false}>
-              {classDistributionData.map((entry, i) => (
-                <Cell key={`dir-class-cell-${entry.classe}`} fill={['#3E5A78', '#4A6A8A', '#56789A', '#6286A8', '#6E94B6'][i]} />
-              ))}
-            </Bar>
-          </BarChart>
-        </ResponsiveContainer>
       </div>
+
+      {/* ── Recent Activity ── */}
+      <RecentActivity items={recentActivity} />
 
       <div style={{ height: 24 }} />
+
+      {showNonConfirmed && (
+        <NonConfirmedModal entries={nonConfirmedEntries} onClose={() => setShowNonConfirmed(false)} />
+      )}
 
       {showAddChild && (
         <AddModal
