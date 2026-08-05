@@ -14,8 +14,12 @@ import { PrismaService } from '../src/prisma/prisma.service';
 // validation-enabled resources (maintenance tickets are covered in
 // validation-workflow.e2e-spec.ts; stock/inventory/register in
 // stock-inventory-register.e2e-spec.ts). Each scenario here walks:
-// create -> submit -> rejected -> modify -> resubmit -> approved,
-// verifying notifications fire at each step.
+// create -> rejected -> modify -> resubmit -> approved, verifying
+// notifications fire at each step. Supplier Contracts workflow update:
+// creation itself now already submits for validation (see
+// supplier-contracts-validation-workflow.e2e-spec.ts for the dedicated
+// creation-workflow coverage) — only the modify -> resubmit step after a
+// rejection still uses the submit-validation endpoint here.
 describe('Full lifecycle scenarios: Supplier contract & Administrative procedure (e2e)', () => {
   let app: INestApplication<App>;
   let prisma: PrismaService;
@@ -48,7 +52,7 @@ describe('Full lifecycle scenarios: Supplier contract & Administrative procedure
     await app.close();
   });
 
-  it('Supplier contract: create (high amount, draft) -> submit -> rejected -> modify -> resubmit -> approved (ACTIF)', async () => {
+  it('Supplier contract: create (already pending) -> rejected -> modify -> resubmit -> approved (ACTIF)', async () => {
     const createRes = await request(app.getHttpServer())
       .post('/api/supplier-contracts')
       .set('Authorization', `Bearer ${directorToken}`)
@@ -57,17 +61,15 @@ describe('Full lifecycle scenarios: Supplier contract & Administrative procedure
         contractName: 'Électricité annuelle',
         category: 'ELECTRICITE',
         startDate: '2026-01-01',
-        amount: 600_000, // above the validation threshold -> created as BROUILLON
+        amount: 600_000,
       })
       .expect(201);
     const contractId = createRes.body.id as string;
+    // Supplier Contracts workflow update: creation itself already enters
+    // the validation workflow — no separate submit step for a brand-new
+    // contract any more.
     expect(createRes.body.status).toBe('BROUILLON');
-
-    await request(app.getHttpServer())
-      .post(`/api/supplier-contracts/${contractId}/submit-validation`)
-      .set('Authorization', `Bearer ${directorToken}`)
-      .send({})
-      .expect(201);
+    expect(createRes.body.validationStatus).toBe('PENDING_VALIDATION');
 
     await request(app.getHttpServer())
       .patch(`/api/supplier-contracts/${contractId}/reject`)
@@ -126,12 +128,8 @@ describe('Full lifecycle scenarios: Supplier contract & Administrative procedure
         amount: 600_000,
       })
       .expect(201);
-
-    await request(app.getHttpServer())
-      .post(`/api/supplier-contracts/${createRes.body.id}/submit-validation`)
-      .set('Authorization', `Bearer ${directorToken}`)
-      .send({})
-      .expect(201);
+    // Already pending as of creation — no submit-validation call needed.
+    expect(createRes.body.validationStatus).toBe('PENDING_VALIDATION');
 
     await request(app.getHttpServer())
       .patch(`/api/supplier-contracts/${createRes.body.id}/approve`)

@@ -14,6 +14,9 @@ function createMockPrisma() {
       findMany: jest.fn(),
       findUnique: jest.fn(),
     },
+    contact: {
+      findUnique: jest.fn(),
+    },
     procedureDocument: {
       create: jest.fn(),
       findMany: jest.fn(),
@@ -56,6 +59,25 @@ describe('AdministrativeProceduresService', () => {
     pendingValidationAction: null,
     createdById: 'director-1',
     archivedAt: null,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  };
+
+  const activeContact = {
+    id: 'contact-1',
+    fullName: 'Fatou Sow',
+    organization: 'Ministère de la Santé',
+    functionTitle: 'Chargée de dossiers',
+    categoryId: 'cat-1',
+    phone: '+221 77 111 22 33',
+    whatsappEnabled: false,
+    email: 'fatou.sow@sante.gouv.sn',
+    address: null,
+    city: null,
+    notes: null,
+    photoKey: null,
+    photoMime: null,
+    active: true,
     createdAt: new Date(),
     updatedAt: new Date(),
   };
@@ -123,6 +145,46 @@ describe('AdministrativeProceduresService', () => {
         ),
       ).rejects.toBeInstanceOf(BadRequestException);
     });
+
+    it('creates a procedure directly as EN_ATTENTE_REPONSE with its organisme concerné', async () => {
+      prisma.administrativeProcedure.create.mockResolvedValue({
+        ...baseProcedure,
+        status: 'EN_ATTENTE_REPONSE',
+        pendingResponseOrganization: 'Mairie',
+      });
+
+      const result = await service.create(
+        {
+          title: 'x',
+          procedureType: 'AGREMENT',
+          authority: 'x',
+          status: 'EN_ATTENTE_REPONSE',
+          pendingResponseOrganization: 'Mairie',
+        } as any,
+        'director-1',
+      );
+
+      expect(prisma.administrativeProcedure.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            status: 'EN_ATTENTE_REPONSE',
+            pendingResponseOrganization: 'Mairie',
+          }),
+        }),
+      );
+      expect(result.status).toBe('EN_ATTENTE_REPONSE');
+      expect(result.pendingResponseOrganization).toBe('Mairie');
+    });
+
+    it('refuses to create a procedure directly in a workflow-controlled status', async () => {
+      await expect(
+        service.create(
+          { title: 'x', procedureType: 'AGREMENT', authority: 'x', status: 'APPROUVE' } as any,
+          'director-1',
+        ),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(prisma.administrativeProcedure.create).not.toHaveBeenCalled();
+    });
   });
 
   describe('computed deadline fields', () => {
@@ -187,6 +249,73 @@ describe('AdministrativeProceduresService', () => {
       await expect(
         service.update('proc-1', { status: 'EN_COURS' } as any),
       ).rejects.toBeInstanceOf(ConflictException);
+    });
+
+    it('allows manually setting EN_ATTENTE_REPONSE with its organisme concerné (operational tracking, not a validation event)', async () => {
+      prisma.administrativeProcedure.findUnique.mockResolvedValue({
+        ...baseProcedure,
+        status: 'EN_COURS',
+      });
+      prisma.administrativeProcedure.update.mockResolvedValue({
+        ...baseProcedure,
+        status: 'EN_ATTENTE_REPONSE',
+        pendingResponseOrganization: 'Préfecture',
+      });
+
+      const result = await service.update('proc-1', {
+        status: 'EN_ATTENTE_REPONSE',
+        pendingResponseOrganization: 'Préfecture',
+      } as any);
+
+      expect(prisma.administrativeProcedure.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            status: 'EN_ATTENTE_REPONSE',
+            pendingResponseOrganization: 'Préfecture',
+          }),
+        }),
+      );
+      // No validation-workflow call — this never touches ValidationsService.
+      expect(validations.create).not.toHaveBeenCalled();
+      expect(result.status).toBe('EN_ATTENTE_REPONSE');
+      expect(result.pendingResponseOrganization).toBe('Préfecture');
+    });
+
+    it('allows moving back out of EN_ATTENTE_REPONSE to a routine status', async () => {
+      prisma.administrativeProcedure.findUnique.mockResolvedValue({
+        ...baseProcedure,
+        status: 'EN_ATTENTE_REPONSE',
+        pendingResponseOrganization: 'CAF',
+      });
+      prisma.administrativeProcedure.update.mockResolvedValue({
+        ...baseProcedure,
+        status: 'A_PREPARER',
+      });
+
+      const result = await service.update('proc-1', { status: 'A_PREPARER' } as any);
+
+      expect(result.status).toBe('A_PREPARER');
+    });
+
+    it('clears pendingResponseOrganization when explicitly set to null', async () => {
+      prisma.administrativeProcedure.findUnique.mockResolvedValue({
+        ...baseProcedure,
+        status: 'EN_ATTENTE_REPONSE',
+        pendingResponseOrganization: 'Tribunal',
+      });
+      prisma.administrativeProcedure.update.mockResolvedValue({
+        ...baseProcedure,
+        status: 'EN_ATTENTE_REPONSE',
+        pendingResponseOrganization: null,
+      });
+
+      await service.update('proc-1', { pendingResponseOrganization: null } as any);
+
+      expect(prisma.administrativeProcedure.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ pendingResponseOrganization: null }),
+        }),
+      );
     });
   });
 
@@ -491,6 +620,211 @@ describe('AdministrativeProceduresService', () => {
       upload.getPresignedUrl.mockResolvedValue('https://signed-url');
       const result = await service.getDocumentUrl('proc-1', 'doc-1');
       expect(result.url).toBe('https://signed-url');
+    });
+  });
+
+  describe('Contact directory integration (PR 9)', () => {
+    describe('create', () => {
+      it('creates a procedure with a Contact, deriving the assignedTo snapshot', async () => {
+        prisma.contact.findUnique.mockResolvedValue(activeContact);
+        prisma.administrativeProcedure.create.mockResolvedValue({
+          ...baseProcedure,
+          assignedContactId: 'contact-1',
+          assignedTo: 'Fatou Sow',
+          assignedContact: activeContact,
+        });
+
+        await service.create(
+          {
+            title: 'x',
+            procedureType: 'AGREMENT',
+            authority: 'x',
+            assignedContactId: 'contact-1',
+          } as any,
+          'director-1',
+        );
+
+        expect(prisma.administrativeProcedure.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({
+              assignedContactId: 'contact-1',
+              assignedTo: 'Fatou Sow',
+            }),
+          }),
+        );
+      });
+
+      it('still supports the legacy free-text path when no Contact is selected', async () => {
+        prisma.administrativeProcedure.create.mockResolvedValue(baseProcedure);
+        await service.create(
+          {
+            title: 'x',
+            procedureType: 'AGREMENT',
+            authority: 'x',
+            assignedTo: 'Responsable (texte libre)',
+          } as any,
+          'director-1',
+        );
+        expect(prisma.contact.findUnique).not.toHaveBeenCalled();
+        expect(prisma.administrativeProcedure.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({ assignedTo: 'Responsable (texte libre)' }),
+          }),
+        );
+      });
+
+      it('rejects an unknown Contact for a new assignment', async () => {
+        prisma.contact.findUnique.mockResolvedValue(null);
+        await expect(
+          service.create(
+            { title: 'x', procedureType: 'AGREMENT', authority: 'x', assignedContactId: 'missing' } as any,
+            'director-1',
+          ),
+        ).rejects.toBeInstanceOf(BadRequestException);
+        expect(prisma.administrativeProcedure.create).not.toHaveBeenCalled();
+      });
+
+      it('rejects an inactive Contact for a new assignment', async () => {
+        prisma.contact.findUnique.mockResolvedValue({ ...activeContact, active: false });
+        await expect(
+          service.create(
+            { title: 'x', procedureType: 'AGREMENT', authority: 'x', assignedContactId: 'contact-1' } as any,
+            'director-1',
+          ),
+        ).rejects.toBeInstanceOf(BadRequestException);
+        expect(prisma.administrativeProcedure.create).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('update', () => {
+      it('replaces a legacy free-text Responsable with a Contact, deriving the snapshot', async () => {
+        prisma.administrativeProcedure.findUnique.mockResolvedValue({
+          ...baseProcedure,
+          assignedTo: 'Ancien responsable texte',
+          assignedContactId: null,
+        });
+        prisma.contact.findUnique.mockResolvedValue(activeContact);
+        prisma.administrativeProcedure.update.mockResolvedValue({
+          ...baseProcedure,
+          assignedContactId: 'contact-1',
+          assignedTo: 'Fatou Sow',
+          assignedContact: activeContact,
+        });
+
+        const result = await service.update('proc-1', { assignedContactId: 'contact-1' } as any);
+
+        expect(prisma.administrativeProcedure.update).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({ assignedContactId: 'contact-1', assignedTo: 'Fatou Sow' }),
+          }),
+        );
+        expect(result.assignedContact?.fullName).toBe('Fatou Sow');
+      });
+
+      it('clears the assigned Contact and assignedTo when assignedContactId is explicitly null', async () => {
+        prisma.administrativeProcedure.findUnique.mockResolvedValue({
+          ...baseProcedure,
+          assignedContactId: 'contact-1',
+          assignedTo: 'Fatou Sow',
+        });
+        prisma.administrativeProcedure.update.mockResolvedValue({
+          ...baseProcedure,
+          assignedContactId: null,
+          assignedTo: null,
+        });
+
+        const result = await service.update('proc-1', { assignedContactId: null } as any);
+
+        const call = prisma.administrativeProcedure.update.mock.calls[0][0];
+        expect(call.data.assignedContactId).toBeNull();
+        expect(call.data.assignedTo).toBeNull();
+        expect(prisma.contact.findUnique).not.toHaveBeenCalled();
+        expect(result.assignedContactId).toBeNull();
+        expect(result.assignedTo).toBeNull();
+      });
+
+      it('omitting assignedContactId leaves the existing relation and assignedTo untouched', async () => {
+        prisma.administrativeProcedure.findUnique.mockResolvedValue({
+          ...baseProcedure,
+          assignedContactId: 'contact-1',
+          assignedTo: 'Fatou Sow',
+        });
+        prisma.administrativeProcedure.update.mockResolvedValue(baseProcedure);
+
+        await service.update('proc-1', { priority: 'HAUTE' } as any);
+
+        const call = prisma.administrativeProcedure.update.mock.calls[0][0];
+        expect(call.data).not.toHaveProperty('assignedContactId');
+        expect(call.data).not.toHaveProperty('assignedTo');
+        expect(prisma.contact.findUnique).not.toHaveBeenCalled();
+      });
+
+      it('rejects assigning an inactive Contact on update', async () => {
+        prisma.administrativeProcedure.findUnique.mockResolvedValue(baseProcedure);
+        prisma.contact.findUnique.mockResolvedValue({ ...activeContact, active: false });
+        await expect(
+          service.update('proc-1', { assignedContactId: 'contact-1' } as any),
+        ).rejects.toBeInstanceOf(BadRequestException);
+        expect(prisma.administrativeProcedure.update).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('findOne / findAll include the Contact relation', () => {
+      it('findOne includes an inactive referenced Contact without filtering it out', async () => {
+        prisma.administrativeProcedure.findUnique.mockResolvedValue({
+          ...baseProcedure,
+          documents: [],
+          createdBy: null,
+          assignedContactId: 'contact-1',
+          assignedContact: { ...activeContact, active: false },
+        });
+
+        const result = await service.findOne('proc-1');
+
+        expect(result.assignedContact?.active).toBe(false);
+        expect(prisma.administrativeProcedure.findUnique).toHaveBeenCalledWith(
+          expect.objectContaining({
+            include: expect.objectContaining({
+              assignedContact: expect.objectContaining({ include: { category: true } }),
+            }),
+          }),
+        );
+      });
+
+      it('findAll requests the assignedContact include', async () => {
+        prisma.administrativeProcedure.findMany.mockResolvedValue([baseProcedure]);
+        await service.findAll({});
+        expect(prisma.administrativeProcedure.findMany).toHaveBeenCalledWith(
+          expect.objectContaining({
+            include: expect.objectContaining({ assignedContact: expect.anything() }),
+          }),
+        );
+      });
+    });
+
+    describe('notification behavior is unchanged', () => {
+      it('never references assignedTo/assignedContact in notification messages', async () => {
+        prisma.administrativeProcedure.findUnique.mockResolvedValue({
+          ...baseProcedure,
+          assignedTo: 'Fatou Sow',
+          assignedContact: activeContact,
+        });
+        prisma.administrativeProcedure.update.mockResolvedValue({
+          ...baseProcedure,
+          validationStatus: 'PENDING_VALIDATION',
+        });
+
+        await service.submitValidation('proc-1', 'director-1', {} as any);
+
+        expect(notifications.createForRole).toHaveBeenCalledWith(
+          'SUPERVISOR',
+          expect.objectContaining({
+            message: expect.stringContaining(baseProcedure.authority),
+          }),
+        );
+        const [, payload] = notifications.createForRole.mock.calls[0];
+        expect(payload.message).not.toContain('Fatou Sow');
+      });
     });
   });
 });

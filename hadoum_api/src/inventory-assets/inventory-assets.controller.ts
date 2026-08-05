@@ -23,6 +23,7 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { AuthUser } from '../auth/types/request-with-user';
+import { Audited } from '../audit-logs/decorators/audited.decorator';
 import { InventoryAssetsService } from './inventory-assets.service';
 import { CreateInventoryAssetDto } from './dto/create-inventory-asset.dto';
 import { UpdateInventoryAssetDto } from './dto/update-inventory-asset.dto';
@@ -40,6 +41,7 @@ export class InventoryAssetsController {
 
   @Post()
   @Roles('DIRECTOR')
+  @Audited({ module: 'STOCK', entity: 'InventoryAsset', action: 'CREATE' })
   create(@Body() dto: CreateInventoryAssetDto, @CurrentUser() user: AuthUser) {
     return this.assetsService.create(dto, user.id);
   }
@@ -80,18 +82,21 @@ export class InventoryAssetsController {
 
   @Patch(':id')
   @Roles('DIRECTOR')
+  @Audited({ module: 'STOCK', entity: 'InventoryAsset', action: 'UPDATE' })
   update(@Param('id') id: string, @Body() dto: UpdateInventoryAssetDto) {
     return this.assetsService.update(id, dto);
   }
 
   @Patch(':id/assign')
   @Roles('DIRECTOR')
+  @Audited({ module: 'STOCK', entity: 'InventoryAsset', action: 'ASSIGN' })
   assign(@Param('id') id: string, @Body() dto: AssignInventoryAssetDto) {
     return this.assetsService.assign(id, dto);
   }
 
   @Patch(':id/transfer')
   @Roles('DIRECTOR')
+  @Audited({ module: 'STOCK', entity: 'InventoryAsset', action: 'TRANSFER' })
   transfer(
     @Param('id') id: string,
     @CurrentUser() user: AuthUser,
@@ -102,6 +107,11 @@ export class InventoryAssetsController {
 
   @Post(':id/request-disposal')
   @Roles('DIRECTOR')
+  @Audited({
+    module: 'STOCK',
+    entity: 'InventoryAsset',
+    action: 'REQUEST_DISPOSAL',
+  })
   requestDisposal(
     @Param('id') id: string,
     @CurrentUser() user: AuthUser,
@@ -112,6 +122,11 @@ export class InventoryAssetsController {
 
   @Post(':id/request-archive')
   @Roles('DIRECTOR')
+  @Audited({
+    module: 'STOCK',
+    entity: 'InventoryAsset',
+    action: 'REQUEST_ARCHIVE',
+  })
   requestArchive(
     @Param('id') id: string,
     @CurrentUser() user: AuthUser,
@@ -122,6 +137,7 @@ export class InventoryAssetsController {
 
   @Patch(':id/approve')
   @Roles('SUPERVISOR')
+  @Audited({ module: 'STOCK', entity: 'InventoryAsset', action: 'APPROVE' })
   approve(
     @Param('id') id: string,
     @CurrentUser() user: AuthUser,
@@ -132,6 +148,7 @@ export class InventoryAssetsController {
 
   @Patch(':id/reject')
   @Roles('SUPERVISOR')
+  @Audited({ module: 'STOCK', entity: 'InventoryAsset', action: 'REJECT' })
   reject(
     @Param('id') id: string,
     @CurrentUser() user: AuthUser,
@@ -142,6 +159,11 @@ export class InventoryAssetsController {
 
   @Patch(':id/request-changes')
   @Roles('SUPERVISOR')
+  @Audited({
+    module: 'STOCK',
+    entity: 'InventoryAsset',
+    action: 'REQUEST_CHANGES',
+  })
   requestChanges(
     @Param('id') id: string,
     @CurrentUser() user: AuthUser,

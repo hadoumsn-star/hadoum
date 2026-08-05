@@ -2,6 +2,7 @@ import {
   TransactionType,
   TransactionCategory,
   TransactionStatus,
+  PaymentMethod,
 } from '@prisma/client';
 import {
   IsBoolean,
@@ -47,4 +48,21 @@ export class CreateTransactionDto {
   @IsString()
   @IsOptional()
   createdBy?: string;
+
+  // DEPENSE only — see FinancesService for why RECETTE deterministically
+  // rejects this rather than silently ignoring it. Not @IsUUID(): matches
+  // every other id field in this repo (Contact.categoryId, MaintenanceTicket
+  // .assignedContactId), validated only as a non-empty string.
+  @IsString()
+  @IsOptional()
+  supplierContactId?: string | null;
+
+  // Kept optional for both transaction types in this transitional PR — see
+  // FinancesService for the reasoning (enforcing "required for DEPENSE"
+  // would need either app-level cross-field validation here or a DB check
+  // constraint; deferred rather than risk blocking legitimate expense
+  // creation before the product decision is confirmed).
+  @IsEnum(PaymentMethod)
+  @IsOptional()
+  paymentMethod?: PaymentMethod;
 }

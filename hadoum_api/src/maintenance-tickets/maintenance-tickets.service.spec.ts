@@ -1,5 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { ConflictException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { MaintenanceTicketsService } from './maintenance-tickets.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { UploadService } from '../upload/upload.service';
@@ -19,6 +19,9 @@ function createMockPrisma() {
       findMany: jest.fn(),
       findUnique: jest.fn(),
       delete: jest.fn(),
+    },
+    contact: {
+      findUnique: jest.fn(),
     },
   };
 }
@@ -47,6 +50,7 @@ describe('MaintenanceTicketsService', () => {
     reportedDate: new Date(),
     reportedBy: 'Jean',
     assignedTo: null,
+    assignedContactId: null,
     plannedDate: null,
     resolvedDate: null,
     resolutionNotes: null,
@@ -56,6 +60,13 @@ describe('MaintenanceTicketsService', () => {
     createdAt: new Date(),
     updatedAt: new Date(),
   };
+
+  const activeContact = {
+    id: 'contact-1',
+    fullName: 'Ousmane Diop',
+    active: true,
+  };
+  const inactiveContact = { ...activeContact, id: 'contact-2', active: false };
 
   beforeEach(async () => {
     prisma = createMockPrisma();
@@ -94,10 +105,121 @@ describe('MaintenanceTicketsService', () => {
     });
   });
 
+  describe('create — Contact assignment (PR 3)', () => {
+    it('creates a ticket without a contact exactly as before (no Contact lookup)', async () => {
+      prisma.maintenanceTicket.create.mockResolvedValue(baseTicket);
+      await service.create({
+        title: 'x',
+        spaceId: 'space-1',
+        urgency: 'MOYENNE',
+        reportedBy: 'Jean',
+      } as any);
+      expect(prisma.contact.findUnique).not.toHaveBeenCalled();
+      expect(prisma.maintenanceTicket.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ assignedContactId: undefined }),
+        }),
+      );
+    });
+
+    it('creates a ticket with an active contact and derives the assignedTo snapshot from it', async () => {
+      prisma.contact.findUnique.mockResolvedValue(activeContact);
+      prisma.maintenanceTicket.create.mockResolvedValue({
+        ...baseTicket,
+        assignedContactId: activeContact.id,
+        assignedTo: activeContact.fullName,
+      });
+
+      await service.create({
+        title: 'x',
+        spaceId: 'space-1',
+        urgency: 'MOYENNE',
+        reportedBy: 'Jean',
+        assignedContactId: activeContact.id,
+      } as any);
+
+      expect(prisma.maintenanceTicket.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            assignedContactId: activeContact.id,
+            assignedTo: activeContact.fullName,
+          }),
+        }),
+      );
+    });
+
+    it('rejects an unknown contact id', async () => {
+      prisma.contact.findUnique.mockResolvedValue(null);
+      await expect(
+        service.create({
+          title: 'x',
+          spaceId: 'space-1',
+          urgency: 'MOYENNE',
+          reportedBy: 'Jean',
+          assignedContactId: 'missing',
+        } as any),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.maintenanceTicket.create).not.toHaveBeenCalled();
+    });
+
+    it('rejects an inactive contact for a new assignment', async () => {
+      prisma.contact.findUnique.mockResolvedValue(inactiveContact);
+      await expect(
+        service.create({
+          title: 'x',
+          spaceId: 'space-1',
+          urgency: 'MOYENNE',
+          reportedBy: 'Jean',
+          assignedContactId: inactiveContact.id,
+        } as any),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.maintenanceTicket.create).not.toHaveBeenCalled();
+    });
+  });
+
   describe('findOne', () => {
     it('throws NotFoundException for a missing ticket', async () => {
       prisma.maintenanceTicket.findUnique.mockResolvedValue(null);
       await expect(service.findOne('missing')).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('includes assignedContact (with category) in the query', async () => {
+      prisma.maintenanceTicket.findUnique.mockResolvedValue(baseTicket);
+      await service.findOne('ticket-1');
+      expect(prisma.maintenanceTicket.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({
+          include: expect.objectContaining({
+            assignedContact: { include: { category: true } },
+          }),
+        }),
+      );
+    });
+
+    it('returns a legacy assignedTo-only ticket unchanged (no linked contact)', async () => {
+      prisma.maintenanceTicket.findUnique.mockResolvedValue({
+        ...baseTicket,
+        assignedTo: 'Paul (texte libre)',
+        assignedContactId: null,
+        assignedContact: null,
+      });
+      const result = await service.findOne('ticket-1');
+      expect(result.assignedTo).toBe('Paul (texte libre)');
+      expect(result.assignedContact).toBeNull();
+    });
+
+    it('returns a ticket whose linked contact has since been deactivated (no active filter applied)', async () => {
+      prisma.maintenanceTicket.findUnique.mockResolvedValue({
+        ...baseTicket,
+        assignedContactId: inactiveContact.id,
+        assignedContact: inactiveContact,
+      });
+      const result = await service.findOne('ticket-1');
+      expect(result.assignedContact).toEqual(inactiveContact);
+      // Guards against a future regression where an `active: true` filter
+      // gets added to the include — that would hide the reference instead
+      // of surfacing it as inactive, which is the one thing this must not do.
+      const call = prisma.maintenanceTicket.findUnique.mock.calls[0][0];
+      expect(call.where).toEqual({ id: 'ticket-1' });
     });
   });
 
@@ -132,6 +254,98 @@ describe('MaintenanceTicketsService', () => {
       await expect(
         service.update('ticket-1', { status: 'OUVERT' } as any),
       ).rejects.toBeInstanceOf(ConflictException);
+    });
+  });
+
+  describe('update — Contact assignment (PR 3)', () => {
+    it('updates the ticket to another contact and refreshes the assignedTo snapshot', async () => {
+      prisma.maintenanceTicket.findUnique.mockResolvedValue({
+        ...baseTicket,
+        assignedContactId: 'contact-old',
+        assignedTo: 'Ancien prestataire',
+      });
+      prisma.contact.findUnique.mockResolvedValue(activeContact);
+      prisma.maintenanceTicket.update.mockResolvedValue({
+        ...baseTicket,
+        assignedContactId: activeContact.id,
+        assignedTo: activeContact.fullName,
+      });
+
+      await service.update('ticket-1', { assignedContactId: activeContact.id } as any);
+
+      expect(prisma.maintenanceTicket.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            assignedContactId: activeContact.id,
+            assignedTo: activeContact.fullName,
+          }),
+        }),
+      );
+    });
+
+    it('rejects updating to an inactive contact', async () => {
+      prisma.maintenanceTicket.findUnique.mockResolvedValue(baseTicket);
+      prisma.contact.findUnique.mockResolvedValue(inactiveContact);
+      await expect(
+        service.update('ticket-1', { assignedContactId: inactiveContact.id } as any),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.maintenanceTicket.update).not.toHaveBeenCalled();
+    });
+
+    it('clears the assigned contact when assignedContactId is explicitly null, clearing assignedTo too', async () => {
+      prisma.maintenanceTicket.findUnique.mockResolvedValue({
+        ...baseTicket,
+        assignedContactId: activeContact.id,
+        assignedTo: activeContact.fullName,
+      });
+      prisma.maintenanceTicket.update.mockResolvedValue({
+        ...baseTicket,
+        assignedContactId: null,
+        assignedTo: null,
+      });
+
+      await service.update('ticket-1', { assignedContactId: null } as any);
+
+      expect(prisma.contact.findUnique).not.toHaveBeenCalled();
+      expect(prisma.maintenanceTicket.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ assignedContactId: null, assignedTo: null }),
+        }),
+      );
+    });
+
+    it('leaves the existing relation and assignedTo snapshot unchanged when assignedContactId is omitted', async () => {
+      prisma.maintenanceTicket.findUnique.mockResolvedValue({
+        ...baseTicket,
+        assignedContactId: activeContact.id,
+        assignedTo: activeContact.fullName,
+      });
+      prisma.maintenanceTicket.update.mockResolvedValue(baseTicket);
+
+      await service.update('ticket-1', { title: 'Nouveau titre' } as any);
+
+      expect(prisma.contact.findUnique).not.toHaveBeenCalled();
+      const call = prisma.maintenanceTicket.update.mock.calls[0][0];
+      expect(call.data).not.toHaveProperty('assignedContactId');
+      expect(call.data).not.toHaveProperty('assignedTo');
+    });
+
+    it('does not touch validationStatus when only the assigned contact changes', async () => {
+      prisma.maintenanceTicket.findUnique.mockResolvedValue({
+        ...baseTicket,
+        validationStatus: 'PENDING_VALIDATION',
+      });
+      prisma.contact.findUnique.mockResolvedValue(activeContact);
+      prisma.maintenanceTicket.update.mockResolvedValue({
+        ...baseTicket,
+        validationStatus: 'PENDING_VALIDATION',
+        assignedContactId: activeContact.id,
+      });
+
+      await service.update('ticket-1', { assignedContactId: activeContact.id } as any);
+
+      const call = prisma.maintenanceTicket.update.mock.calls[0][0];
+      expect(call.data).not.toHaveProperty('validationStatus');
     });
   });
 
@@ -258,6 +472,19 @@ describe('MaintenanceTicketsService', () => {
       expect(prisma.maintenanceTicket.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({ spaceId: 'space-1', status: 'OUVERT' }),
+        }),
+      );
+    });
+
+    it('includes assignedContact (with category) alongside space in every list response', async () => {
+      prisma.maintenanceTicket.findMany.mockResolvedValue([baseTicket]);
+      await service.findAll({} as any);
+      expect(prisma.maintenanceTicket.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          include: expect.objectContaining({
+            space: { select: { id: true, name: true } },
+            assignedContact: { include: { category: true } },
+          }),
         }),
       );
     });

@@ -239,7 +239,10 @@ describe('ValidationsService', () => {
 
       expect(result).toHaveLength(2);
       expect(result[0].resource).toEqual({ id: 't1', title: 'Fix door' });
-      expect(result[1].resource).toEqual({ id: 'g1', description: 'Large exit' });
+      expect(result[1].resource).toEqual({
+        id: 'g1',
+        description: 'Large exit',
+      });
     });
 
     it('returns null resource when the underlying record no longer exists', async () => {
@@ -251,6 +254,84 @@ describe('ValidationsService', () => {
       const result = await service.findPending();
 
       expect(result[0].resource).toBeNull();
+    });
+
+    // Supervisor validation experience consistency: the assigned responsible
+    // (Contact relation) is additive enrichment for the queue's display —
+    // reused from the same assignedContact relation each resource's own
+    // service already reads/writes, never a new business rule.
+    it('requests assignedContact (and the legacy assignedTo) for a pending ADMINISTRATIVE_PROCEDURE', async () => {
+      prisma.validationRequest.findMany.mockResolvedValue([
+        { id: 'v1', resourceType: 'ADMINISTRATIVE_PROCEDURE', resourceId: 'p1' },
+      ]);
+      prisma.administrativeProcedure.findUnique.mockResolvedValue({
+        id: 'p1',
+        title: "Agrément d'ouverture",
+        authority: 'Ministère',
+        status: 'A_PREPARER',
+        assignedTo: null,
+        assignedContact: { id: 'contact-1', fullName: 'Awa Diop' },
+      });
+
+      const result = await service.findPending();
+
+      expect(prisma.administrativeProcedure.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({
+          select: expect.objectContaining({
+            assignedTo: true,
+            assignedContact: { select: { id: true, fullName: true } },
+          }),
+        }),
+      );
+      expect(result[0].resource).toEqual(
+        expect.objectContaining({ assignedContact: { id: 'contact-1', fullName: 'Awa Diop' } }),
+      );
+    });
+
+    it('returns null assignedContact (and the raw assignedTo) for an ADMINISTRATIVE_PROCEDURE with no responsible assigned', async () => {
+      prisma.validationRequest.findMany.mockResolvedValue([
+        { id: 'v1', resourceType: 'ADMINISTRATIVE_PROCEDURE', resourceId: 'p1' },
+      ]);
+      prisma.administrativeProcedure.findUnique.mockResolvedValue({
+        id: 'p1',
+        title: "Agrément d'ouverture",
+        authority: 'Ministère',
+        status: 'A_PREPARER',
+        assignedTo: null,
+        assignedContact: null,
+      });
+
+      const result = await service.findPending();
+
+      expect(result[0].resource).toEqual(
+        expect.objectContaining({ assignedContact: null, assignedTo: null }),
+      );
+    });
+
+    it('requests assignedContact (and the legacy assignedTo) for a pending MAINTENANCE_TICKET', async () => {
+      prisma.validationRequest.findMany.mockResolvedValue([
+        { id: 'v1', resourceType: 'MAINTENANCE_TICKET', resourceId: 't1' },
+      ]);
+      prisma.maintenanceTicket.findUnique.mockResolvedValue({
+        id: 't1',
+        title: 'Fix door',
+        assignedTo: null,
+        assignedContact: { id: 'contact-2', fullName: 'Moussa Fall' },
+      });
+
+      const result = await service.findPending();
+
+      expect(prisma.maintenanceTicket.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({
+          select: expect.objectContaining({
+            assignedTo: true,
+            assignedContact: { select: { id: true, fullName: true } },
+          }),
+        }),
+      );
+      expect(result[0].resource).toEqual(
+        expect.objectContaining({ assignedContact: { id: 'contact-2', fullName: 'Moussa Fall' } }),
+      );
     });
   });
 
@@ -270,6 +351,86 @@ describe('ValidationsService', () => {
         }),
       );
       expect(result).toHaveLength(2);
+    });
+
+    it('is not filtered by status — rejected and approved cycles both stay in history', async () => {
+      prisma.validationRequest.findMany.mockResolvedValue([
+        { id: 'v2', status: 'PENDING_VALIDATION' },
+        { id: 'v1', status: 'REJECTED' },
+      ]);
+
+      const result = await service.findHistory('EXPENSE_TRANSACTION', 'txn-1');
+
+      expect(prisma.validationRequest.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { resourceType: 'EXPENSE_TRANSACTION', resourceId: 'txn-1' },
+        }),
+      );
+      expect(result.map((r) => r.status)).toEqual([
+        'PENDING_VALIDATION',
+        'REJECTED',
+      ]);
+    });
+  });
+
+  describe('optional transaction-client parameter (PR 5B)', () => {
+    // Additive: every method still defaults to the injected PrismaService
+    // when no tx is passed (every pre-existing caller, proven by every test
+    // above never passing one). Passing one routes every query through it
+    // instead, so a caller like ExpenseWorkflowService can wrap a
+    // ValidationRequest write in the same DB transaction as its own
+    // resource's status write.
+    it('create() runs its queries against the provided tx client instead of the default one', async () => {
+      const tx = {
+        validationRequest: {
+          findFirst: jest.fn().mockResolvedValue(null),
+          create: jest.fn().mockResolvedValue({ id: 'v1' }),
+        },
+      };
+
+      await service.create(
+        {
+          resourceType: 'EXPENSE_TRANSACTION',
+          resourceId: 'txn-1',
+          submittedById: 'director-1',
+        },
+        tx as never,
+      );
+
+      expect(tx.validationRequest.findFirst).toHaveBeenCalled();
+      expect(tx.validationRequest.create).toHaveBeenCalled();
+      expect(prisma.validationRequest.findFirst).not.toHaveBeenCalled();
+      expect(prisma.validationRequest.create).not.toHaveBeenCalled();
+    });
+
+    it('approve() runs its queries against the provided tx client instead of the default one', async () => {
+      const pending = {
+        id: 'v1',
+        status: 'PENDING_VALIDATION',
+        submittedById: 'director-1',
+      };
+      const tx = {
+        validationRequest: {
+          findFirst: jest.fn().mockResolvedValue(pending),
+          update: jest
+            .fn()
+            .mockResolvedValue({ ...pending, status: 'APPROVED' }),
+        },
+      };
+
+      await service.approve(
+        {
+          resourceType: 'EXPENSE_TRANSACTION',
+          resourceId: 'txn-1',
+          reviewedById: 'supervisor-1',
+        },
+        tx as never,
+      );
+
+      expect(tx.validationRequest.findFirst).toHaveBeenCalled();
+      expect(tx.validationRequest.update).toHaveBeenCalled();
+      expect(prisma.validationRequest.findFirst).not.toHaveBeenCalled();
+      expect(prisma.validationRequest.update).not.toHaveBeenCalled();
     });
   });
 });

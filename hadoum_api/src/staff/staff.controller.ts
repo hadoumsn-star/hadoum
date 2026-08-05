@@ -13,10 +13,16 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { StaffService } from './staff.service';
-import { StaffStatus, CandidateStatus } from '@prisma/client';
+import {
+  StaffStatus,
+  CandidateStatus,
+  StaffPresenceStatus,
+} from '@prisma/client';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import type { AuthUser } from '../auth/types/request-with-user';
 
 @Controller('staff')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -61,6 +67,9 @@ export class StaffController {
       phone?: string;
       email?: string;
       notes?: string;
+      // Weekly schedule (PR 10 adds Samedi/Dimanche keys, unstructured on
+      // the backend — see StaffService.updateStaff/WeekPlan on the frontend).
+      scheduleJson?: string | null;
     },
   ) {
     return this.staffService.updateStaff(id, body);
@@ -307,6 +316,37 @@ export class StaffController {
   @Get('attendance/:recordId/justif-url')
   getAttendanceJustifUrl(@Param('recordId') recordId: string) {
     return this.staffService.getAttendanceJustifUrl(recordId);
+  }
+
+  // ─── Daily presence confirmation (PR 10) ───────────────────────────────────
+  // Distinct from the Congé/Retard/Absence endpoints above. Read stays open
+  // to the class-level DIRECTOR/SUPERVISOR roles; confirming/resetting is
+  // DIRECTOR-only per PR 10's permission requirement.
+
+  @Get('presence')
+  listDailyPresence(@Query('date') date: string) {
+    return this.staffService.listDailyPresence(date);
+  }
+
+  @Post(':id/presence')
+  @Roles('DIRECTOR')
+  confirmPresence(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthUser,
+    @Body() body: { date: string; status: StaffPresenceStatus },
+  ) {
+    return this.staffService.confirmPresence(
+      id,
+      body.date,
+      body.status,
+      user.id,
+    );
+  }
+
+  @Delete(':id/presence')
+  @Roles('DIRECTOR')
+  resetPresence(@Param('id') id: string, @Query('date') date: string) {
+    return this.staffService.resetPresence(id, date);
   }
 
   @Get(':id/docs')

@@ -1,5 +1,9 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { ConflictException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  NotFoundException,
+} from '@nestjs/common';
 import { SupplierContractsService } from './supplier-contracts.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { UploadService } from '../upload/upload.service';
@@ -7,21 +11,34 @@ import { ValidationsService } from '../validations/validations.service';
 import { NotificationsService } from '../notifications/notifications.service';
 
 function createMockPrisma() {
-  return {
-    supplierContract: {
-      create: jest.fn(),
-      update: jest.fn(),
-      findMany: jest.fn(),
-      findUnique: jest.fn(),
-    },
-    contractDocument: {
-      create: jest.fn(),
-      findMany: jest.fn(),
-      findUnique: jest.fn(),
-      delete: jest.fn(),
-    },
-    notification: { findFirst: jest.fn() },
+  const supplierContract = {
+    create: jest.fn(),
+    update: jest.fn(),
+    findMany: jest.fn(),
+    findUnique: jest.fn(),
   };
+  const contact = { findUnique: jest.fn() };
+  const contractDocument = {
+    create: jest.fn(),
+    findMany: jest.fn(),
+    findUnique: jest.fn(),
+    delete: jest.fn(),
+  };
+  const notification = { findFirst: jest.fn() };
+
+  // Self-referencing so `create()`'s `this.prisma.$transaction(async (tx) =>
+  // ...)` receives this same mock as `tx` — `tx.supplierContract.create(...)`
+  // then resolves through the exact same `supplierContract.create` mock
+  // assertions below already target (same pattern as
+  // stock-items.service.spec.ts).
+  const prisma: any = {
+    supplierContract,
+    contact,
+    contractDocument,
+    notification,
+    $transaction: jest.fn((cb: (tx: unknown) => unknown) => cb(prisma)),
+  };
+  return prisma;
 }
 
 describe('SupplierContractsService', () => {
@@ -63,6 +80,25 @@ describe('SupplierContractsService', () => {
     updatedAt: new Date(),
   };
 
+  const activeContact = {
+    id: 'contact-1',
+    fullName: 'Awa Diop',
+    organization: 'SENELEC',
+    functionTitle: 'Responsable comptes',
+    categoryId: 'cat-1',
+    phone: '+221 77 000 00 00',
+    whatsappEnabled: false,
+    email: 'awa.diop@senelec.sn',
+    address: 'Dakar',
+    city: null,
+    notes: null,
+    photoKey: null,
+    photoMime: null,
+    active: true,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  };
+
   beforeEach(async () => {
     prisma = createMockPrisma();
     validations = {
@@ -88,31 +124,125 @@ describe('SupplierContractsService', () => {
   });
 
   describe('create', () => {
-    it('activates a low-amount contract directly', async () => {
-      prisma.supplierContract.create.mockResolvedValue({ ...baseContract, status: 'ACTIF' });
-      const result = await service.create({
-        supplierName: 'x',
-        contractName: 'x',
-        category: 'ELECTRICITE',
-        startDate: '2026-01-01',
-        amount: 50_000,
-      } as any);
-      expect(result.status).toBe('ACTIF');
-    });
+    // Supplier Contracts workflow: every new contract now enters the
+    // validation workflow automatically — no more amount threshold, no more
+    // "direct to ACTIF" path, and no separate submit step for the DIRECTOR.
+    it('always creates a new contract as BROUILLON, pending validation — regardless of amount', async () => {
+      prisma.supplierContract.create.mockResolvedValue({
+        ...baseContract,
+        status: 'BROUILLON',
+        validationStatus: 'PENDING_VALIDATION',
+        pendingValidationAction: 'CREATION',
+      });
 
-    it('creates a high-amount contract as a draft requiring validation', async () => {
-      prisma.supplierContract.create.mockResolvedValue({ ...baseContract, status: 'BROUILLON' });
       const result = await service.create({
         supplierName: 'x',
         contractName: 'x',
         category: 'ELECTRICITE',
         startDate: '2026-01-01',
-        amount: 600_000, // > CONTRACT_VALIDATION_AMOUNT_THRESHOLD_XOF (500,000)
-      } as any);
+        amount: 50_000, // low amount — used to go straight to ACTIF; no longer does
+      } as any, 'director-1');
+
       expect(prisma.supplierContract.create).toHaveBeenCalledWith(
-        expect.objectContaining({ data: expect.objectContaining({ status: 'BROUILLON' }) }),
+        expect.objectContaining({
+          data: expect.objectContaining({
+            status: 'BROUILLON',
+            validationStatus: 'PENDING_VALIDATION',
+            pendingValidationAction: 'CREATION',
+          }),
+        }),
       );
       expect(result.status).toBe('BROUILLON');
+      expect(result.validationStatus).toBe('PENDING_VALIDATION');
+    });
+
+    it('also requires validation with no amount at all', async () => {
+      prisma.supplierContract.create.mockResolvedValue({
+        ...baseContract,
+        status: 'BROUILLON',
+        validationStatus: 'PENDING_VALIDATION',
+      });
+
+      await service.create({
+        supplierName: 'x',
+        contractName: 'x',
+        category: 'ELECTRICITE',
+        startDate: '2026-01-01',
+      } as any, 'director-1');
+
+      expect(prisma.supplierContract.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ status: 'BROUILLON', validationStatus: 'PENDING_VALIDATION' }),
+        }),
+      );
+    });
+
+    it('creates the ValidationRequest atomically (same transaction, tx passed through), submitted by the creating DIRECTOR', async () => {
+      prisma.supplierContract.create.mockResolvedValue({ ...baseContract, id: 'contract-9' });
+
+      await service.create({
+        supplierName: 'x',
+        contractName: 'x',
+        category: 'ELECTRICITE',
+        startDate: '2026-01-01',
+      } as any, 'director-42');
+
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(validations.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          resourceType: 'SUPPLIER_CONTRACT',
+          resourceId: 'contract-9',
+          submittedById: 'director-42',
+          previousStatus: null,
+        }),
+        prisma, // the tx client — this mock's $transaction hands back itself
+      );
+      // The generic engine's own duplicate-pending guard (already exercised
+      // in validations.service.spec.ts) is what `validations.create` reuses
+      // here — not re-implemented for this resource type.
+    });
+
+    it('rolls back the contract when ValidationRequest creation fails (atomicity)', async () => {
+      prisma.supplierContract.create.mockResolvedValue({ ...baseContract, id: 'contract-9' });
+      validations.create.mockRejectedValue(new ConflictException('boom'));
+
+      await expect(
+        service.create({
+          supplierName: 'x',
+          contractName: 'x',
+          category: 'ELECTRICITE',
+          startDate: '2026-01-01',
+        } as any, 'director-1'),
+      ).rejects.toBeInstanceOf(ConflictException);
+
+      // The transaction callback threw, so the notification (issued only
+      // after the transaction resolves) must never have fired — no
+      // notification for a contract that doesn't durably exist.
+      expect(notifications.createForRole).not.toHaveBeenCalled();
+    });
+
+    it('notifies SUPERVISOR exactly once with the required title', async () => {
+      prisma.supplierContract.create.mockResolvedValue({
+        ...baseContract,
+        contractName: 'Fourniture eau',
+      });
+
+      await service.create({
+        supplierName: 'SDE',
+        contractName: 'Fourniture eau',
+        category: 'EAU',
+        startDate: '2026-01-01',
+      } as any, 'director-1');
+
+      expect(notifications.createForRole).toHaveBeenCalledTimes(1);
+      expect(notifications.createForRole).toHaveBeenCalledWith(
+        'SUPERVISOR',
+        expect.objectContaining({
+          type: 'VALIDATION_SUBMITTED',
+          resourceType: 'SUPPLIER_CONTRACT',
+          title: 'Nouveau contrat fournisseur à valider',
+        }),
+      );
     });
   });
 
@@ -417,6 +547,270 @@ describe('SupplierContractsService', () => {
       upload.getPresignedUrl.mockResolvedValue('https://signed-url');
       const result = await service.getDocumentUrl('contract-1', 'doc-1');
       expect(result.url).toBe('https://signed-url');
+    });
+  });
+
+  describe('Contact directory integration (PR 8)', () => {
+    describe('create', () => {
+      it('creates a contract with a Contact, deriving the legacy snapshot fields', async () => {
+        prisma.contact.findUnique.mockResolvedValue(activeContact);
+        prisma.supplierContract.create.mockResolvedValue({
+          ...baseContract,
+          supplierContactId: 'contact-1',
+          supplierContact: activeContact,
+        });
+
+        await service.create({
+          supplierContactId: 'contact-1',
+          contractName: 'Électricité',
+          category: 'ELECTRICITE',
+          startDate: '2026-01-01',
+        } as any, 'director-1');
+
+        expect(prisma.supplierContract.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({
+              supplierContactId: 'contact-1',
+              // organization is set on the fixture, so it becomes the
+              // supplier/company name and fullName becomes the contact person.
+              supplierName: 'SENELEC',
+              contactPerson: 'Awa Diop',
+              phone: '+221 77 000 00 00',
+              email: 'awa.diop@senelec.sn',
+              address: 'Dakar',
+            }),
+          }),
+        );
+      });
+
+      it('falls back to fullName as supplierName when the Contact has no organization', async () => {
+        prisma.contact.findUnique.mockResolvedValue({ ...activeContact, organization: null });
+        prisma.supplierContract.create.mockResolvedValue(baseContract);
+
+        await service.create({
+          supplierContactId: 'contact-1',
+          contractName: 'Électricité',
+          category: 'ELECTRICITE',
+          startDate: '2026-01-01',
+        } as any, 'director-1');
+
+        expect(prisma.supplierContract.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({ supplierName: 'Awa Diop', contactPerson: null }),
+          }),
+        );
+      });
+
+      it('rejects an unknown Contact for a new assignment', async () => {
+        prisma.contact.findUnique.mockResolvedValue(null);
+        await expect(
+          service.create({
+            supplierContactId: 'missing',
+            contractName: 'Électricité',
+            category: 'ELECTRICITE',
+            startDate: '2026-01-01',
+          } as any, 'director-1'),
+        ).rejects.toBeInstanceOf(BadRequestException);
+        expect(prisma.supplierContract.create).not.toHaveBeenCalled();
+      });
+
+      it('rejects an inactive Contact for a new assignment', async () => {
+        prisma.contact.findUnique.mockResolvedValue({ ...activeContact, active: false });
+        await expect(
+          service.create({
+            supplierContactId: 'contact-1',
+            contractName: 'Électricité',
+            category: 'ELECTRICITE',
+            startDate: '2026-01-01',
+          } as any, 'director-1'),
+        ).rejects.toBeInstanceOf(BadRequestException);
+        expect(prisma.supplierContract.create).not.toHaveBeenCalled();
+      });
+
+      it('still supports the legacy free-text path when no Contact is selected', async () => {
+        prisma.supplierContract.create.mockResolvedValue(baseContract);
+        await service.create({
+          supplierName: 'SENELEC (texte libre)',
+          contractName: 'Électricité',
+          category: 'ELECTRICITE',
+          startDate: '2026-01-01',
+        } as any, 'director-1');
+        expect(prisma.contact.findUnique).not.toHaveBeenCalled();
+        expect(prisma.supplierContract.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({ supplierName: 'SENELEC (texte libre)' }),
+          }),
+        );
+      });
+
+      it('rejects creation when neither a Contact nor a supplierName is given', async () => {
+        await expect(
+          service.create({
+            contractName: 'Électricité',
+            category: 'ELECTRICITE',
+            startDate: '2026-01-01',
+          } as any, 'director-1'),
+        ).rejects.toBeInstanceOf(BadRequestException);
+        expect(prisma.supplierContract.create).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('update', () => {
+      it('replaces a legacy free-text supplier with a Contact, deriving the snapshot', async () => {
+        prisma.supplierContract.findUnique.mockResolvedValue({
+          ...baseContract,
+          supplierContactId: null,
+          supplierContact: null,
+        });
+        prisma.contact.findUnique.mockResolvedValue(activeContact);
+        prisma.supplierContract.update.mockResolvedValue({
+          ...baseContract,
+          supplierContactId: 'contact-1',
+          supplierContact: activeContact,
+          supplierName: 'SENELEC',
+        });
+
+        const result = await service.update('contract-1', {
+          supplierContactId: 'contact-1',
+        } as any);
+
+        expect(prisma.supplierContract.update).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({
+              supplierContactId: 'contact-1',
+              supplierName: 'SENELEC',
+              contactPerson: 'Awa Diop',
+            }),
+          }),
+        );
+        expect(result.supplierContact?.fullName).toBe('Awa Diop');
+      });
+
+      it('disconnecting the Contact (explicit null) does not clear the legacy snapshot fields', async () => {
+        prisma.supplierContract.findUnique.mockResolvedValue({
+          ...baseContract,
+          supplierContactId: 'contact-1',
+          supplierContact: activeContact,
+        });
+        prisma.supplierContract.update.mockResolvedValue({
+          ...baseContract,
+          supplierContactId: null,
+          supplierContact: null,
+        });
+
+        await service.update('contract-1', { supplierContactId: null } as any);
+
+        const call = prisma.supplierContract.update.mock.calls[0][0];
+        expect(call.data.supplierContactId).toBeNull();
+        // supplierName is NOT NULL in the DB — disconnecting must never
+        // attempt to null it out.
+        expect(call.data).not.toHaveProperty('supplierName');
+        expect(prisma.contact.findUnique).not.toHaveBeenCalled();
+      });
+
+      it('omitting supplierContactId leaves the existing relation and legacy snapshot untouched', async () => {
+        prisma.supplierContract.findUnique.mockResolvedValue({
+          ...baseContract,
+          supplierContactId: 'contact-1',
+          supplierContact: activeContact,
+        });
+        prisma.supplierContract.update.mockResolvedValue(baseContract);
+
+        await service.update('contract-1', { amount: 99_000 } as any);
+
+        const call = prisma.supplierContract.update.mock.calls[0][0];
+        expect(call.data).not.toHaveProperty('supplierContactId');
+        expect(call.data).not.toHaveProperty('supplierName');
+        expect(prisma.contact.findUnique).not.toHaveBeenCalled();
+      });
+
+      it('rejects assigning an inactive Contact on update', async () => {
+        prisma.supplierContract.findUnique.mockResolvedValue(baseContract);
+        prisma.contact.findUnique.mockResolvedValue({ ...activeContact, active: false });
+        await expect(
+          service.update('contract-1', { supplierContactId: 'contact-1' } as any),
+        ).rejects.toBeInstanceOf(BadRequestException);
+        expect(prisma.supplierContract.update).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('findOne / findAll include the Contact relation', () => {
+      it('findOne includes an inactive referenced Contact without filtering it out', async () => {
+        prisma.supplierContract.findUnique.mockResolvedValue({
+          ...baseContract,
+          documents: [],
+          supplierContactId: 'contact-1',
+          supplierContact: { ...activeContact, active: false },
+        });
+
+        const result = await service.findOne('contract-1');
+
+        expect(result.supplierContact?.active).toBe(false);
+        expect(prisma.supplierContract.findUnique).toHaveBeenCalledWith(
+          expect.objectContaining({
+            include: expect.objectContaining({
+              supplierContact: expect.objectContaining({ include: { category: true } }),
+            }),
+          }),
+        );
+      });
+
+      it('findAll requests the supplierContact include', async () => {
+        prisma.supplierContract.findMany.mockResolvedValue([baseContract]);
+        await service.findAll({});
+        expect(prisma.supplierContract.findMany).toHaveBeenCalledWith(
+          expect.objectContaining({
+            include: expect.objectContaining({ supplierContact: expect.anything() }),
+          }),
+        );
+      });
+    });
+
+    describe('notification messages prefer the Contact name, falling back to supplierName', () => {
+      it('uses supplierContact.fullName when the contract is linked', async () => {
+        prisma.supplierContract.findUnique.mockResolvedValue({
+          ...baseContract,
+          status: 'BROUILLON',
+          supplierName: 'STALE LEGACY NAME',
+          supplierContact: activeContact,
+        });
+        prisma.supplierContract.update.mockResolvedValue({
+          ...baseContract,
+          status: 'BROUILLON',
+          validationStatus: 'PENDING_VALIDATION',
+        });
+
+        await service.submitValidation('contract-1', 'director-1', {} as any);
+
+        expect(notifications.createForRole).toHaveBeenCalledWith(
+          'SUPERVISOR',
+          expect.objectContaining({ message: expect.stringContaining('Awa Diop') }),
+        );
+        expect(notifications.createForRole).not.toHaveBeenCalledWith(
+          'SUPERVISOR',
+          expect.objectContaining({ message: expect.stringContaining('STALE LEGACY NAME') }),
+        );
+      });
+
+      it('falls back to supplierName when no Contact is linked', async () => {
+        prisma.supplierContract.findUnique.mockResolvedValue({
+          ...baseContract,
+          status: 'BROUILLON',
+          supplierContact: null,
+        });
+        prisma.supplierContract.update.mockResolvedValue({
+          ...baseContract,
+          status: 'BROUILLON',
+          validationStatus: 'PENDING_VALIDATION',
+        });
+
+        await service.submitValidation('contract-1', 'director-1', {} as any);
+
+        expect(notifications.createForRole).toHaveBeenCalledWith(
+          'SUPERVISOR',
+          expect.objectContaining({ message: expect.stringContaining('SENELEC') }),
+        );
+      });
     });
   });
 });

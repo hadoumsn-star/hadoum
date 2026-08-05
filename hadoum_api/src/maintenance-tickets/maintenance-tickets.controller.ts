@@ -18,6 +18,7 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { AuthUser } from '../auth/types/request-with-user';
+import { Audited } from '../audit-logs/decorators/audited.decorator';
 import { MaintenanceTicketsService } from './maintenance-tickets.service';
 import { CreateMaintenanceTicketDto } from './dto/create-maintenance-ticket.dto';
 import { UpdateMaintenanceTicketDto } from './dto/update-maintenance-ticket.dto';
@@ -33,6 +34,11 @@ export class MaintenanceTicketsController {
 
   @Post()
   @Roles('DIRECTOR')
+  @Audited({
+    module: 'MAINTENANCE',
+    entity: 'MaintenanceTicket',
+    action: 'CREATE',
+  })
   create(@Body() dto: CreateMaintenanceTicketDto) {
     return this.ticketsService.create(dto);
   }
@@ -63,24 +69,44 @@ export class MaintenanceTicketsController {
 
   @Patch(':id')
   @Roles('DIRECTOR')
+  @Audited({
+    module: 'MAINTENANCE',
+    entity: 'MaintenanceTicket',
+    action: 'UPDATE',
+  })
   update(@Param('id') id: string, @Body() dto: UpdateMaintenanceTicketDto) {
     return this.ticketsService.update(id, dto);
   }
 
   @Patch(':id/assign')
   @Roles('DIRECTOR')
+  @Audited({
+    module: 'MAINTENANCE',
+    entity: 'MaintenanceTicket',
+    action: 'ASSIGN',
+  })
   assign(@Param('id') id: string, @Body() dto: AssignTicketDto) {
     return this.ticketsService.assign(id, dto);
   }
 
   @Patch(':id/close')
   @Roles('DIRECTOR')
+  @Audited({
+    module: 'MAINTENANCE',
+    entity: 'MaintenanceTicket',
+    action: 'CLOSE',
+  })
   close(@Param('id') id: string) {
     return this.ticketsService.close(id);
   }
 
   @Post(':id/submit-validation')
   @Roles('DIRECTOR')
+  @Audited({
+    module: 'MAINTENANCE',
+    entity: 'MaintenanceTicket',
+    action: 'SUBMIT_VALIDATION',
+  })
   submitValidation(
     @Param('id') id: string,
     @CurrentUser() user: AuthUser,
@@ -91,6 +117,11 @@ export class MaintenanceTicketsController {
 
   @Patch(':id/approve')
   @Roles('SUPERVISOR')
+  @Audited({
+    module: 'MAINTENANCE',
+    entity: 'MaintenanceTicket',
+    action: 'APPROVE',
+  })
   approve(
     @Param('id') id: string,
     @CurrentUser() user: AuthUser,
@@ -101,6 +132,11 @@ export class MaintenanceTicketsController {
 
   @Patch(':id/reject')
   @Roles('SUPERVISOR')
+  @Audited({
+    module: 'MAINTENANCE',
+    entity: 'MaintenanceTicket',
+    action: 'REJECT',
+  })
   reject(
     @Param('id') id: string,
     @CurrentUser() user: AuthUser,
@@ -111,6 +147,11 @@ export class MaintenanceTicketsController {
 
   @Patch(':id/request-changes')
   @Roles('SUPERVISOR')
+  @Audited({
+    module: 'MAINTENANCE',
+    entity: 'MaintenanceTicket',
+    action: 'REQUEST_CHANGES',
+  })
   requestChanges(
     @Param('id') id: string,
     @CurrentUser() user: AuthUser,

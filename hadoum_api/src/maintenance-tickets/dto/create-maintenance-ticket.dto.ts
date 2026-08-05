@@ -34,6 +34,15 @@ export class CreateMaintenanceTicketDto {
   @IsOptional()
   assignedTo?: string;
 
+  // Source of truth for the relation once set — see
+  // MaintenanceTicketsService for the dual-write rule with assignedTo above.
+  // Not @IsUUID(): no DTO in this repo validates ids as UUIDs specifically
+  // (matches CreateContactDto.categoryId's convention), only as non-empty
+  // strings.
+  @IsString()
+  @IsOptional()
+  assignedContactId?: string | null;
+
   @IsDateString()
   @IsOptional()
   plannedDate?: string;

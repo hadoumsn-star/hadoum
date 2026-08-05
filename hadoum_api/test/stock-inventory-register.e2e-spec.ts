@@ -118,7 +118,11 @@ describe('Stock, Inventory & Register modules (e2e)', () => {
       expect(afterApproval.body.currentQuantity).toBe(120);
     });
 
-    it('SUPERVISOR cannot record a stock entry (operational, DIRECTOR-only)', async () => {
+    // PR 12 (Stock & Inventory improvements) explicitly grants SUPERVISOR
+    // entry/exit/inventory-count access — was DIRECTOR-only before. Updated
+    // here rather than left failing; full PR 12 permission coverage lives in
+    // test/stock-inventory-improvements.e2e-spec.ts.
+    it('SUPERVISOR can record a stock entry (PR 12)', async () => {
       const createRes = await request(app.getHttpServer())
         .post('/api/stock-items')
         .set('Authorization', `Bearer ${directorToken}`)
@@ -129,6 +133,25 @@ describe('Stock, Inventory & Register modules (e2e)', () => {
         .post(`/api/stock-items/${createRes.body.id}/entries`)
         .set('Authorization', `Bearer ${supervisorToken}`)
         .send({ quantity: 10 })
+        .expect(201);
+    });
+
+    it('SUPERVISOR still cannot create a stock item or a manual adjustment (DIRECTOR full access only)', async () => {
+      await request(app.getHttpServer())
+        .post('/api/stock-items')
+        .set('Authorization', `Bearer ${supervisorToken}`)
+        .send({ name: 'x', category: 'AUTRE' })
+        .expect(403);
+
+      const createRes = await request(app.getHttpServer())
+        .post('/api/stock-items')
+        .set('Authorization', `Bearer ${directorToken}`)
+        .send({ name: 'x', category: 'AUTRE' })
+        .expect(201);
+      await request(app.getHttpServer())
+        .post(`/api/stock-items/${createRes.body.id}/adjustments`)
+        .set('Authorization', `Bearer ${supervisorToken}`)
+        .send({ quantityDelta: 5, reason: 'x' })
         .expect(403);
     });
   });
@@ -162,7 +185,11 @@ describe('Stock, Inventory & Register modules (e2e)', () => {
       const createRes = await request(app.getHttpServer())
         .post('/api/inventory-assets')
         .set('Authorization', `Bearer ${directorToken}`)
-        .send({ name: 'Ordinateur', category: 'INFORMATIQUE', acquisitionCost: 300_000 })
+        .send({
+          name: 'Ordinateur',
+          category: 'INFORMATIQUE',
+          acquisitionCost: 300_000,
+        })
         .expect(201);
       const assetId = createRes.body.id as string;
 
@@ -229,7 +256,12 @@ describe('Stock, Inventory & Register modules (e2e)', () => {
       await request(app.getHttpServer())
         .post('/api/entry-logs')
         .set('Authorization', `Bearer ${supervisorToken}`)
-        .send({ entryType: 'VISITE_IMPREVUE', visitorCategory: 'VISITEUR', fullName: 'x', purpose: 'x' })
+        .send({
+          entryType: 'VISITE_IMPREVUE',
+          visitorCategory: 'VISITEUR',
+          fullName: 'x',
+          purpose: 'x',
+        })
         .expect(403);
     });
   });

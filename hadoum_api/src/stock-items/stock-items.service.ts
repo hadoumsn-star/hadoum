@@ -24,6 +24,7 @@ import { CreateStockEntryDto } from './dto/create-stock-entry.dto';
 import { CreateStockExitDto } from './dto/create-stock-exit.dto';
 import { CreateStockAdjustmentDto } from './dto/create-stock-adjustment.dto';
 import { CreateStockTransferDto } from './dto/create-stock-transfer.dto';
+import { CreateStockInventoryCountDto } from './dto/create-stock-inventory-count.dto';
 import { SubmitValidationDto } from './dto/submit-validation.dto';
 import { ReviewValidationDto } from './dto/review-validation.dto';
 import { RejectValidationDto } from './dto/reject-validation.dto';
@@ -49,6 +50,13 @@ interface StockActionPayload {
   referenceDocument?: string;
   movementDate?: string;
   unitCost?: number;
+  // PR 12 — every pending action before this one was a removal by
+  // definition (LARGE_STOCK_EXIT, NEGATIVE_ADJUSTMENT, STOCK_LOSS all
+  // decrement on approval). A physical inventory count can also reveal
+  // *more* stock than expected, so a sensitive INVENTORY_CORRECTION now
+  // carries its sign explicitly here instead of approve() assuming
+  // "decrement" for every action type — see approve() below.
+  positive?: boolean;
 }
 
 interface FindAllFilters {
@@ -634,6 +642,10 @@ export class StockItemsService {
         reason: dto.reason,
         movementDate: dto.movementDate,
         unitCost: item.unitCost ?? undefined,
+        // Only an inventory correction can ever be positive here — the
+        // lossType and plain-negative-adjustment branches above only ever
+        // reach this point with a negative delta.
+        positive: dto.isInventoryCorrection ? dto.quantityDelta > 0 : undefined,
       });
     }
 
@@ -712,6 +724,47 @@ export class StockItemsService {
     });
 
     return this.withComputedFields(updated);
+  }
+
+  // ─── Physical inventory count (PR 12) ──────────────────────────────────────
+  // The caller reports what they physically counted; this computes the
+  // variance itself (never trusts a client-computed delta) and, when there
+  // is one, delegates to createAdjustment's existing INVENTAIRE_CORRECTION
+  // path — same stock-mutation logic, same sensitivity/validation gating,
+  // same @Audited coverage on the controller route, nothing duplicated. A
+  // count that matches exactly still returns a full expected/actual/
+  // difference breakdown but creates no movement — there is nothing to
+  // adjust.
+  async createInventoryCount(
+    id: string,
+    userId: string,
+    dto: CreateStockInventoryCountDto,
+  ) {
+    const item = await this.findRaw(id);
+    this.assertActive(item);
+    this.assertNoPendingValidation(item);
+
+    const expectedQuantity = item.currentQuantity;
+    const actualQuantity = dto.actualQuantity;
+    const difference = actualQuantity - expectedQuantity;
+
+    if (difference === 0) {
+      return {
+        item: this.withComputedFields(item),
+        expectedQuantity,
+        actualQuantity,
+        difference,
+      };
+    }
+
+    const updatedItem = await this.createAdjustment(id, userId, {
+      quantityDelta: difference,
+      reason:
+        dto.comment?.trim() || 'Écart constaté lors de l’inventaire physique.',
+      isInventoryCorrection: true,
+    });
+
+    return { item: updatedItem, expectedQuantity, actualQuantity, difference };
   }
 
   private async submitPendingOperation(
@@ -804,12 +857,18 @@ export class StockItemsService {
         });
       }
 
-      // LARGE_STOCK_EXIT, NEGATIVE_ADJUSTMENT, STOCK_LOSS, INVENTORY_CORRECTION
-      // all remove `payload.quantity` units from stock.
+      // LARGE_STOCK_EXIT, NEGATIVE_ADJUSTMENT and STOCK_LOSS always remove
+      // `payload.quantity` units from stock. INVENTORY_CORRECTION can go
+      // either way — a physical count can find more stock than expected,
+      // not just less — hence `payload.positive` (PR 12).
       const result = await tx.stockItem.updateMany({
-        where: { id, currentQuantity: { gte: payload.quantity } },
+        where: payload.positive
+          ? { id }
+          : { id, currentQuantity: { gte: payload.quantity } },
         data: {
-          currentQuantity: { decrement: payload.quantity },
+          currentQuantity: payload.positive
+            ? { increment: payload.quantity }
+            : { decrement: payload.quantity },
           validationStatus: 'APPROVED',
           pendingValidationAction: null,
           pendingValidationPayload: Prisma.JsonNull,
@@ -825,7 +884,9 @@ export class StockItemsService {
         stockItemId: id,
         type: payload.movementType,
         quantity: payload.quantity,
-        quantityBefore: next.currentQuantity + payload.quantity,
+        quantityBefore: payload.positive
+          ? next.currentQuantity - payload.quantity
+          : next.currentQuantity + payload.quantity,
         quantityAfter: next.currentQuantity,
         unitCost: payload.unitCost,
         source: payload.source,

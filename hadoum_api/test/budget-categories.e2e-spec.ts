@@ -1,0 +1,174 @@
+import { INestApplication } from '@nestjs/common';
+import request from 'supertest';
+import { App } from 'supertest/types';
+import {
+  createTestApp,
+  cleanDatabase,
+  getPrisma,
+  seedTestUsers,
+  TEST_PASSWORD,
+} from './utils/test-app';
+import { PrismaService } from '../src/prisma/prisma.service';
+
+// PR 6: default monthly budget categories, seeded idempotently via
+// POST /finances/budget-lines/ensure-defaults. cleanDatabase() gives each
+// test a fresh DB, so the six brand-new categories introduced in this PR
+// (VETEMENTS, TRANSPORT, ETUDES, SPORT, LOISIRS, BUREAU_FACTURES) are
+// reliable, deterministic test subjects — nothing else in the schema can
+// have touched them before this PR existed.
+describe('Default budget categories (e2e)', () => {
+  let app: INestApplication<App>;
+  let prisma: PrismaService;
+  let directorToken: string;
+
+  beforeAll(async () => {
+    app = await createTestApp();
+    prisma = getPrisma(app);
+  });
+
+  beforeEach(async () => {
+    await cleanDatabase(prisma);
+    const users = await seedTestUsers(prisma);
+    directorToken = (
+      await request(app.getHttpServer())
+        .post('/api/auth/login')
+        .send({ email: users.director.email, password: TEST_PASSWORD })
+    ).body.token;
+  });
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  function ensureDefaults() {
+    return request(app.getHttpServer())
+      .post('/api/finances/budget-lines/ensure-defaults')
+      .set('Authorization', `Bearer ${directorToken}`)
+      .send();
+  }
+
+  function findLine(body: any[], category: string) {
+    return body.find((l) => l.category === category);
+  }
+
+  it('creates all 9 default categories on an empty month, including SALAIRES at 0', async () => {
+    const res = await ensureDefaults().expect(201);
+
+    const expected: Record<string, number> = {
+      ALIMENTATION: 250000,
+      SANTE: 36000,
+      VETEMENTS: 20000,
+      TRANSPORT: 18000,
+      ETUDES: 10000,
+      SPORT: 30000,
+      LOISIRS: 30000,
+      BUREAU_FACTURES: 20000,
+      SALAIRES: 0,
+    };
+    for (const [category, budgetXof] of Object.entries(expected)) {
+      const line = findLine(res.body, category);
+      expect(line).toBeTruthy();
+      expect(line.budgetXof).toBe(budgetXof);
+    }
+  });
+
+  it('calling it twice creates no duplicates', async () => {
+    await ensureDefaults().expect(201);
+    const second = await ensureDefaults().expect(201);
+
+    const vetements = second.body.filter(
+      (l: any) => l.category === 'VETEMENTS',
+    );
+    expect(vetements).toHaveLength(1);
+    expect(second.body).toHaveLength(9);
+  });
+
+  it('preserves a custom amount already set for a default category — never overwrites', async () => {
+    // A Director sets a custom amount for TRANSPORT before defaults ever run.
+    await request(app.getHttpServer())
+      .put('/api/finances/budget-lines')
+      .set('Authorization', `Bearer ${directorToken}`)
+      .send({
+        category: 'TRANSPORT',
+        month: new Date().getMonth() + 1,
+        year: new Date().getFullYear(),
+        budgetXof: 999000,
+      })
+      .expect(200);
+
+    const res = await ensureDefaults().expect(201);
+
+    const transport = findLine(res.body, 'TRANSPORT');
+    expect(transport.budgetXof).toBe(999000); // untouched, not reset to 18000
+    // Every other default still gets created normally alongside it.
+    expect(findLine(res.body, 'SPORT').budgetXof).toBe(30000);
+  });
+
+  it('an expense can be tagged with a new default category (VETEMENTS) and shows up as consumed', async () => {
+    await ensureDefaults().expect(201);
+    const now = new Date();
+    const created = await request(app.getHttpServer())
+      .post('/api/finances/transactions')
+      .set('Authorization', `Bearer ${directorToken}`)
+      .send({
+        type: 'DEPENSE',
+        category: 'VETEMENTS',
+        label: 'Uniformes scolaires',
+        amountXof: 5000,
+        date: now.toISOString().slice(0, 10),
+        status: 'VALIDE',
+      })
+      .expect(201);
+    expect(created.body.category).toBe('VETEMENTS');
+
+    const dashboard = await request(app.getHttpServer())
+      .get(
+        `/api/finances/dashboard?year=${now.getFullYear()}&month=${now.getMonth() + 1}`,
+      )
+      .set('Authorization', `Bearer ${directorToken}`)
+      .expect(200);
+    const vetements = dashboard.body.byCategory.find(
+      (c: any) => c.category === 'VETEMENTS',
+    );
+    expect(vetements.budgetXof).toBe(20000);
+    expect(vetements.realizedXof).toBe(5000);
+  });
+
+  // SALAIRES defaults to a 0 XOF budget (intentionally, not omitted — see
+  // DEFAULT_BUDGET_CATEGORIES) specifically to exercise this null-percentage
+  // path rather than the "no budget line at all" path.
+  it('SALAIRES (0 budget) never produces a divide-by-zero and displays correctly', async () => {
+    await ensureDefaults().expect(201);
+    const now = new Date();
+    const created = await request(app.getHttpServer())
+      .post('/api/finances/transactions')
+      .set('Authorization', `Bearer ${directorToken}`)
+      .send({
+        type: 'DEPENSE',
+        category: 'SALAIRES',
+        label: 'Salaire éducateur',
+        amountXof: 150000,
+        date: now.toISOString().slice(0, 10),
+        status: 'VALIDE',
+      })
+      .expect(201);
+    expect(created.body.category).toBe('SALAIRES');
+
+    const dashboard = await request(app.getHttpServer())
+      .get(
+        `/api/finances/dashboard?year=${now.getFullYear()}&month=${now.getMonth() + 1}`,
+      )
+      .set('Authorization', `Bearer ${directorToken}`)
+      .expect(200);
+    const salaires = dashboard.body.byCategory.find(
+      (c: any) => c.category === 'SALAIRES',
+    );
+    expect(salaires.budgetXof).toBe(0);
+    expect(salaires.realizedXof).toBe(150000);
+    // Every percentage/ratio field is null instead of Infinity/NaN when
+    // budgetXof is 0 — never a divide-by-zero.
+    expect(salaires.totalCommittedPercentage).toBeNull();
+    expect(Number.isFinite(salaires.ecartXof)).toBe(true);
+    expect(salaires.ecartXof).toBe(-150000);
+  });
+});
