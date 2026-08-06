@@ -1,10 +1,20 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  NotFoundException,
+} from '@nestjs/common';
 import { AdministrativeProceduresService } from './administrative-procedures.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { UploadService } from '../upload/upload.service';
 import { ValidationsService } from '../validations/validations.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import {
+  matching,
+  anyInstanceOf,
+  matchAnything,
+  stringContaining,
+} from '../test-utils/jest-matchers';
 
 function createMockPrisma() {
   return {
@@ -38,7 +48,11 @@ describe('AdministrativeProceduresService', () => {
     findHistory: jest.Mock;
   };
   let notifications: { create: jest.Mock; createForRole: jest.Mock };
-  let upload: { upload: jest.Mock; getPresignedUrl: jest.Mock; deleteFile: jest.Mock };
+  let upload: {
+    upload: jest.Mock;
+    getPresignedUrl: jest.Mock;
+    deleteFile: jest.Mock;
+  };
 
   const baseProcedure = {
     id: 'proc-1',
@@ -92,7 +106,11 @@ describe('AdministrativeProceduresService', () => {
       findHistory: jest.fn(),
     };
     notifications = { create: jest.fn(), createForRole: jest.fn() };
-    upload = { upload: jest.fn(), getPresignedUrl: jest.fn(), deleteFile: jest.fn() };
+    upload = {
+      upload: jest.fn(),
+      getPresignedUrl: jest.fn(),
+      deleteFile: jest.fn(),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -165,8 +183,8 @@ describe('AdministrativeProceduresService', () => {
       );
 
       expect(prisma.administrativeProcedure.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({
+        matching({
+          data: matching({
             status: 'EN_ATTENTE_REPONSE',
             pendingResponseOrganization: 'Mairie',
           }),
@@ -179,7 +197,12 @@ describe('AdministrativeProceduresService', () => {
     it('refuses to create a procedure directly in a workflow-controlled status', async () => {
       await expect(
         service.create(
-          { title: 'x', procedureType: 'AGREMENT', authority: 'x', status: 'APPROUVE' } as any,
+          {
+            title: 'x',
+            procedureType: 'AGREMENT',
+            authority: 'x',
+            status: 'APPROUVE',
+          } as any,
           'director-1',
         ),
       ).rejects.toBeInstanceOf(ConflictException);
@@ -222,19 +245,25 @@ describe('AdministrativeProceduresService', () => {
 
   describe('update (workflow-bypass guard, already enforced)', () => {
     it('allows a routine status change (A_PREPARER -> EN_COURS)', async () => {
-      prisma.administrativeProcedure.findUnique.mockResolvedValue(baseProcedure);
+      prisma.administrativeProcedure.findUnique.mockResolvedValue(
+        baseProcedure,
+      );
       prisma.administrativeProcedure.update.mockResolvedValue({
         ...baseProcedure,
         status: 'EN_COURS',
       });
 
-      const result = await service.update('proc-1', { status: 'EN_COURS' } as any);
+      const result = await service.update('proc-1', {
+        status: 'EN_COURS',
+      } as any);
 
       expect(result.status).toBe('EN_COURS');
     });
 
     it('refuses to set a workflow-controlled status (APPROUVE) via the generic update route', async () => {
-      prisma.administrativeProcedure.findUnique.mockResolvedValue(baseProcedure);
+      prisma.administrativeProcedure.findUnique.mockResolvedValue(
+        baseProcedure,
+      );
       await expect(
         service.update('proc-1', { status: 'APPROUVE' } as any),
       ).rejects.toBeInstanceOf(ConflictException);
@@ -268,8 +297,8 @@ describe('AdministrativeProceduresService', () => {
       } as any);
 
       expect(prisma.administrativeProcedure.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({
+        matching({
+          data: matching({
             status: 'EN_ATTENTE_REPONSE',
             pendingResponseOrganization: 'Préfecture',
           }),
@@ -292,7 +321,9 @@ describe('AdministrativeProceduresService', () => {
         status: 'A_PREPARER',
       });
 
-      const result = await service.update('proc-1', { status: 'A_PREPARER' } as any);
+      const result = await service.update('proc-1', {
+        status: 'A_PREPARER',
+      } as any);
 
       expect(result.status).toBe('A_PREPARER');
     });
@@ -309,19 +340,23 @@ describe('AdministrativeProceduresService', () => {
         pendingResponseOrganization: null,
       });
 
-      await service.update('proc-1', { pendingResponseOrganization: null } as any);
+      await service.update('proc-1', {
+        pendingResponseOrganization: null,
+      });
 
       expect(prisma.administrativeProcedure.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ pendingResponseOrganization: null }),
+        matching({
+          data: matching({ pendingResponseOrganization: null }),
         }),
       );
     });
   });
 
   describe('archive', () => {
-    it('archives directly (no validation gating on this resource\'s archive)', async () => {
-      prisma.administrativeProcedure.findUnique.mockResolvedValue(baseProcedure);
+    it("archives directly (no validation gating on this resource's archive)", async () => {
+      prisma.administrativeProcedure.findUnique.mockResolvedValue(
+        baseProcedure,
+      );
       prisma.administrativeProcedure.update.mockResolvedValue({
         ...baseProcedure,
         status: 'ARCHIVE',
@@ -338,7 +373,9 @@ describe('AdministrativeProceduresService', () => {
         ...baseProcedure,
         status: 'ARCHIVE',
       });
-      await expect(service.archive('proc-1')).rejects.toBeInstanceOf(ConflictException);
+      await expect(service.archive('proc-1')).rejects.toBeInstanceOf(
+        ConflictException,
+      );
     });
   });
 
@@ -353,7 +390,7 @@ describe('AdministrativeProceduresService', () => {
         pendingValidationAction: 'SUBMISSION',
       });
 
-      const result = await service.submitValidation('proc-1', 'director-1', {} as any);
+      const result = await service.submitValidation('proc-1', 'director-1', {});
 
       expect(result.pendingValidationAction).toBe('SUBMISSION');
     });
@@ -368,7 +405,7 @@ describe('AdministrativeProceduresService', () => {
         pendingValidationAction: 'FINALIZATION',
       });
 
-      const result = await service.submitValidation('proc-1', 'director-1', {} as any);
+      const result = await service.submitValidation('proc-1', 'director-1', {});
 
       expect(result.pendingValidationAction).toBe('FINALIZATION');
     });
@@ -386,23 +423,35 @@ describe('AdministrativeProceduresService', () => {
 
   describe('approve (per-action state application)', () => {
     it('sets status SOUMIS on SUBMISSION approval', async () => {
-      const pending = { ...baseProcedure, pendingValidationAction: 'SUBMISSION' };
+      const pending = {
+        ...baseProcedure,
+        pendingValidationAction: 'SUBMISSION',
+      };
       prisma.administrativeProcedure.findUnique.mockResolvedValue(pending);
       validations.approve.mockResolvedValue({ submittedById: 'director-1' });
-      prisma.administrativeProcedure.update.mockResolvedValue({ ...pending, status: 'SOUMIS' });
+      prisma.administrativeProcedure.update.mockResolvedValue({
+        ...pending,
+        status: 'SOUMIS',
+      });
 
-      const result = await service.approve('proc-1', 'supervisor-1', {} as any);
+      const result = await service.approve('proc-1', 'supervisor-1', {});
 
       expect(result.status).toBe('SOUMIS');
     });
 
     it('sets status APPROUVE on FINALIZATION approval', async () => {
-      const pending = { ...baseProcedure, pendingValidationAction: 'FINALIZATION' };
+      const pending = {
+        ...baseProcedure,
+        pendingValidationAction: 'FINALIZATION',
+      };
       prisma.administrativeProcedure.findUnique.mockResolvedValue(pending);
       validations.approve.mockResolvedValue({ submittedById: 'director-1' });
-      prisma.administrativeProcedure.update.mockResolvedValue({ ...pending, status: 'APPROUVE' });
+      prisma.administrativeProcedure.update.mockResolvedValue({
+        ...pending,
+        status: 'APPROUVE',
+      });
 
-      const result = await service.approve('proc-1', 'supervisor-1', {} as any);
+      const result = await service.approve('proc-1', 'supervisor-1', {});
 
       expect(result.status).toBe('APPROUVE');
     });
@@ -421,11 +470,11 @@ describe('AdministrativeProceduresService', () => {
         expirationDate: new Date('2028-01-01'),
       });
 
-      const result = await service.approve('proc-1', 'supervisor-1', {} as any);
+      const result = await service.approve('proc-1', 'supervisor-1', {});
 
       expect(prisma.administrativeProcedure.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({
+        matching({
+          data: matching({
             status: 'EN_COURS',
             expirationDate: new Date('2028-01-01'),
             renewalDate: null,
@@ -445,7 +494,7 @@ describe('AdministrativeProceduresService', () => {
         archivedAt: new Date(),
       });
 
-      const result = await service.approve('proc-1', 'supervisor-1', {} as any);
+      const result = await service.approve('proc-1', 'supervisor-1', {});
 
       expect(result.status).toBe('ARCHIVE');
     });
@@ -453,31 +502,37 @@ describe('AdministrativeProceduresService', () => {
 
   describe('reject / requestChanges', () => {
     it('rejects a pending validation and notifies the submitter', async () => {
-      prisma.administrativeProcedure.findUnique.mockResolvedValue(baseProcedure);
+      prisma.administrativeProcedure.findUnique.mockResolvedValue(
+        baseProcedure,
+      );
       validations.reject.mockResolvedValue({ submittedById: 'director-1' });
       prisma.administrativeProcedure.update.mockResolvedValue({
         ...baseProcedure,
         validationStatus: 'REJECTED',
       });
 
-      const result = await service.reject('proc-1', 'supervisor-1', { comment: 'No' } as any);
+      const result = await service.reject('proc-1', 'supervisor-1', {
+        comment: 'No',
+      });
 
       expect(result.validationStatus).toBe('REJECTED');
     });
 
     it('requests changes on the procedure', async () => {
-      prisma.administrativeProcedure.findUnique.mockResolvedValue(baseProcedure);
-      validations.requestChanges.mockResolvedValue({ submittedById: 'director-1' });
+      prisma.administrativeProcedure.findUnique.mockResolvedValue(
+        baseProcedure,
+      );
+      validations.requestChanges.mockResolvedValue({
+        submittedById: 'director-1',
+      });
       prisma.administrativeProcedure.update.mockResolvedValue({
         ...baseProcedure,
         validationStatus: 'CHANGES_REQUESTED',
       });
 
-      const result = await service.requestChanges(
-        'proc-1',
-        'supervisor-1',
-        { comment: 'clarify' } as any,
-      );
+      const result = await service.requestChanges('proc-1', 'supervisor-1', {
+        comment: 'clarify',
+      });
 
       expect(result.validationStatus).toBe('CHANGES_REQUESTED');
     });
@@ -485,19 +540,33 @@ describe('AdministrativeProceduresService', () => {
 
   describe('findAll', () => {
     it('applies search/authority filters', async () => {
-      prisma.administrativeProcedure.findMany.mockResolvedValue([baseProcedure]);
-      await service.findAll({ search: 'Agrément', authority: 'Ministère' } as any);
+      prisma.administrativeProcedure.findMany.mockResolvedValue([
+        baseProcedure,
+      ]);
+      await service.findAll({
+        search: 'Agrément',
+        authority: 'Ministère',
+      });
       expect(prisma.administrativeProcedure.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({ where: expect.objectContaining({ authority: expect.any(Object) }) }),
+        matching({
+          where: matching({ authority: anyInstanceOf(Object) }),
+        }),
       );
     });
 
     it('filters to only expired procedures when requested', async () => {
-      const expired = { ...baseProcedure, id: 'p-expired', expirationDate: new Date('2020-01-01') };
+      const expired = {
+        ...baseProcedure,
+        id: 'p-expired',
+        expirationDate: new Date('2020-01-01'),
+      };
       const healthy = { ...baseProcedure, id: 'p-ok' };
-      prisma.administrativeProcedure.findMany.mockResolvedValue([healthy, expired]);
+      prisma.administrativeProcedure.findMany.mockResolvedValue([
+        healthy,
+        expired,
+      ]);
 
-      const result = await service.findAll({ expired: true } as any);
+      const result = await service.findAll({ expired: true });
 
       expect(result).toHaveLength(1);
       expect(result[0].id).toBe('p-expired');
@@ -513,20 +582,22 @@ describe('AdministrativeProceduresService', () => {
 
       expect(notifications.createForRole).toHaveBeenCalledWith(
         'DIRECTOR',
-        expect.objectContaining({ type: 'PROCEDURE_EXPIRED' }),
+        matching({ type: 'PROCEDURE_EXPIRED' }),
       );
     });
   });
 
   describe('requestRenewal / requestArchive', () => {
     it('routes a renewal request through validation', async () => {
-      prisma.administrativeProcedure.findUnique.mockResolvedValue(baseProcedure);
+      prisma.administrativeProcedure.findUnique.mockResolvedValue(
+        baseProcedure,
+      );
       prisma.administrativeProcedure.update.mockResolvedValue({
         ...baseProcedure,
         pendingValidationAction: 'RENEWAL',
       });
 
-      const result = await service.requestRenewal('proc-1', 'director-1', {} as any);
+      const result = await service.requestRenewal('proc-1', 'director-1', {});
 
       expect(validations.create).toHaveBeenCalled();
       expect(result.pendingValidationAction).toBe('RENEWAL');
@@ -543,13 +614,15 @@ describe('AdministrativeProceduresService', () => {
     });
 
     it('routes an archive request through validation', async () => {
-      prisma.administrativeProcedure.findUnique.mockResolvedValue(baseProcedure);
+      prisma.administrativeProcedure.findUnique.mockResolvedValue(
+        baseProcedure,
+      );
       prisma.administrativeProcedure.update.mockResolvedValue({
         ...baseProcedure,
         pendingValidationAction: 'ARCHIVE',
       });
 
-      const result = await service.requestArchive('proc-1', 'director-1', {} as any);
+      const result = await service.requestArchive('proc-1', 'director-1', {});
 
       expect(validations.create).toHaveBeenCalled();
       expect(result.pendingValidationAction).toBe('ARCHIVE');
@@ -568,22 +641,37 @@ describe('AdministrativeProceduresService', () => {
 
   describe('documents (upload/list)', () => {
     it('uploads a document and records the uploader', async () => {
-      prisma.administrativeProcedure.findUnique.mockResolvedValue(baseProcedure);
-      upload.upload.mockResolvedValue('administrative-procedures/proc-1/file.pdf');
+      prisma.administrativeProcedure.findUnique.mockResolvedValue(
+        baseProcedure,
+      );
+      upload.upload.mockResolvedValue(
+        'administrative-procedures/proc-1/file.pdf',
+      );
       prisma.procedureDocument.create.mockResolvedValue({ id: 'doc-1' });
 
-      const file = { mimetype: 'application/pdf' } as any;
-      await service.uploadDocument('proc-1', 'director-1', file, 'AGREMENT', 'Agrément');
+      const file = { mimetype: 'application/pdf' } as Express.Multer.File;
+      await service.uploadDocument(
+        'proc-1',
+        'director-1',
+        file,
+        'AGREMENT',
+        'Agrément',
+      );
 
       expect(prisma.procedureDocument.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ procedureId: 'proc-1', uploadedById: 'director-1' }),
+        matching({
+          data: matching({
+            procedureId: 'proc-1',
+            uploadedById: 'director-1',
+          }),
         }),
       );
     });
 
     it('lists documents for an existing procedure', async () => {
-      prisma.administrativeProcedure.findUnique.mockResolvedValue(baseProcedure);
+      prisma.administrativeProcedure.findUnique.mockResolvedValue(
+        baseProcedure,
+      );
       prisma.procedureDocument.findMany.mockResolvedValue([{ id: 'doc-1' }]);
       const result = await service.listDocuments('proc-1');
       expect(result).toHaveLength(1);
@@ -594,7 +682,10 @@ describe('AdministrativeProceduresService', () => {
     it('delegates to ValidationsService with the correct resource type', () => {
       validations.findHistory.mockReturnValue([{ id: 'v1' }]);
       const result = service.history('proc-1');
-      expect(validations.findHistory).toHaveBeenCalledWith('ADMINISTRATIVE_PROCEDURE', 'proc-1');
+      expect(validations.findHistory).toHaveBeenCalledWith(
+        'ADMINISTRATIVE_PROCEDURE',
+        'proc-1',
+      );
       expect(result).toEqual([{ id: 'v1' }]);
     });
   });
@@ -606,9 +697,9 @@ describe('AdministrativeProceduresService', () => {
         procedureId: 'some-other-procedure',
         fileKey: 'x',
       });
-      await expect(service.getDocumentUrl('proc-1', 'doc-1')).rejects.toBeInstanceOf(
-        NotFoundException,
-      );
+      await expect(
+        service.getDocumentUrl('proc-1', 'doc-1'),
+      ).rejects.toBeInstanceOf(NotFoundException);
     });
 
     it('allows fetching a document that belongs to the given procedure', async () => {
@@ -645,8 +736,8 @@ describe('AdministrativeProceduresService', () => {
         );
 
         expect(prisma.administrativeProcedure.create).toHaveBeenCalledWith(
-          expect.objectContaining({
-            data: expect.objectContaining({
+          matching({
+            data: matching({
               assignedContactId: 'contact-1',
               assignedTo: 'Fatou Sow',
             }),
@@ -667,8 +758,10 @@ describe('AdministrativeProceduresService', () => {
         );
         expect(prisma.contact.findUnique).not.toHaveBeenCalled();
         expect(prisma.administrativeProcedure.create).toHaveBeenCalledWith(
-          expect.objectContaining({
-            data: expect.objectContaining({ assignedTo: 'Responsable (texte libre)' }),
+          matching({
+            data: matching({
+              assignedTo: 'Responsable (texte libre)',
+            }),
           }),
         );
       });
@@ -677,7 +770,12 @@ describe('AdministrativeProceduresService', () => {
         prisma.contact.findUnique.mockResolvedValue(null);
         await expect(
           service.create(
-            { title: 'x', procedureType: 'AGREMENT', authority: 'x', assignedContactId: 'missing' } as any,
+            {
+              title: 'x',
+              procedureType: 'AGREMENT',
+              authority: 'x',
+              assignedContactId: 'missing',
+            } as any,
             'director-1',
           ),
         ).rejects.toBeInstanceOf(BadRequestException);
@@ -685,10 +783,18 @@ describe('AdministrativeProceduresService', () => {
       });
 
       it('rejects an inactive Contact for a new assignment', async () => {
-        prisma.contact.findUnique.mockResolvedValue({ ...activeContact, active: false });
+        prisma.contact.findUnique.mockResolvedValue({
+          ...activeContact,
+          active: false,
+        });
         await expect(
           service.create(
-            { title: 'x', procedureType: 'AGREMENT', authority: 'x', assignedContactId: 'contact-1' } as any,
+            {
+              title: 'x',
+              procedureType: 'AGREMENT',
+              authority: 'x',
+              assignedContactId: 'contact-1',
+            } as any,
             'director-1',
           ),
         ).rejects.toBeInstanceOf(BadRequestException);
@@ -711,11 +817,16 @@ describe('AdministrativeProceduresService', () => {
           assignedContact: activeContact,
         });
 
-        const result = await service.update('proc-1', { assignedContactId: 'contact-1' } as any);
+        const result = await service.update('proc-1', {
+          assignedContactId: 'contact-1',
+        });
 
         expect(prisma.administrativeProcedure.update).toHaveBeenCalledWith(
-          expect.objectContaining({
-            data: expect.objectContaining({ assignedContactId: 'contact-1', assignedTo: 'Fatou Sow' }),
+          matching({
+            data: matching({
+              assignedContactId: 'contact-1',
+              assignedTo: 'Fatou Sow',
+            }),
           }),
         );
         expect(result.assignedContact?.fullName).toBe('Fatou Sow');
@@ -733,9 +844,13 @@ describe('AdministrativeProceduresService', () => {
           assignedTo: null,
         });
 
-        const result = await service.update('proc-1', { assignedContactId: null } as any);
+        const result = await service.update('proc-1', {
+          assignedContactId: null,
+        });
 
-        const call = prisma.administrativeProcedure.update.mock.calls[0][0];
+        const updateCalls = prisma.administrativeProcedure.update.mock
+          .calls as [{ data: Record<string, unknown> }][];
+        const call = updateCalls[0][0];
         expect(call.data.assignedContactId).toBeNull();
         expect(call.data.assignedTo).toBeNull();
         expect(prisma.contact.findUnique).not.toHaveBeenCalled();
@@ -753,15 +868,22 @@ describe('AdministrativeProceduresService', () => {
 
         await service.update('proc-1', { priority: 'HAUTE' } as any);
 
-        const call = prisma.administrativeProcedure.update.mock.calls[0][0];
+        const updateCalls = prisma.administrativeProcedure.update.mock
+          .calls as [{ data: Record<string, unknown> }][];
+        const call = updateCalls[0][0];
         expect(call.data).not.toHaveProperty('assignedContactId');
         expect(call.data).not.toHaveProperty('assignedTo');
         expect(prisma.contact.findUnique).not.toHaveBeenCalled();
       });
 
       it('rejects assigning an inactive Contact on update', async () => {
-        prisma.administrativeProcedure.findUnique.mockResolvedValue(baseProcedure);
-        prisma.contact.findUnique.mockResolvedValue({ ...activeContact, active: false });
+        prisma.administrativeProcedure.findUnique.mockResolvedValue(
+          baseProcedure,
+        );
+        prisma.contact.findUnique.mockResolvedValue({
+          ...activeContact,
+          active: false,
+        });
         await expect(
           service.update('proc-1', { assignedContactId: 'contact-1' } as any),
         ).rejects.toBeInstanceOf(BadRequestException);
@@ -783,20 +905,26 @@ describe('AdministrativeProceduresService', () => {
 
         expect(result.assignedContact?.active).toBe(false);
         expect(prisma.administrativeProcedure.findUnique).toHaveBeenCalledWith(
-          expect.objectContaining({
-            include: expect.objectContaining({
-              assignedContact: expect.objectContaining({ include: { category: true } }),
+          matching({
+            include: matching({
+              assignedContact: matching({
+                include: { category: true },
+              }),
             }),
           }),
         );
       });
 
       it('findAll requests the assignedContact include', async () => {
-        prisma.administrativeProcedure.findMany.mockResolvedValue([baseProcedure]);
+        prisma.administrativeProcedure.findMany.mockResolvedValue([
+          baseProcedure,
+        ]);
         await service.findAll({});
         expect(prisma.administrativeProcedure.findMany).toHaveBeenCalledWith(
-          expect.objectContaining({
-            include: expect.objectContaining({ assignedContact: expect.anything() }),
+          matching({
+            include: matching({
+              assignedContact: matchAnything(),
+            }),
           }),
         );
       });
@@ -814,15 +942,18 @@ describe('AdministrativeProceduresService', () => {
           validationStatus: 'PENDING_VALIDATION',
         });
 
-        await service.submitValidation('proc-1', 'director-1', {} as any);
+        await service.submitValidation('proc-1', 'director-1', {});
 
         expect(notifications.createForRole).toHaveBeenCalledWith(
           'SUPERVISOR',
-          expect.objectContaining({
-            message: expect.stringContaining(baseProcedure.authority),
+          matching({
+            message: stringContaining(baseProcedure.authority),
           }),
         );
-        const [, payload] = notifications.createForRole.mock.calls[0];
+        const [, payload] = notifications.createForRole.mock.calls[0] as [
+          unknown,
+          { message: string },
+        ];
         expect(payload.message).not.toContain('Fatou Sow');
       });
     });

@@ -7,6 +7,7 @@ import {
 import { IncidentsService } from './incidents.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { UploadService } from '../upload/upload.service';
+import { matchAnything, matching } from '../test-utils/jest-matchers';
 
 // PR 11: Incident workflow improvements — statuses (EN_COURS/EN_ATTENTE/RESOLU
 // + legacy PLANIFIE/EN_RETARD preserved read-only), priority (N1/N2/N3),
@@ -98,8 +99,8 @@ describe('IncidentsService', () => {
 
       expect(result.title).toBe('Chute dans la cour');
       expect(prisma.incident.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({
+        matching({
+          data: matching({
             priority: 'N3',
             createdById: 'director-1',
           }),
@@ -128,8 +129,8 @@ describe('IncidentsService', () => {
 
       expect(result.type).toBe('SECURITE');
       expect(prisma.incident.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ type: 'SECURITE' }),
+        matching({
+          data: matching({ type: 'SECURITE' }),
         }),
       );
     });
@@ -147,8 +148,8 @@ describe('IncidentsService', () => {
         'director-1',
       );
       expect(prisma.incident.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ priority }),
+        matching({
+          data: matching({ priority }),
         }),
       );
     });
@@ -175,8 +176,8 @@ describe('IncidentsService', () => {
       );
 
       expect(prisma.incident.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({
+        matching({
+          data: matching({
             children: {
               create: [{ childId: 'child-1' }, { childId: 'child-2' }],
             },
@@ -248,8 +249,8 @@ describe('IncidentsService', () => {
       );
 
       expect(prisma.incident.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({
+        matching({
+          data: matching({
             spaces: {
               create: [{ spaceId: 'space-1' }, { spaceId: 'space-2' }],
             },
@@ -289,8 +290,8 @@ describe('IncidentsService', () => {
       await service.update('incident-1', { childIds: ['child-9'] });
 
       expect(prisma.incident.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({
+        matching({
+          data: matching({
             children: { deleteMany: {}, create: [{ childId: 'child-9' }] },
           }),
         }),
@@ -302,11 +303,11 @@ describe('IncidentsService', () => {
       prisma.space.findMany.mockResolvedValue([{ id: 'space-9' }]);
       prisma.incident.update.mockResolvedValue(baseIncident);
 
-      await service.update('incident-1', { spaceIds: ['space-9'] } as any);
+      await service.update('incident-1', { spaceIds: ['space-9'] });
 
       expect(prisma.incident.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({
+        matching({
+          data: matching({
             spaces: { deleteMany: {}, create: [{ spaceId: 'space-9' }] },
           }),
         }),
@@ -319,7 +320,10 @@ describe('IncidentsService', () => {
 
       await service.update('incident-1', { title: 'Nouveau titre' });
 
-      const call = prisma.incident.update.mock.calls[0][0];
+      const updateCalls = prisma.incident.update.mock.calls as [
+        { data: Record<string, unknown> },
+      ][];
+      const call = updateCalls[0][0];
       expect(call.data).not.toHaveProperty('children');
       expect(call.data).not.toHaveProperty('staffLinks');
       expect(call.data).not.toHaveProperty('spaces');
@@ -354,8 +358,8 @@ describe('IncidentsService', () => {
       );
 
       expect(prisma.incidentStatusHistory.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({
+        matching({
+          data: matching({
             incidentId: 'incident-1',
             previousStatus: 'EN_COURS',
             newStatus: 'EN_ATTENTE',
@@ -365,7 +369,7 @@ describe('IncidentsService', () => {
         }),
       );
       expect(prisma.incident.update).toHaveBeenCalledWith(
-        expect.objectContaining({
+        matching({
           where: { id: 'incident-1' },
           data: { status: 'EN_ATTENTE' },
         }),
@@ -390,7 +394,7 @@ describe('IncidentsService', () => {
       );
 
       expect(prisma.incident.update).toHaveBeenCalledWith(
-        expect.objectContaining({ data: { status: 'RESOLU' } }),
+        matching({ data: { status: 'RESOLU' } }),
       );
     });
 
@@ -412,8 +416,8 @@ describe('IncidentsService', () => {
       );
 
       expect(prisma.incidentStatusHistory.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({
+        matching({
+          data: matching({
             previousStatus: 'PLANIFIE',
             newStatus: 'EN_COURS',
           }),
@@ -457,8 +461,8 @@ describe('IncidentsService', () => {
         type: 'SECURITE',
       } as any);
       expect(prisma.incident.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: expect.objectContaining({
+        matching({
+          where: matching({
             status: 'EN_COURS',
             priority: 'N1',
             type: 'SECURITE',
@@ -471,8 +475,8 @@ describe('IncidentsService', () => {
       prisma.incident.findMany.mockResolvedValue([]);
       await service.findAll({ childId: 'child-1' });
       expect(prisma.incident.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: expect.objectContaining({
+        matching({
+          where: matching({
             children: { some: { childId: 'child-1' } },
           }),
         }),
@@ -483,8 +487,8 @@ describe('IncidentsService', () => {
       prisma.incident.findMany.mockResolvedValue([]);
       await service.findAll({ staffId: 'staff-1' });
       expect(prisma.incident.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: expect.objectContaining({
+        matching({
+          where: matching({
             staffLinks: { some: { staffId: 'staff-1' } },
           }),
         }),
@@ -495,8 +499,8 @@ describe('IncidentsService', () => {
       prisma.incident.findMany.mockResolvedValue([]);
       await service.findAll({ spaceId: 'space-1' });
       expect(prisma.incident.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: expect.objectContaining({
+        matching({
+          where: matching({
             spaces: { some: { spaceId: 'space-1' } },
           }),
         }),
@@ -506,7 +510,10 @@ describe('IncidentsService', () => {
     it('applies a case-insensitive text search across title and description', async () => {
       prisma.incident.findMany.mockResolvedValue([]);
       await service.findAll({ search: 'cour' });
-      const call = prisma.incident.findMany.mock.calls[0][0];
+      const findManyCalls = prisma.incident.findMany.mock.calls as [
+        { where: { OR: Record<string, unknown>[] } },
+      ][];
+      const call = findManyCalls[0][0];
       expect(call.where.OR).toEqual([
         { title: { contains: 'cour', mode: 'insensitive' } },
         { description: { contains: 'cour', mode: 'insensitive' } },
@@ -517,13 +524,13 @@ describe('IncidentsService', () => {
       prisma.incident.findMany.mockResolvedValue([baseIncident]);
       await service.findAll({});
       expect(prisma.incident.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          include: expect.objectContaining({
-            createdBy: expect.anything(),
-            children: expect.anything(),
-            staffLinks: expect.anything(),
-            spaces: expect.anything(),
-            statusHistory: expect.anything(),
+        matching({
+          include: matching({
+            createdBy: matchAnything(),
+            children: matchAnything(),
+            staffLinks: matchAnything(),
+            spaces: matchAnything(),
+            statusHistory: matchAnything(),
           }),
         }),
       );
@@ -560,7 +567,7 @@ describe('IncidentsService', () => {
         attachmentKey: 'incidents/incident-1/file.pdf',
       });
 
-      const file = { mimetype: 'application/pdf' } as any;
+      const file = { mimetype: 'application/pdf' } as Express.Multer.File;
       const result = await service.uploadAttachment('incident-1', file);
 
       expect(result.attachmentKey).toBe('incidents/incident-1/file.pdf');

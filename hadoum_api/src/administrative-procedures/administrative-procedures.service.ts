@@ -305,9 +305,7 @@ export class AdministrativeProceduresService {
     let assignedContactId: string | undefined;
 
     if (dto.assignedContactId) {
-      const contact = await this.assertContactAssignable(
-        dto.assignedContactId,
-      );
+      const contact = await this.assertContactAssignable(dto.assignedContactId);
       assignedContactId = contact.id;
       assignedTo = contact.fullName;
     }

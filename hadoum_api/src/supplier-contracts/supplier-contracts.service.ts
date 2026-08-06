@@ -175,7 +175,9 @@ export class SupplierContractsService {
     // any other API client — and existing legacy contracts being edited —
     // keeps working.
     let supplierContactId: string | undefined;
-    let snapshot: ReturnType<typeof this.supplierSnapshotFromContact> | undefined;
+    let snapshot:
+      | ReturnType<typeof this.supplierSnapshotFromContact>
+      | undefined;
 
     if (dto.supplierContactId) {
       const contact = await this.assertContactAssignable(dto.supplierContactId);
@@ -352,7 +354,8 @@ export class SupplierContractsService {
     const updated = await this.prisma.supplierContract.update({
       where: { id },
       data: {
-        ...(dto.supplierName !== undefined && dto.supplierContactId === undefined
+        ...(dto.supplierName !== undefined &&
+        dto.supplierContactId === undefined
           ? { supplierName: dto.supplierName }
           : {}),
         ...(dto.contractName !== undefined
@@ -384,7 +387,8 @@ export class SupplierContractsService {
         ...(dto.billingFrequency !== undefined
           ? { billingFrequency: dto.billingFrequency }
           : {}),
-        ...(dto.contactPerson !== undefined && dto.supplierContactId === undefined
+        ...(dto.contactPerson !== undefined &&
+        dto.supplierContactId === undefined
           ? { contactPerson: dto.contactPerson }
           : {}),
         ...(dto.phone !== undefined && dto.supplierContactId === undefined

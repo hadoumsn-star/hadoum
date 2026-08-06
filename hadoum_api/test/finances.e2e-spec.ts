@@ -17,6 +17,25 @@ import { PrismaService } from '../src/prisma/prisma.service';
 // specifically to prove relation/document behavior end-to-end rather than
 // through mocked Prisma calls only (see finances.service.spec.ts for the
 // unit-level coverage of the same behavior).
+
+interface TransactionResponse {
+  id: string;
+  category: string;
+  label: string;
+  paymentMethod: string | null;
+  donorName: string | null;
+  isAnonymousDonor: boolean;
+  supplierContactId: string | null;
+  supplierContact: { id: string; fullName: string; active: boolean } | null;
+  purchaseOrderKey: string | null;
+  invoiceKey: string | null;
+  deliveryNoteKey: string | null;
+}
+
+interface DashboardResponse {
+  soldeCaisseXof: number;
+}
+
 describe('Finances — Contact assignment, payment method, documents (e2e)', () => {
   let app: INestApplication<App>;
   let prisma: PrismaService;
@@ -35,14 +54,18 @@ describe('Finances — Contact assignment, payment method, documents (e2e)', () 
     const users = await seedTestUsers(prisma);
 
     directorToken = (
-      await request(app.getHttpServer())
+      (await request(app.getHttpServer())
         .post('/api/auth/login')
-        .send({ email: users.director.email, password: TEST_PASSWORD })
+        .send({ email: users.director.email, password: TEST_PASSWORD })) as {
+        body: { token: string };
+      }
     ).body.token;
     supervisorToken = (
-      await request(app.getHttpServer())
+      (await request(app.getHttpServer())
         .post('/api/auth/login')
-        .send({ email: users.supervisor.email, password: TEST_PASSWORD })
+        .send({ email: users.supervisor.email, password: TEST_PASSWORD })) as {
+        body: { token: string };
+      }
     ).body.token;
 
     const category = await prisma.contactCategory.create({
@@ -90,15 +113,19 @@ describe('Finances — Contact assignment, payment method, documents (e2e)', () 
   // ─── Supplier relation ──────────────────────────────────────────────────
 
   it('creates an expense without a supplier exactly as before', async () => {
-    const res = await createExpense().expect(201);
+    const res = (await createExpense().expect(201)) as {
+      body: TransactionResponse;
+    };
     expect(res.body.supplierContactId).toBeNull();
     expect(res.body.supplierContact).toBeNull();
   });
 
   it('creates an expense with an active supplier connected', async () => {
-    const res = await createExpense({ supplierContactId: activeSupplierId }).expect(201);
+    const res = (await createExpense({
+      supplierContactId: activeSupplierId,
+    }).expect(201)) as { body: TransactionResponse };
     expect(res.body.supplierContactId).toBe(activeSupplierId);
-    expect(res.body.supplierContact.fullName).toBe(activeSupplierName);
+    expect(res.body.supplierContact?.fullName).toBe(activeSupplierName);
   });
 
   it('rejects an unknown supplier id', async () => {
@@ -114,84 +141,100 @@ describe('Finances — Contact assignment, payment method, documents (e2e)', () 
   });
 
   it('lists and reads expense detail with supplierContact included', async () => {
-    const created = await createExpense({ supplierContactId: activeSupplierId }).expect(201);
+    const created = (await createExpense({
+      supplierContactId: activeSupplierId,
+    }).expect(201)) as { body: TransactionResponse };
 
-    const list = await request(app.getHttpServer())
+    const list = (await request(app.getHttpServer())
       .get('/api/finances/transactions')
       .set('Authorization', `Bearer ${directorToken}`)
-      .expect(200);
-    expect(list.body.find((t: any) => t.id === created.body.id).supplierContact.fullName)
-      .toBe(activeSupplierName);
+      .expect(200)) as { body: TransactionResponse[] };
+    const found = list.body.find((t) => t.id === created.body.id);
+    if (!found) throw new Error('Transaction not found in list');
+    expect(found.supplierContact?.fullName).toBe(activeSupplierName);
 
-    const detail = await request(app.getHttpServer())
+    const detail = (await request(app.getHttpServer())
       .get(`/api/finances/transactions/${created.body.id}`)
       .set('Authorization', `Bearer ${directorToken}`)
-      .expect(200);
-    expect(detail.body.supplierContact.fullName).toBe(activeSupplierName);
+      .expect(200)) as { body: TransactionResponse };
+    expect(detail.body.supplierContact?.fullName).toBe(activeSupplierName);
   });
 
   it('updates the supplier on an existing expense', async () => {
-    const created = await createExpense().expect(201);
+    const created = (await createExpense().expect(201)) as {
+      body: TransactionResponse;
+    };
     const category = await prisma.contactCategory.findFirstOrThrow();
     const otherSupplier = await prisma.contact.create({
       data: { fullName: 'Autre Fournisseur', categoryId: category.id },
     });
 
-    const res = await request(app.getHttpServer())
+    const res = (await request(app.getHttpServer())
       .patch(`/api/finances/transactions/${created.body.id}`)
       .set('Authorization', `Bearer ${directorToken}`)
       .send({ supplierContactId: otherSupplier.id })
-      .expect(200);
+      .expect(200)) as { body: TransactionResponse };
 
     expect(res.body.supplierContactId).toBe(otherSupplier.id);
   });
 
   it('clears the supplier when supplierContactId is explicitly null', async () => {
-    const created = await createExpense({ supplierContactId: activeSupplierId }).expect(201);
-    const res = await request(app.getHttpServer())
+    const created = (await createExpense({
+      supplierContactId: activeSupplierId,
+    }).expect(201)) as { body: TransactionResponse };
+    const res = (await request(app.getHttpServer())
       .patch(`/api/finances/transactions/${created.body.id}`)
       .set('Authorization', `Bearer ${directorToken}`)
       .send({ supplierContactId: null })
-      .expect(200);
+      .expect(200)) as { body: TransactionResponse };
     expect(res.body.supplierContactId).toBeNull();
     expect(res.body.supplierContact).toBeNull();
   });
 
   it('leaves the existing supplier untouched when supplierContactId is omitted', async () => {
-    const created = await createExpense({ supplierContactId: activeSupplierId }).expect(201);
-    const res = await request(app.getHttpServer())
+    const created = (await createExpense({
+      supplierContactId: activeSupplierId,
+    }).expect(201)) as { body: TransactionResponse };
+    const res = (await request(app.getHttpServer())
       .patch(`/api/finances/transactions/${created.body.id}`)
       .set('Authorization', `Bearer ${directorToken}`)
       .send({ label: 'Nouveau libellé' })
-      .expect(200);
+      .expect(200)) as { body: TransactionResponse };
     expect(res.body.label).toBe('Nouveau libellé');
     expect(res.body.supplierContactId).toBe(activeSupplierId);
   });
 
   it('keeps an expense readable, with the reference intact, after its supplier is deactivated', async () => {
-    const created = await createExpense({ supplierContactId: activeSupplierId }).expect(201);
-    await prisma.contact.update({ where: { id: activeSupplierId }, data: { active: false } });
+    const created = (await createExpense({
+      supplierContactId: activeSupplierId,
+    }).expect(201)) as { body: TransactionResponse };
+    await prisma.contact.update({
+      where: { id: activeSupplierId },
+      data: { active: false },
+    });
 
-    const res = await request(app.getHttpServer())
+    const res = (await request(app.getHttpServer())
       .get(`/api/finances/transactions/${created.body.id}`)
       .set('Authorization', `Bearer ${directorToken}`)
-      .expect(200);
+      .expect(200)) as { body: TransactionResponse };
 
-    expect(res.body.supplierContact.id).toBe(activeSupplierId);
-    expect(res.body.supplierContact.active).toBe(false);
+    expect(res.body.supplierContact?.id).toBe(activeSupplierId);
+    expect(res.body.supplierContact?.active).toBe(false);
   });
 
   // ─── Payment method ─────────────────────────────────────────────────────
 
   it('creates and updates the payment method', async () => {
-    const created = await createExpense({ paymentMethod: 'ESPECES' }).expect(201);
+    const created = (await createExpense({
+      paymentMethod: 'ESPECES',
+    }).expect(201)) as { body: TransactionResponse };
     expect(created.body.paymentMethod).toBe('ESPECES');
 
-    const updated = await request(app.getHttpServer())
+    const updated = (await request(app.getHttpServer())
       .patch(`/api/finances/transactions/${created.body.id}`)
       .set('Authorization', `Bearer ${directorToken}`)
       .send({ paymentMethod: 'VIREMENT' })
-      .expect(200);
+      .expect(200)) as { body: TransactionResponse };
     expect(updated.body.paymentMethod).toBe('VIREMENT');
   });
 
@@ -199,29 +242,35 @@ describe('Finances — Contact assignment, payment method, documents (e2e)', () 
   // selectable values; MOBILE_MONEY (additive migration, never removed from
   // the enum) must stay fully creatable/readable for historical compatibility.
   it('accepts the new Wave/Orange Mobile Money payment methods', async () => {
-    const wave = await createExpense({ paymentMethod: 'WAVE_MOBILE_MONEY' }).expect(201);
+    const wave = (await createExpense({
+      paymentMethod: 'WAVE_MOBILE_MONEY',
+    }).expect(201)) as { body: TransactionResponse };
     expect(wave.body.paymentMethod).toBe('WAVE_MOBILE_MONEY');
 
-    const orange = await createExpense({ paymentMethod: 'ORANGE_MOBILE_MONEY' }).expect(201);
+    const orange = (await createExpense({
+      paymentMethod: 'ORANGE_MOBILE_MONEY',
+    }).expect(201)) as { body: TransactionResponse };
     expect(orange.body.paymentMethod).toBe('ORANGE_MOBILE_MONEY');
   });
 
   it('a historical MOBILE_MONEY transaction remains readable and unmodified', async () => {
-    const created = await createExpense({ paymentMethod: 'MOBILE_MONEY' }).expect(201);
+    const created = (await createExpense({
+      paymentMethod: 'MOBILE_MONEY',
+    }).expect(201)) as { body: TransactionResponse };
     expect(created.body.paymentMethod).toBe('MOBILE_MONEY');
 
-    const fetched = await request(app.getHttpServer())
+    const fetched = (await request(app.getHttpServer())
       .get(`/api/finances/transactions/${created.body.id}`)
       .set('Authorization', `Bearer ${directorToken}`)
-      .expect(200);
+      .expect(200)) as { body: TransactionResponse };
     expect(fetched.body.paymentMethod).toBe('MOBILE_MONEY');
 
     // Updating an unrelated field must not disturb the legacy payment method.
-    const updated = await request(app.getHttpServer())
+    const updated = (await request(app.getHttpServer())
       .patch(`/api/finances/transactions/${created.body.id}`)
       .set('Authorization', `Bearer ${directorToken}`)
       .send({ label: 'Libellé mis à jour' })
-      .expect(200);
+      .expect(200)) as { body: TransactionResponse };
     expect(updated.body.paymentMethod).toBe('MOBILE_MONEY');
   });
 
@@ -233,30 +282,41 @@ describe('Finances — Contact assignment, payment method, documents (e2e)', () 
   // is ENTRETIEN); this makes it explicit for a second legacy category.
 
   it('a legacy category (EQUIPEMENT) remains fully creatable and readable', async () => {
-    const created = await createExpense({ category: 'EQUIPEMENT' }).expect(201);
+    const created = (await createExpense({
+      category: 'EQUIPEMENT',
+    }).expect(201)) as { body: TransactionResponse };
     expect(created.body.category).toBe('EQUIPEMENT');
 
-    const fetched = await request(app.getHttpServer())
+    const fetched = (await request(app.getHttpServer())
       .get(`/api/finances/transactions/${created.body.id}`)
       .set('Authorization', `Bearer ${directorToken}`)
-      .expect(200);
+      .expect(200)) as { body: TransactionResponse };
     expect(fetched.body.category).toBe('EQUIPEMENT');
 
-    const list = await request(app.getHttpServer())
+    const list = (await request(app.getHttpServer())
       .get('/api/finances/transactions')
       .set('Authorization', `Bearer ${directorToken}`)
-      .expect(200);
-    expect(list.body.some((t: any) => t.id === created.body.id && t.category === 'EQUIPEMENT')).toBe(true);
+      .expect(200)) as { body: TransactionResponse[] };
+    expect(
+      list.body.some(
+        (t) => t.id === created.body.id && t.category === 'EQUIPEMENT',
+      ),
+    ).toBe(true);
   });
 
   // ─── Income compatibility ───────────────────────────────────────────────
 
   it('still creates income with donor fields, unaffected by the supplier/payment additions', async () => {
-    const named = await createIncome({ donorName: 'Amina', isAnonymousDonor: false }).expect(201);
+    const named = (await createIncome({
+      donorName: 'Amina',
+      isAnonymousDonor: false,
+    }).expect(201)) as { body: TransactionResponse };
     expect(named.body.donorName).toBe('Amina');
     expect(named.body.supplierContactId).toBeNull();
 
-    const anonymous = await createIncome({ isAnonymousDonor: true }).expect(201);
+    const anonymous = (await createIncome({
+      isAnonymousDonor: true,
+    }).expect(201)) as { body: TransactionResponse };
     expect(anonymous.body.isAnonymousDonor).toBe(true);
   });
 
@@ -268,32 +328,41 @@ describe('Finances — Contact assignment, payment method, documents (e2e)', () 
 
   for (const kind of ['purchase-order', 'invoice', 'delivery-note'] as const) {
     it(`uploads, reads, and deletes a ${kind} on an expense`, async () => {
-      const created = await createExpense().expect(201);
+      const created = (await createExpense().expect(201)) as {
+        body: TransactionResponse;
+      };
 
-      const uploaded = await request(app.getHttpServer())
+      const uploaded = (await request(app.getHttpServer())
         .post(`/api/finances/transactions/${created.body.id}/${kind}`)
         .set('Authorization', `Bearer ${directorToken}`)
         .attach('file', Buffer.from('%PDF-1.4 fake'), `${kind}.pdf`)
-        .expect(201);
-      const keyField = kind === 'purchase-order' ? 'purchaseOrderKey' : kind === 'invoice' ? 'invoiceKey' : 'deliveryNoteKey';
+        .expect(201)) as { body: TransactionResponse };
+      const keyField =
+        kind === 'purchase-order'
+          ? ('purchaseOrderKey' as const)
+          : kind === 'invoice'
+            ? ('invoiceKey' as const)
+            : ('deliveryNoteKey' as const);
       expect(uploaded.body[keyField]).toBeTruthy();
 
-      const urlRes = await request(app.getHttpServer())
+      const urlRes = (await request(app.getHttpServer())
         .get(`/api/finances/transactions/${created.body.id}/${kind}-url`)
         .set('Authorization', `Bearer ${directorToken}`)
-        .expect(200);
+        .expect(200)) as { body: { url: string } };
       expect(urlRes.body.url).toBeTruthy();
 
-      const deleted = await request(app.getHttpServer())
+      const deleted = (await request(app.getHttpServer())
         .delete(`/api/finances/transactions/${created.body.id}/${kind}`)
         .set('Authorization', `Bearer ${directorToken}`)
-        .expect(200);
+        .expect(200)) as { body: TransactionResponse };
       expect(deleted.body[keyField]).toBeNull();
     });
   }
 
   it('rejects a purchase order upload on a RECETTE', async () => {
-    const created = await createIncome().expect(201);
+    const created = (await createIncome().expect(201)) as {
+      body: TransactionResponse;
+    };
     await request(app.getHttpServer())
       .post(`/api/finances/transactions/${created.body.id}/purchase-order`)
       .set('Authorization', `Bearer ${directorToken}`)
@@ -302,7 +371,9 @@ describe('Finances — Contact assignment, payment method, documents (e2e)', () 
   });
 
   it('rejects an invoice upload on a RECETTE', async () => {
-    const created = await createIncome().expect(201);
+    const created = (await createIncome().expect(201)) as {
+      body: TransactionResponse;
+    };
     await request(app.getHttpServer())
       .post(`/api/finances/transactions/${created.body.id}/invoice`)
       .set('Authorization', `Bearer ${directorToken}`)
@@ -313,7 +384,9 @@ describe('Finances — Contact assignment, payment method, documents (e2e)', () 
   // ─── Legacy justificatif — unchanged ────────────────────────────────────
 
   it('still supports the legacy justificatif endpoint on an expense that also has dedicated documents', async () => {
-    const created = await createExpense().expect(201);
+    const created = (await createExpense().expect(201)) as {
+      body: TransactionResponse;
+    };
 
     await request(app.getHttpServer())
       .post(`/api/finances/transactions/${created.body.id}/justificatif`)
@@ -321,23 +394,28 @@ describe('Finances — Contact assignment, payment method, documents (e2e)', () 
       .attach('file', Buffer.from('%PDF-1.4 fake'), 'justif.pdf')
       .expect(201);
 
-    const urlRes = await request(app.getHttpServer())
+    const urlRes = (await request(app.getHttpServer())
       .get(`/api/finances/transactions/${created.body.id}/justificatif-url`)
       .set('Authorization', `Bearer ${directorToken}`)
-      .expect(200);
+      .expect(200)) as { body: { url: string } };
     expect(urlRes.body.url).toBeTruthy();
   });
 
   // ─── Aggregation regression ─────────────────────────────────────────────
 
   it('dashboard totals are unaffected by supplier/payment/document fields', async () => {
-    await createExpense({ status: 'VALIDE', amountXof: 15000, supplierContactId: activeSupplierId, paymentMethod: 'ESPECES' }).expect(201);
+    await createExpense({
+      status: 'VALIDE',
+      amountXof: 15000,
+      supplierContactId: activeSupplierId,
+      paymentMethod: 'ESPECES',
+    }).expect(201);
     await createIncome({ status: 'VALIDE', amountXof: 40000 }).expect(201);
 
-    const res = await request(app.getHttpServer())
+    const res = (await request(app.getHttpServer())
       .get('/api/finances/dashboard?year=2026&month=8')
       .set('Authorization', `Bearer ${directorToken}`)
-      .expect(200);
+      .expect(200)) as { body: DashboardResponse };
 
     expect(res.body.soldeCaisseXof).toBe(40000 - 15000);
   });
@@ -348,7 +426,13 @@ describe('Finances — Contact assignment, payment method, documents (e2e)', () 
     await request(app.getHttpServer())
       .post('/api/finances/transactions')
       .set('Authorization', `Bearer ${supervisorToken}`)
-      .send({ type: 'DEPENSE', category: 'ENTRETIEN', label: 'x', amountXof: 1000, date: '2026-08-01' })
+      .send({
+        type: 'DEPENSE',
+        category: 'ENTRETIEN',
+        label: 'x',
+        amountXof: 1000,
+        date: '2026-08-01',
+      })
       .expect(201);
   });
 

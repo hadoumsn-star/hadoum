@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { StaffService } from './staff.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { UploadService } from '../upload/upload.service';
+import { matching } from '../test-utils/jest-matchers';
 
 function createMockPrisma() {
   return {
@@ -37,7 +38,11 @@ function createMockPrisma() {
 describe('StaffService', () => {
   let service: StaffService;
   let prisma: ReturnType<typeof createMockPrisma>;
-  let upload: { upload: jest.Mock; getPresignedUrl: jest.Mock; deleteFile: jest.Mock };
+  let upload: {
+    upload: jest.Mock;
+    getPresignedUrl: jest.Mock;
+    deleteFile: jest.Mock;
+  };
 
   const staffA = {
     id: 'staff-1',
@@ -56,11 +61,20 @@ describe('StaffService', () => {
     createdAt: new Date(),
     updatedAt: new Date(),
   };
-  const staffB = { ...staffA, id: 'staff-2', firstName: 'Moussa', lastName: 'Fall' };
+  const staffB = {
+    ...staffA,
+    id: 'staff-2',
+    firstName: 'Moussa',
+    lastName: 'Fall',
+  };
 
   beforeEach(async () => {
     prisma = createMockPrisma();
-    upload = { upload: jest.fn(), getPresignedUrl: jest.fn(), deleteFile: jest.fn() };
+    upload = {
+      upload: jest.fn(),
+      getPresignedUrl: jest.fn(),
+      deleteFile: jest.fn(),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -82,28 +96,49 @@ describe('StaffService', () => {
         Vendredi: [],
       });
       prisma.staffMember.findUniqueOrThrow.mockResolvedValue(staffA);
-      prisma.staffMember.update.mockResolvedValue({ ...staffA, scheduleJson: weekdayOnly });
+      prisma.staffMember.update.mockResolvedValue({
+        ...staffA,
+        scheduleJson: weekdayOnly,
+      });
 
-      const result = await service.updateStaff('staff-1', { scheduleJson: weekdayOnly });
+      const result = await service.updateStaff('staff-1', {
+        scheduleJson: weekdayOnly,
+      });
 
       expect(prisma.staffMember.update).toHaveBeenCalledWith(
-        expect.objectContaining({ data: expect.objectContaining({ scheduleJson: weekdayOnly }) }),
+        matching({
+          data: matching({ scheduleJson: weekdayOnly }),
+        }),
       );
-      expect(JSON.parse(result.scheduleJson as string)).toEqual(JSON.parse(weekdayOnly));
+      expect(JSON.parse(result.scheduleJson as string)).toEqual(
+        JSON.parse(weekdayOnly),
+      );
     });
 
     it('persists a schedule that includes Samedi and Dimanche', async () => {
       const withWeekend = JSON.stringify({
-        Lundi: [], Mardi: [], Mercredi: [], Jeudi: [], Vendredi: [],
+        Lundi: [],
+        Mardi: [],
+        Mercredi: [],
+        Jeudi: [],
+        Vendredi: [],
         Samedi: [{ debut: '09:00', fin: '12:00', label: 'Permanence' }],
         Dimanche: [],
       });
       prisma.staffMember.findUniqueOrThrow.mockResolvedValue(staffA);
-      prisma.staffMember.update.mockResolvedValue({ ...staffA, scheduleJson: withWeekend });
+      prisma.staffMember.update.mockResolvedValue({
+        ...staffA,
+        scheduleJson: withWeekend,
+      });
 
-      const result = await service.updateStaff('staff-1', { scheduleJson: withWeekend });
+      const result = await service.updateStaff('staff-1', {
+        scheduleJson: withWeekend,
+      });
 
-      const saved = JSON.parse(result.scheduleJson as string);
+      const saved = JSON.parse(result.scheduleJson as string) as Record<
+        string,
+        unknown[]
+      >;
       expect(saved.Samedi).toHaveLength(1);
       expect(saved.Dimanche).toEqual([]);
       // Weekday keys are untouched by adding weekend keys.
@@ -120,24 +155,43 @@ describe('StaffService', () => {
       const result = await service.listDailyPresence('2026-08-04');
 
       expect(result.entries).toHaveLength(2);
-      expect(result.entries.every((e) => e.status === 'NON_CONFIRMED')).toBe(true);
+      expect(result.entries.every((e) => e.status === 'NON_CONFIRMED')).toBe(
+        true,
+      );
       expect(result.nonConfirmedCount).toBe(2);
     });
 
     it('confirms PRESENT and reflects it in the daily list', async () => {
       prisma.staffMember.findUniqueOrThrow.mockResolvedValue(staffA);
       prisma.staffPresenceConfirmation.upsert.mockResolvedValue({
-        id: 'conf-1', staffId: 'staff-1', date: new Date('2026-08-04'),
-        confirmed: true, status: 'PRESENT', confirmedById: 'director-1',
+        id: 'conf-1',
+        staffId: 'staff-1',
+        date: new Date('2026-08-04'),
+        confirmed: true,
+        status: 'PRESENT',
+        confirmedById: 'director-1',
         confirmedBy: { id: 'director-1', name: 'Directrice' },
       });
 
-      const result = await service.confirmPresence('staff-1', '2026-08-04', 'PRESENT', 'director-1');
+      const result = await service.confirmPresence(
+        'staff-1',
+        '2026-08-04',
+        'PRESENT',
+        'director-1',
+      );
 
       expect(prisma.staffPresenceConfirmation.upsert).toHaveBeenCalledWith(
-        expect.objectContaining({
-          create: expect.objectContaining({ status: 'PRESENT', confirmed: true, confirmedById: 'director-1' }),
-          update: expect.objectContaining({ status: 'PRESENT', confirmed: true, confirmedById: 'director-1' }),
+        matching({
+          create: matching({
+            status: 'PRESENT',
+            confirmed: true,
+            confirmedById: 'director-1',
+          }),
+          update: matching({
+            status: 'PRESENT',
+            confirmed: true,
+            confirmedById: 'director-1',
+          }),
         }),
       );
       expect(result.status).toBe('PRESENT');
@@ -153,16 +207,28 @@ describe('StaffService', () => {
     it('confirms ABSENT', async () => {
       prisma.staffMember.findUniqueOrThrow.mockResolvedValue(staffA);
       prisma.staffPresenceConfirmation.upsert.mockResolvedValue({
-        id: 'conf-1', staffId: 'staff-1', date: new Date('2026-08-04'),
-        confirmed: false, status: 'ABSENT', confirmedById: 'director-1',
+        id: 'conf-1',
+        staffId: 'staff-1',
+        date: new Date('2026-08-04'),
+        confirmed: false,
+        status: 'ABSENT',
+        confirmedById: 'director-1',
         confirmedBy: { id: 'director-1', name: 'Directrice' },
       });
 
-      const result = await service.confirmPresence('staff-1', '2026-08-04', 'ABSENT', 'director-1');
+      const result = await service.confirmPresence(
+        'staff-1',
+        '2026-08-04',
+        'ABSENT',
+        'director-1',
+      );
 
       expect(prisma.staffPresenceConfirmation.upsert).toHaveBeenCalledWith(
-        expect.objectContaining({
-          create: expect.objectContaining({ status: 'ABSENT', confirmed: false }),
+        matching({
+          create: matching({
+            status: 'ABSENT',
+            confirmed: false,
+          }),
         }),
       );
       expect(result.status).toBe('ABSENT');
@@ -170,21 +236,30 @@ describe('StaffService', () => {
     });
 
     it('resets a confirmed status back to non-confirmed by deleting the row', async () => {
-      prisma.staffPresenceConfirmation.deleteMany.mockResolvedValue({ count: 1 });
+      prisma.staffPresenceConfirmation.deleteMany.mockResolvedValue({
+        count: 1,
+      });
 
       await service.resetPresence('staff-1', '2026-08-04');
 
       expect(prisma.staffPresenceConfirmation.deleteMany).toHaveBeenCalledWith(
-        expect.objectContaining({ where: expect.objectContaining({ staffId: 'staff-1' }) }),
+        matching({
+          where: matching({ staffId: 'staff-1' }),
+        }),
       );
     });
 
-    it('changing the queried date returns a different day\'s confirmations', async () => {
+    it("changing the queried date returns a different day's confirmations", async () => {
       prisma.staffMember.findMany.mockResolvedValue([staffA]);
       prisma.staffAttendance.findMany.mockResolvedValue([]);
 
       prisma.staffPresenceConfirmation.findMany.mockResolvedValueOnce([
-        { staffId: 'staff-1', status: 'PRESENT', confirmedBy: null, updatedAt: new Date() },
+        {
+          staffId: 'staff-1',
+          status: 'PRESENT',
+          confirmedBy: null,
+          updatedAt: new Date(),
+        },
       ]);
       const day1 = await service.listDailyPresence('2026-08-04');
       expect(day1.entries[0].status).toBe('PRESENT');
@@ -198,22 +273,39 @@ describe('StaffService', () => {
       const staffC = { ...staffA, id: 'staff-3', firstName: 'Fatou' };
       prisma.staffMember.findMany.mockResolvedValue([staffA, staffB, staffC]);
       prisma.staffPresenceConfirmation.findMany.mockResolvedValue([
-        { staffId: 'staff-1', status: 'PRESENT', confirmedBy: null, updatedAt: new Date() },
-        { staffId: 'staff-2', status: 'ABSENT', confirmedBy: null, updatedAt: new Date() },
+        {
+          staffId: 'staff-1',
+          status: 'PRESENT',
+          confirmedBy: null,
+          updatedAt: new Date(),
+        },
+        {
+          staffId: 'staff-2',
+          status: 'ABSENT',
+          confirmedBy: null,
+          updatedAt: new Date(),
+        },
       ]);
       prisma.staffAttendance.findMany.mockResolvedValue([]);
 
       const result = await service.listDailyPresence('2026-08-04');
 
       expect(result.nonConfirmedCount).toBe(1);
-      expect(result.entries.find((e) => e.staffId === 'staff-3')?.status).toBe('NON_CONFIRMED');
+      expect(result.entries.find((e) => e.staffId === 'staff-3')?.status).toBe(
+        'NON_CONFIRMED',
+      );
     });
 
     it('flags a staff member on active leave (StaffAttendance) as onLeave without affecting their confirmation status', async () => {
       prisma.staffMember.findMany.mockResolvedValue([staffA]);
       prisma.staffPresenceConfirmation.findMany.mockResolvedValue([]);
       prisma.staffAttendance.findMany.mockResolvedValue([
-        { staffId: 'staff-1', type: 'conge', dateDebut: new Date('2026-08-01'), dateFin: new Date('2026-08-10') },
+        {
+          staffId: 'staff-1',
+          type: 'conge',
+          dateDebut: new Date('2026-08-01'),
+          dateFin: new Date('2026-08-10'),
+        },
       ]);
 
       const result = await service.listDailyPresence('2026-08-04');
@@ -230,8 +322,18 @@ describe('StaffService', () => {
       prisma.staffMember.findMany.mockResolvedValue([staffA, staffB, staffC]);
       prisma.staffPresenceConfirmation.findMany.mockResolvedValue([]);
       prisma.staffAttendance.findMany.mockResolvedValue([
-        { staffId: 'staff-1', type: 'conge', dateDebut: new Date('2026-08-01'), dateFin: new Date('2026-08-10') },
-        { staffId: 'staff-2', type: 'absence', dateDebut: new Date('2026-08-04'), dateFin: null },
+        {
+          staffId: 'staff-1',
+          type: 'conge',
+          dateDebut: new Date('2026-08-01'),
+          dateFin: new Date('2026-08-10'),
+        },
+        {
+          staffId: 'staff-2',
+          type: 'absence',
+          dateDebut: new Date('2026-08-04'),
+          dateFin: null,
+        },
       ]);
 
       const result = await service.listDailyPresence('2026-08-04');
@@ -241,7 +343,9 @@ describe('StaffService', () => {
       // counted.
       expect(result.entries).toHaveLength(3);
       expect(result.nonConfirmedCount).toBe(1);
-      expect(result.entries.find((e) => e.staffId === 'staff-3')?.onLeave).toBeNull();
+      expect(
+        result.entries.find((e) => e.staffId === 'staff-3')?.onLeave,
+      ).toBeNull();
     });
 
     it('a leave record that does not cover the selected date does not exclude the staff member', async () => {
@@ -264,14 +368,21 @@ describe('StaffService', () => {
   describe('existing StaffAttendance (Congé/Retard/Absence) is untouched', () => {
     it('still creates a leave record the same way', async () => {
       prisma.staffMember.findUniqueOrThrow.mockResolvedValue(staffA);
-      prisma.staffAttendance.create.mockResolvedValue({ id: 'att-1', type: 'conge' });
+      prisma.staffAttendance.create.mockResolvedValue({
+        id: 'att-1',
+        type: 'conge',
+      });
 
       const result = await service.createAttendance('staff-1', {
-        type: 'conge', dateDebut: '2026-08-01', dateFin: '2026-08-05',
+        type: 'conge',
+        dateDebut: '2026-08-01',
+        dateFin: '2026-08-05',
       });
 
       expect(prisma.staffAttendance.create).toHaveBeenCalledWith(
-        expect.objectContaining({ data: expect.objectContaining({ staffId: 'staff-1', type: 'conge' }) }),
+        matching({
+          data: matching({ staffId: 'staff-1', type: 'conge' }),
+        }),
       );
       expect(result.id).toBe('att-1');
     });
@@ -279,7 +390,12 @@ describe('StaffService', () => {
     it('findAllStaff still derives ABSENT/CONGE status from active StaffAttendance records', async () => {
       prisma.staffMember.findMany.mockResolvedValue([staffA]);
       prisma.staffAttendance.findMany.mockResolvedValue([
-        { staffId: 'staff-1', type: 'absence', dateDebut: new Date(), dateFin: null },
+        {
+          staffId: 'staff-1',
+          type: 'absence',
+          dateDebut: new Date(),
+          dateFin: null,
+        },
       ]);
 
       const result = await service.findAllStaff();

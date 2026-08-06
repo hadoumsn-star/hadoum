@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { NotificationsService } from './notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { matching } from '../test-utils/jest-matchers';
 
 type MockPrisma = {
   notification: {
@@ -57,17 +58,14 @@ describe('NotificationsService', () => {
 
       expect(result).toEqual({ id: 'n1' });
       expect(prisma.notification.create).toHaveBeenCalledWith({
-        data: expect.objectContaining({ recipientId: 'u1' }),
+        data: matching({ recipientId: 'u1' }),
       });
     });
   });
 
   describe('createForRole', () => {
     it('fans out a notification to every user with the given role', async () => {
-      prisma.user.findMany.mockResolvedValue([
-        { id: 'sup1' },
-        { id: 'sup2' },
-      ]);
+      prisma.user.findMany.mockResolvedValue([{ id: 'sup1' }, { id: 'sup2' }]);
       prisma.notification.create.mockResolvedValue({ id: 'n1' });
 
       await service.createForRole('SUPERVISOR', {
@@ -82,10 +80,10 @@ describe('NotificationsService', () => {
       });
       expect(prisma.notification.create).toHaveBeenCalledTimes(2);
       expect(prisma.notification.create).toHaveBeenCalledWith({
-        data: expect.objectContaining({ recipientId: 'sup1' }),
+        data: matching({ recipientId: 'sup1' }),
       });
       expect(prisma.notification.create).toHaveBeenCalledWith({
-        data: expect.objectContaining({ recipientId: 'sup2' }),
+        data: matching({ recipientId: 'sup2' }),
       });
     });
 

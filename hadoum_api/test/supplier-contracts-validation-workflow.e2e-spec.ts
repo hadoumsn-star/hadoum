@@ -16,6 +16,44 @@ import { PrismaService } from '../src/prisma/prisma.service';
 // Reuses the exact same engine every other resource type (maintenance
 // tickets, stock items, ...) already goes through — nothing here
 // reimplements validation state machinery of its own.
+
+interface SupplierContractResponse {
+  id: string;
+  status: string;
+  validationStatus: string | null;
+  pendingValidationAction: string | null;
+  contractName: string;
+  amount: number;
+  effectiveStatus: string;
+}
+
+interface ValidationHistoryEntry {
+  status: string;
+  comment: string | null;
+  submittedBy: { id: string };
+}
+
+interface PendingValidationEntry {
+  resourceType: string;
+  resourceId: string;
+  resource: {
+    contractName: string;
+    supplierName: string;
+    category: string;
+    startDate: string;
+    endDate: string;
+    amount: number;
+  };
+  submittedBy: { id: string };
+  submittedAt: string;
+}
+
+interface NotificationEntry {
+  title: string;
+  resourceId: string;
+  message: string;
+}
+
 describe('Supplier Contracts — automatic validation workflow (e2e)', () => {
   let app: INestApplication<App>;
   let prisma: PrismaService;
@@ -34,14 +72,18 @@ describe('Supplier Contracts — automatic validation workflow (e2e)', () => {
     directorId = users.director.id;
 
     directorToken = (
-      await request(app.getHttpServer())
+      (await request(app.getHttpServer())
         .post('/api/auth/login')
-        .send({ email: users.director.email, password: TEST_PASSWORD })
+        .send({ email: users.director.email, password: TEST_PASSWORD })) as {
+        body: { token: string };
+      }
     ).body.token;
     supervisorToken = (
-      await request(app.getHttpServer())
+      (await request(app.getHttpServer())
         .post('/api/auth/login')
-        .send({ email: users.supervisor.email, password: TEST_PASSWORD })
+        .send({ email: users.supervisor.email, password: TEST_PASSWORD })) as {
+        body: { token: string };
+      }
     ).body.token;
   });
 
@@ -65,20 +107,24 @@ describe('Supplier Contracts — automatic validation workflow (e2e)', () => {
   }
 
   it('a DIRECTOR-created contract immediately becomes pending validation — no separate submit step', async () => {
-    const created = await createContract().expect(201);
+    const created = (await createContract().expect(201)) as {
+      body: SupplierContractResponse;
+    };
 
     expect(created.body.status).toBe('BROUILLON');
     expect(created.body.validationStatus).toBe('PENDING_VALIDATION');
     expect(created.body.pendingValidationAction).toBe('CREATION');
   });
 
-  it('a ValidationRequest is created automatically, visible in the contract\'s own validation history', async () => {
-    const created = await createContract().expect(201);
+  it("a ValidationRequest is created automatically, visible in the contract's own validation history", async () => {
+    const created = (await createContract().expect(201)) as {
+      body: SupplierContractResponse;
+    };
 
-    const history = await request(app.getHttpServer())
+    const history = (await request(app.getHttpServer())
       .get(`/api/supplier-contracts/${created.body.id}/validation-history`)
       .set('Authorization', `Bearer ${directorToken}`)
-      .expect(200);
+      .expect(200)) as { body: ValidationHistoryEntry[] };
 
     expect(history.body).toHaveLength(1);
     expect(history.body[0].status).toBe('PENDING_VALIDATION');
@@ -86,19 +132,24 @@ describe('Supplier Contracts — automatic validation workflow (e2e)', () => {
   });
 
   it('SUPERVISOR sees the new contract in the generic validation queue with the fields needed to triage it', async () => {
-    const created = await createContract({ contractName: 'Contrat visible par le superviseur' }).expect(201);
+    const created = (await createContract({
+      contractName: 'Contrat visible par le superviseur',
+    }).expect(201)) as { body: SupplierContractResponse };
 
-    const pending = await request(app.getHttpServer())
+    const pending = (await request(app.getHttpServer())
       .get('/api/validations/pending')
       .set('Authorization', `Bearer ${supervisorToken}`)
-      .expect(200);
+      .expect(200)) as { body: PendingValidationEntry[] };
 
     const entry = pending.body.find(
-      (v: { resourceType: string; resourceId: string }) =>
-        v.resourceType === 'SUPPLIER_CONTRACT' && v.resourceId === created.body.id,
+      (v) =>
+        v.resourceType === 'SUPPLIER_CONTRACT' &&
+        v.resourceId === created.body.id,
     );
-    expect(entry).toBeTruthy();
-    expect(entry.resource.contractName).toBe('Contrat visible par le superviseur');
+    if (!entry) throw new Error('Pending validation entry not found');
+    expect(entry.resource.contractName).toBe(
+      'Contrat visible par le superviseur',
+    );
     expect(entry.resource.supplierName).toBe('SENELEC');
     expect(entry.resource.category).toBe('ELECTRICITE');
     expect(entry.resource.startDate).toBeTruthy();
@@ -109,33 +160,39 @@ describe('Supplier Contracts — automatic validation workflow (e2e)', () => {
   });
 
   it('SUPERVISOR approves: contract becomes ACTIF, validation history is kept, it leaves pending validations', async () => {
-    const created = await createContract().expect(201);
+    const created = (await createContract().expect(201)) as {
+      body: SupplierContractResponse;
+    };
 
-    const approved = await request(app.getHttpServer())
+    const approved = (await request(app.getHttpServer())
       .patch(`/api/supplier-contracts/${created.body.id}/approve`)
       .set('Authorization', `Bearer ${supervisorToken}`)
       .send({})
-      .expect(200);
+      .expect(200)) as { body: SupplierContractResponse };
 
     expect(approved.body.status).toBe('ACTIF');
     expect(approved.body.validationStatus).toBe('APPROVED');
 
-    const history = await request(app.getHttpServer())
+    const history = (await request(app.getHttpServer())
       .get(`/api/supplier-contracts/${created.body.id}/validation-history`)
       .set('Authorization', `Bearer ${directorToken}`)
-      .expect(200);
+      .expect(200)) as { body: ValidationHistoryEntry[] };
     expect(history.body).toHaveLength(1);
     expect(history.body[0].status).toBe('APPROVED');
 
-    const pending = await request(app.getHttpServer())
+    const pending = (await request(app.getHttpServer())
       .get('/api/validations/pending')
       .set('Authorization', `Bearer ${supervisorToken}`)
-      .expect(200);
-    expect(pending.body.some((v: { resourceId: string }) => v.resourceId === created.body.id)).toBe(false);
+      .expect(200)) as { body: PendingValidationEntry[] };
+    expect(pending.body.some((v) => v.resourceId === created.body.id)).toBe(
+      false,
+    );
   });
 
   it('SUPERVISOR rejects: requires a non-empty comment, keeps the contract readable, stores the reason', async () => {
-    const created = await createContract().expect(201);
+    const created = (await createContract().expect(201)) as {
+      body: SupplierContractResponse;
+    };
 
     await request(app.getHttpServer())
       .patch(`/api/supplier-contracts/${created.body.id}/reject`)
@@ -149,28 +206,30 @@ describe('Supplier Contracts — automatic validation workflow (e2e)', () => {
       .send({ comment: '' })
       .expect(400);
 
-    const rejected = await request(app.getHttpServer())
+    const rejected = (await request(app.getHttpServer())
       .patch(`/api/supplier-contracts/${created.body.id}/reject`)
       .set('Authorization', `Bearer ${supervisorToken}`)
       .send({ comment: 'Fournisseur non homologué' })
-      .expect(200);
+      .expect(200)) as { body: SupplierContractResponse };
     expect(rejected.body.validationStatus).toBe('REJECTED');
 
-    const readBack = await request(app.getHttpServer())
+    const readBack = (await request(app.getHttpServer())
       .get(`/api/supplier-contracts/${created.body.id}`)
       .set('Authorization', `Bearer ${directorToken}`)
-      .expect(200);
+      .expect(200)) as { body: SupplierContractResponse };
     expect(readBack.body.contractName).toBe(created.body.contractName);
 
-    const history = await request(app.getHttpServer())
+    const history = (await request(app.getHttpServer())
       .get(`/api/supplier-contracts/${created.body.id}/validation-history`)
       .set('Authorization', `Bearer ${directorToken}`)
-      .expect(200);
+      .expect(200)) as { body: ValidationHistoryEntry[] };
     expect(history.body[0].comment).toBe('Fournisseur non homologué');
   });
 
   it('DIRECTOR cannot approve or reject', async () => {
-    const created = await createContract().expect(201);
+    const created = (await createContract().expect(201)) as {
+      body: SupplierContractResponse;
+    };
 
     await request(app.getHttpServer())
       .patch(`/api/supplier-contracts/${created.body.id}/approve`)
@@ -186,7 +245,9 @@ describe('Supplier Contracts — automatic validation workflow (e2e)', () => {
   });
 
   it('prevents a duplicate pending ValidationRequest: submitting again while already pending is rejected', async () => {
-    const created = await createContract().expect(201);
+    const created = (await createContract().expect(201)) as {
+      body: SupplierContractResponse;
+    };
 
     await request(app.getHttpServer())
       .post(`/api/supplier-contracts/${created.body.id}/submit-validation`)
@@ -196,18 +257,20 @@ describe('Supplier Contracts — automatic validation workflow (e2e)', () => {
   });
 
   it('a rejected contract remains editable and can be resubmitted through the existing submit-validation workflow', async () => {
-    const created = await createContract().expect(201);
+    const created = (await createContract().expect(201)) as {
+      body: SupplierContractResponse;
+    };
     await request(app.getHttpServer())
       .patch(`/api/supplier-contracts/${created.body.id}/reject`)
       .set('Authorization', `Bearer ${supervisorToken}`)
       .send({ comment: 'Montant à revoir' })
       .expect(200);
 
-    const edited = await request(app.getHttpServer())
+    const edited = (await request(app.getHttpServer())
       .patch(`/api/supplier-contracts/${created.body.id}`)
       .set('Authorization', `Bearer ${directorToken}`)
       .send({ amount: 250_000 })
-      .expect(200);
+      .expect(200)) as { body: SupplierContractResponse };
     expect(edited.body.amount).toBe(250_000);
 
     await request(app.getHttpServer())
@@ -216,88 +279,98 @@ describe('Supplier Contracts — automatic validation workflow (e2e)', () => {
       .send({})
       .expect(201);
 
-    const resubmitted = await request(app.getHttpServer())
+    const resubmitted = (await request(app.getHttpServer())
       .get(`/api/supplier-contracts/${created.body.id}`)
       .set('Authorization', `Bearer ${directorToken}`)
-      .expect(200);
+      .expect(200)) as { body: SupplierContractResponse };
     expect(resubmitted.body.validationStatus).toBe('PENDING_VALIDATION');
 
-    const approved = await request(app.getHttpServer())
+    const approved = (await request(app.getHttpServer())
       .patch(`/api/supplier-contracts/${created.body.id}/approve`)
       .set('Authorization', `Bearer ${supervisorToken}`)
       .send({})
-      .expect(200);
+      .expect(200)) as { body: SupplierContractResponse };
     expect(approved.body.status).toBe('ACTIF');
   });
 
   it('notifies SUPERVISOR exactly once on creation, with the required title', async () => {
-    const users = await request(app.getHttpServer())
+    const users = (await request(app.getHttpServer())
       .get('/api/notifications')
       .set('Authorization', `Bearer ${supervisorToken}`)
-      .expect(200);
+      .expect(200)) as { body: NotificationEntry[] };
     const before = users.body.length;
 
     await createContract({ contractName: 'Contrat notif unique' }).expect(201);
 
-    const after = await request(app.getHttpServer())
+    const after = (await request(app.getHttpServer())
       .get('/api/notifications')
       .set('Authorization', `Bearer ${supervisorToken}`)
-      .expect(200);
+      .expect(200)) as { body: NotificationEntry[] };
 
     const matching = after.body.filter(
-      (n: { title: string }) => n.title === 'Nouveau contrat fournisseur à valider',
+      (n) => n.title === 'Nouveau contrat fournisseur à valider',
     );
     expect(matching).toHaveLength(1);
     expect(after.body.length).toBe(before + 1);
   });
 
   it('notifies the creating DIRECTOR on approval and on rejection, with the required titles', async () => {
-    const approvedContract = await createContract({ contractName: 'À approuver' }).expect(201);
+    const approvedContract = (await createContract({
+      contractName: 'À approuver',
+    }).expect(201)) as { body: SupplierContractResponse };
     await request(app.getHttpServer())
       .patch(`/api/supplier-contracts/${approvedContract.body.id}/approve`)
       .set('Authorization', `Bearer ${supervisorToken}`)
       .send({})
       .expect(200);
 
-    const rejectedContract = await createContract({ contractName: 'À refuser' }).expect(201);
+    const rejectedContract = (await createContract({
+      contractName: 'À refuser',
+    }).expect(201)) as { body: SupplierContractResponse };
     await request(app.getHttpServer())
       .patch(`/api/supplier-contracts/${rejectedContract.body.id}/reject`)
       .set('Authorization', `Bearer ${supervisorToken}`)
       .send({ comment: 'Documents manquants' })
       .expect(200);
 
-    const directorNotifications = await request(app.getHttpServer())
+    const directorNotifications = (await request(app.getHttpServer())
       .get('/api/notifications')
       .set('Authorization', `Bearer ${directorToken}`)
-      .expect(200);
+      .expect(200)) as { body: NotificationEntry[] };
 
     const approvalNotif = directorNotifications.body.find(
-      (n: { title: string; resourceId: string }) =>
-        n.title === 'Contrat fournisseur approuvé' && n.resourceId === approvedContract.body.id,
+      (n) =>
+        n.title === 'Contrat fournisseur approuvé' &&
+        n.resourceId === approvedContract.body.id,
     );
     expect(approvalNotif).toBeTruthy();
 
     const rejectionNotif = directorNotifications.body.find(
-      (n: { title: string; resourceId: string }) =>
-        n.title === 'Contrat fournisseur refusé' && n.resourceId === rejectedContract.body.id,
+      (n) =>
+        n.title === 'Contrat fournisseur refusé' &&
+        n.resourceId === rejectedContract.body.id,
     );
     expect(rejectionNotif).toBeTruthy();
-    expect(rejectionNotif.message).toContain('Documents manquants');
+    expect(rejectionNotif?.message).toContain('Documents manquants');
   });
 
   it('Expire bientôt is untouched: a contract still reports EXPIRE_BIENTOT within the warning window', async () => {
-    const soon = new Date(Date.now() + 10 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-    const created = await createContract({ endDate: soon }).expect(201);
+    const soon = new Date(Date.now() + 10 * 24 * 60 * 60 * 1000)
+      .toISOString()
+      .slice(0, 10);
+    const created = (await createContract({ endDate: soon }).expect(201)) as {
+      body: SupplierContractResponse;
+    };
     await request(app.getHttpServer())
       .patch(`/api/supplier-contracts/${created.body.id}/approve`)
       .set('Authorization', `Bearer ${supervisorToken}`)
       .send({})
       .expect(200);
 
-    const res = await request(app.getHttpServer())
+    const res = (await request(app.getHttpServer())
       .get(`/api/supplier-contracts/${created.body.id}`)
       .set('Authorization', `Bearer ${directorToken}`)
-      .expect(200);
+      .expect(200)) as { body: SupplierContractResponse };
     expect(res.body.effectiveStatus).toBe('EXPIRE_BIENTOT');
   });
 });

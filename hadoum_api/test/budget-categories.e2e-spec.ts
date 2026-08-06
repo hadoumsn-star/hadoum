@@ -16,6 +16,28 @@ import { PrismaService } from '../src/prisma/prisma.service';
 // (VETEMENTS, TRANSPORT, ETUDES, SPORT, LOISIRS, BUREAU_FACTURES) are
 // reliable, deterministic test subjects — nothing else in the schema can
 // have touched them before this PR existed.
+
+interface BudgetLineEntry {
+  category: string;
+  budgetXof: number;
+}
+
+interface TransactionResponse {
+  category: string;
+}
+
+interface DashboardCategory {
+  category: string;
+  budgetXof: number;
+  realizedXof: number;
+  totalCommittedPercentage: number | null;
+  ecartXof: number;
+}
+
+interface DashboardResponse {
+  byCategory: DashboardCategory[];
+}
+
 describe('Default budget categories (e2e)', () => {
   let app: INestApplication<App>;
   let prisma: PrismaService;
@@ -30,9 +52,11 @@ describe('Default budget categories (e2e)', () => {
     await cleanDatabase(prisma);
     const users = await seedTestUsers(prisma);
     directorToken = (
-      await request(app.getHttpServer())
+      (await request(app.getHttpServer())
         .post('/api/auth/login')
-        .send({ email: users.director.email, password: TEST_PASSWORD })
+        .send({ email: users.director.email, password: TEST_PASSWORD })) as {
+        body: { token: string };
+      }
     ).body.token;
   });
 
@@ -47,12 +71,19 @@ describe('Default budget categories (e2e)', () => {
       .send();
   }
 
-  function findLine(body: any[], category: string) {
-    return body.find((l) => l.category === category);
+  function findLine(
+    body: BudgetLineEntry[],
+    category: string,
+  ): BudgetLineEntry {
+    const line = body.find((l) => l.category === category);
+    if (!line) throw new Error(`No budget line for category ${category}`);
+    return line;
   }
 
   it('creates all 9 default categories on an empty month, including SALAIRES at 0', async () => {
-    const res = await ensureDefaults().expect(201);
+    const res = (await ensureDefaults().expect(201)) as {
+      body: BudgetLineEntry[];
+    };
 
     const expected: Record<string, number> = {
       ALIMENTATION: 250000,
@@ -74,11 +105,11 @@ describe('Default budget categories (e2e)', () => {
 
   it('calling it twice creates no duplicates', async () => {
     await ensureDefaults().expect(201);
-    const second = await ensureDefaults().expect(201);
+    const second = (await ensureDefaults().expect(201)) as {
+      body: BudgetLineEntry[];
+    };
 
-    const vetements = second.body.filter(
-      (l: any) => l.category === 'VETEMENTS',
-    );
+    const vetements = second.body.filter((l) => l.category === 'VETEMENTS');
     expect(vetements).toHaveLength(1);
     expect(second.body).toHaveLength(9);
   });
@@ -96,7 +127,9 @@ describe('Default budget categories (e2e)', () => {
       })
       .expect(200);
 
-    const res = await ensureDefaults().expect(201);
+    const res = (await ensureDefaults().expect(201)) as {
+      body: BudgetLineEntry[];
+    };
 
     const transport = findLine(res.body, 'TRANSPORT');
     expect(transport.budgetXof).toBe(999000); // untouched, not reset to 18000
@@ -107,7 +140,7 @@ describe('Default budget categories (e2e)', () => {
   it('an expense can be tagged with a new default category (VETEMENTS) and shows up as consumed', async () => {
     await ensureDefaults().expect(201);
     const now = new Date();
-    const created = await request(app.getHttpServer())
+    const created = (await request(app.getHttpServer())
       .post('/api/finances/transactions')
       .set('Authorization', `Bearer ${directorToken}`)
       .send({
@@ -118,18 +151,20 @@ describe('Default budget categories (e2e)', () => {
         date: now.toISOString().slice(0, 10),
         status: 'VALIDE',
       })
-      .expect(201);
+      .expect(201)) as { body: TransactionResponse };
     expect(created.body.category).toBe('VETEMENTS');
 
-    const dashboard = await request(app.getHttpServer())
+    const dashboard = (await request(app.getHttpServer())
       .get(
         `/api/finances/dashboard?year=${now.getFullYear()}&month=${now.getMonth() + 1}`,
       )
       .set('Authorization', `Bearer ${directorToken}`)
-      .expect(200);
+      .expect(200)) as { body: DashboardResponse };
     const vetements = dashboard.body.byCategory.find(
-      (c: any) => c.category === 'VETEMENTS',
+      (c) => c.category === 'VETEMENTS',
     );
+    if (!vetements)
+      throw new Error('VETEMENTS not found in dashboard.byCategory');
     expect(vetements.budgetXof).toBe(20000);
     expect(vetements.realizedXof).toBe(5000);
   });
@@ -140,7 +175,7 @@ describe('Default budget categories (e2e)', () => {
   it('SALAIRES (0 budget) never produces a divide-by-zero and displays correctly', async () => {
     await ensureDefaults().expect(201);
     const now = new Date();
-    const created = await request(app.getHttpServer())
+    const created = (await request(app.getHttpServer())
       .post('/api/finances/transactions')
       .set('Authorization', `Bearer ${directorToken}`)
       .send({
@@ -151,18 +186,20 @@ describe('Default budget categories (e2e)', () => {
         date: now.toISOString().slice(0, 10),
         status: 'VALIDE',
       })
-      .expect(201);
+      .expect(201)) as { body: TransactionResponse };
     expect(created.body.category).toBe('SALAIRES');
 
-    const dashboard = await request(app.getHttpServer())
+    const dashboard = (await request(app.getHttpServer())
       .get(
         `/api/finances/dashboard?year=${now.getFullYear()}&month=${now.getMonth() + 1}`,
       )
       .set('Authorization', `Bearer ${directorToken}`)
-      .expect(200);
+      .expect(200)) as { body: DashboardResponse };
     const salaires = dashboard.body.byCategory.find(
-      (c: any) => c.category === 'SALAIRES',
+      (c) => c.category === 'SALAIRES',
     );
+    if (!salaires)
+      throw new Error('SALAIRES not found in dashboard.byCategory');
     expect(salaires.budgetXof).toBe(0);
     expect(salaires.realizedXof).toBe(150000);
     // Every percentage/ratio field is null instead of Infinity/NaN when

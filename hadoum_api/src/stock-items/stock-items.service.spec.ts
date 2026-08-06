@@ -10,31 +10,31 @@ import { UploadService } from '../upload/upload.service';
 import { ValidationsService } from '../validations/validations.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { StockMovementsService } from '../stock-movements/stock-movements.service';
+import { withMockTransaction } from '../test-utils/mock-prisma';
+import {
+  matching,
+  stringContaining,
+  matchAnything,
+} from '../test-utils/jest-matchers';
 
 function createMockPrisma() {
-  const stockItem = {
-    create: jest.fn(),
-    update: jest.fn(),
-    updateMany: jest.fn(),
-    findMany: jest.fn(),
-    findUnique: jest.fn(),
-    findUniqueOrThrow: jest.fn(),
-  };
-  const stockItemDocument = {
-    create: jest.fn(),
-    findMany: jest.fn(),
-    findUnique: jest.fn(),
-    delete: jest.fn(),
-  };
-  const notification = { findFirst: jest.fn() };
-
-  const prisma: any = {
-    stockItem,
-    stockItemDocument,
-    notification,
-    $transaction: jest.fn((cb: (tx: unknown) => unknown) => cb(prisma)),
-  };
-  return prisma;
+  return withMockTransaction({
+    stockItem: {
+      create: jest.fn(),
+      update: jest.fn(),
+      updateMany: jest.fn(),
+      findMany: jest.fn(),
+      findUnique: jest.fn(),
+      findUniqueOrThrow: jest.fn(),
+    },
+    stockItemDocument: {
+      create: jest.fn(),
+      findMany: jest.fn(),
+      findUnique: jest.fn(),
+      delete: jest.fn(),
+    },
+    notification: { findFirst: jest.fn() },
+  });
 }
 
 describe('StockItemsService', () => {
@@ -152,7 +152,7 @@ describe('StockItemsService', () => {
 
       expect(movements.record).toHaveBeenCalledWith(
         prisma,
-        expect.objectContaining({
+        matching({
           type: 'ENTREE',
           quantity: 100,
           quantityBefore: 0,
@@ -215,14 +215,14 @@ describe('StockItemsService', () => {
       const result = await service.archive('item-1', 'director-1');
 
       expect(validations.create).toHaveBeenCalledWith(
-        expect.objectContaining({
+        matching({
           resourceType: 'STOCK_ITEM',
           resourceId: 'item-1',
         }),
       );
       expect(notifications.createForRole).toHaveBeenCalledWith(
         'SUPERVISOR',
-        expect.objectContaining({ type: 'VALIDATION_SUBMITTED' }),
+        matching({ type: 'VALIDATION_SUBMITTED' }),
       );
       expect(result.pendingValidationAction).toBe('STOCK_ITEM_ARCHIVE');
     });
@@ -270,7 +270,7 @@ describe('StockItemsService', () => {
       expect(validations.create).not.toHaveBeenCalled();
       expect(movements.record).toHaveBeenCalledWith(
         prisma,
-        expect.objectContaining({ type: 'SORTIE', quantity: 10 }),
+        matching({ type: 'SORTIE', quantity: 10 }),
       );
     });
 
@@ -450,13 +450,13 @@ describe('StockItemsService', () => {
       const result = await service.approve('item-1', 'supervisor-1', {});
 
       expect(prisma.stockItem.updateMany).toHaveBeenCalledWith(
-        expect.objectContaining({
+        matching({
           where: { id: 'item-1', currentQuantity: { gte: 80 } },
         }),
       );
       expect(movements.record).toHaveBeenCalled();
       expect(notifications.create).toHaveBeenCalledWith(
-        expect.objectContaining({
+        matching({
           type: 'VALIDATION_APPROVED',
           recipientId: 'director-1',
         }),
@@ -530,7 +530,7 @@ describe('StockItemsService', () => {
 
       expect(result.validationStatus).toBe('REJECTED');
       expect(notifications.create).toHaveBeenCalledWith(
-        expect.objectContaining({ type: 'VALIDATION_REJECTED' }),
+        matching({ type: 'VALIDATION_REJECTED' }),
       );
     });
 
@@ -564,8 +564,8 @@ describe('StockItemsService', () => {
       } as any);
 
       expect(prisma.stockItem.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: expect.objectContaining({ category: 'ALIMENTAIRE' }),
+        matching({
+          where: matching({ category: 'ALIMENTAIRE' }),
         }),
       );
       expect(result[0].id).toBe('i-out');
@@ -597,7 +597,7 @@ describe('StockItemsService', () => {
 
       expect(notifications.createForRole).toHaveBeenCalledWith(
         'DIRECTOR',
-        expect.objectContaining({ type: 'STOCK_OUT' }),
+        matching({ type: 'STOCK_OUT' }),
       );
     });
 
@@ -630,7 +630,7 @@ describe('StockItemsService', () => {
 
       expect(movements.record).toHaveBeenCalledWith(
         prisma,
-        expect.objectContaining({ type: 'TRANSFERT' }),
+        matching({ type: 'TRANSFERT' }),
       );
       expect(result.storageLocation).toBe('Nouvel entrepôt');
     });
@@ -654,7 +654,7 @@ describe('StockItemsService', () => {
       upload.upload.mockResolvedValue('stock-items/item-1/file.pdf');
       prisma.stockItemDocument.create.mockResolvedValue({ id: 'doc-1' });
 
-      const file = { mimetype: 'application/pdf' } as any;
+      const file = { mimetype: 'application/pdf' } as Express.Multer.File;
       await service.uploadDocument(
         'item-1',
         'director-1',
@@ -664,8 +664,8 @@ describe('StockItemsService', () => {
       );
 
       expect(prisma.stockItemDocument.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({
+        matching({
+          data: matching({
             stockItemId: 'item-1',
             uploadedById: 'director-1',
           }),
@@ -755,7 +755,7 @@ describe('StockItemsService', () => {
       );
 
       expect(result).toEqual(
-        expect.objectContaining({
+        matching({
           expectedQuantity: 100,
           actualQuantity: 100,
           difference: 0,
@@ -788,8 +788,8 @@ describe('StockItemsService', () => {
       expect(result.actualQuantity).toBe(105);
       expect(result.difference).toBe(5);
       expect(movements.record).toHaveBeenCalledWith(
-        expect.anything(),
-        expect.objectContaining({ type: 'INVENTAIRE_CORRECTION' }),
+        matchAnything(),
+        matching({ type: 'INVENTAIRE_CORRECTION' }),
       );
       expect(result.item.currentQuantity).toBe(105);
     });
@@ -816,8 +816,8 @@ describe('StockItemsService', () => {
 
       expect(result.difference).toBe(-5);
       expect(movements.record).toHaveBeenCalledWith(
-        expect.anything(),
-        expect.objectContaining({
+        matchAnything(),
+        matching({
           type: 'INVENTAIRE_CORRECTION',
           reason: 'Comptage mensuel',
         }),
@@ -839,9 +839,9 @@ describe('StockItemsService', () => {
       });
 
       expect(movements.record).toHaveBeenCalledWith(
-        expect.anything(),
-        expect.objectContaining({
-          reason: expect.stringContaining('inventaire physique'),
+        matchAnything(),
+        matching({
+          reason: stringContaining('inventaire physique'),
         }),
       );
     });
@@ -938,15 +938,15 @@ describe('StockItemsService', () => {
       const result = await service.approve('item-1', 'supervisor-1', {});
 
       expect(prisma.stockItem.updateMany).toHaveBeenCalledWith(
-        expect.objectContaining({
+        matching({
           where: { id: 'item-1' },
-          data: expect.objectContaining({ currentQuantity: { increment: 40 } }),
+          data: matching({ currentQuantity: { increment: 40 } }),
         }),
       );
       expect(result.currentQuantity).toBe(140);
       expect(movements.record).toHaveBeenCalledWith(
-        expect.anything(),
-        expect.objectContaining({ quantityBefore: 100, quantityAfter: 140 }),
+        matchAnything(),
+        matching({ quantityBefore: 100, quantityAfter: 140 }),
       );
     });
 
@@ -973,9 +973,9 @@ describe('StockItemsService', () => {
       const result = await service.approve('item-1', 'supervisor-1', {});
 
       expect(prisma.stockItem.updateMany).toHaveBeenCalledWith(
-        expect.objectContaining({
+        matching({
           where: { id: 'item-1', currentQuantity: { gte: 50 } },
-          data: expect.objectContaining({ currentQuantity: { decrement: 50 } }),
+          data: matching({ currentQuantity: { decrement: 50 } }),
         }),
       );
       expect(result.currentQuantity).toBe(50);
@@ -1000,9 +1000,9 @@ describe('StockItemsService', () => {
       await service.approve('item-1', 'supervisor-1', {});
 
       expect(prisma.stockItem.updateMany).toHaveBeenCalledWith(
-        expect.objectContaining({
+        matching({
           where: { id: 'item-1', currentQuantity: { gte: 80 } },
-          data: expect.objectContaining({ currentQuantity: { decrement: 80 } }),
+          data: matching({ currentQuantity: { decrement: 80 } }),
         }),
       );
     });

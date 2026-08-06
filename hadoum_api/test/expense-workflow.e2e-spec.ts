@@ -17,6 +17,35 @@ import { PrismaService } from '../src/prisma/prisma.service';
 // state machine from PR 5A, and the shared ValidationsService) stay
 // consistent end-to-end, not just under mocks (see
 // expense-workflow.service.spec.ts for the unit-level coverage).
+
+interface TransactionResponse {
+  id: string;
+  expenseWorkflowStatus: string | null;
+}
+
+interface PendingValidationEntry {
+  resourceId: string;
+  resourceType: string;
+  comment: string | null;
+  resource: { label: string; amountXof: number };
+}
+
+interface ValidationHistoryEntry {
+  status: string;
+  comment: string | null;
+  submittedBy: { id: string };
+  reviewedBy: { id: string };
+}
+
+interface SpaceResponse {
+  id: string;
+}
+
+interface MaintenanceTicketResponse {
+  id: string;
+  status: string;
+}
+
 describe('Expense workflow validation integration (e2e)', () => {
   let app: INestApplication<App>;
   let prisma: PrismaService;
@@ -33,14 +62,18 @@ describe('Expense workflow validation integration (e2e)', () => {
     const users = await seedTestUsers(prisma);
 
     directorToken = (
-      await request(app.getHttpServer())
+      (await request(app.getHttpServer())
         .post('/api/auth/login')
-        .send({ email: users.director.email, password: TEST_PASSWORD })
+        .send({ email: users.director.email, password: TEST_PASSWORD })) as {
+        body: { token: string };
+      }
     ).body.token;
     supervisorToken = (
-      await request(app.getHttpServer())
+      (await request(app.getHttpServer())
         .post('/api/auth/login')
-        .send({ email: users.supervisor.email, password: TEST_PASSWORD })
+        .send({ email: users.supervisor.email, password: TEST_PASSWORD })) as {
+        body: { token: string };
+      }
     ).body.token;
 
     // PR 5C requires an available BudgetLine to approve an expense (see
@@ -86,37 +119,39 @@ describe('Expense workflow validation integration (e2e)', () => {
   // ─── Scenario 1 ───────────────────────────────────────────────────────
 
   it('scenario 1: submit -> supervisor sees it pending -> approve -> APPROVED, history shows both steps', async () => {
-    const created = await createExpense().expect(201);
+    const created = (await createExpense().expect(201)) as {
+      body: TransactionResponse;
+    };
     const id = created.body.id;
 
-    const submitted = await request(app.getHttpServer())
+    const submitted = (await request(app.getHttpServer())
       .post(`/api/finances/transactions/${id}/submit`)
       .set('Authorization', `Bearer ${directorToken}`)
       .send({ comment: 'Merci de valider' })
-      .expect(201);
+      .expect(201)) as { body: TransactionResponse };
     expect(submitted.body.expenseWorkflowStatus).toBe('PENDING_APPROVAL');
 
-    const pending = await request(app.getHttpServer())
+    const pending = (await request(app.getHttpServer())
       .get('/api/validations/pending')
       .set('Authorization', `Bearer ${supervisorToken}`)
-      .expect(200);
-    const pendingEntry = pending.body.find(
-      (v: { resourceId: string }) => v.resourceId === id,
-    );
-    expect(pendingEntry).toBeTruthy();
+      .expect(200)) as { body: PendingValidationEntry[] };
+    const pendingEntry = pending.body.find((v) => v.resourceId === id);
+    if (!pendingEntry) throw new Error('Pending validation entry not found');
     expect(pendingEntry.resourceType).toBe('EXPENSE_TRANSACTION');
     expect(pendingEntry.comment).toBe('Merci de valider');
     expect(pendingEntry.resource.label).toBe('Réparation plomberie');
     expect(pendingEntry.resource.amountXof).toBe(25000);
 
-    const approved = await request(app.getHttpServer())
+    const approved = (await request(app.getHttpServer())
       .post(`/api/finances/transactions/${id}/approve`)
       .set('Authorization', `Bearer ${supervisorToken}`)
       .send({ comment: 'OK' })
-      .expect(201);
+      .expect(201)) as { body: TransactionResponse };
     expect(approved.body.expenseWorkflowStatus).toBe('APPROVED');
 
-    const hist = await history(id, directorToken).expect(200);
+    const hist = (await history(id, directorToken).expect(200)) as {
+      body: ValidationHistoryEntry[];
+    };
     expect(hist.body).toHaveLength(1);
     expect(hist.body[0].status).toBe('APPROVED');
     expect(hist.body[0].submittedBy.id).toBeTruthy();
@@ -127,7 +162,9 @@ describe('Expense workflow validation integration (e2e)', () => {
   // ─── Scenario 2 ───────────────────────────────────────────────────────
 
   it('scenario 2: submit -> reject with comment -> resubmit with new comment -> approve, history shows both cycles in order', async () => {
-    const created = await createExpense().expect(201);
+    const created = (await createExpense().expect(201)) as {
+      body: TransactionResponse;
+    };
     const id = created.body.id;
 
     await request(app.getHttpServer())
@@ -136,28 +173,30 @@ describe('Expense workflow validation integration (e2e)', () => {
       .send({})
       .expect(201);
 
-    const rejected = await request(app.getHttpServer())
+    const rejected = (await request(app.getHttpServer())
       .post(`/api/finances/transactions/${id}/reject`)
       .set('Authorization', `Bearer ${supervisorToken}`)
       .send({ comment: 'Justificatif manquant' })
-      .expect(201);
+      .expect(201)) as { body: TransactionResponse };
     expect(rejected.body.expenseWorkflowStatus).toBe('REJECTED');
 
-    const resubmitted = await request(app.getHttpServer())
+    const resubmitted = (await request(app.getHttpServer())
       .post(`/api/finances/transactions/${id}/resubmit`)
       .set('Authorization', `Bearer ${directorToken}`)
       .send({ comment: 'Justificatif joint' })
-      .expect(201);
+      .expect(201)) as { body: TransactionResponse };
     expect(resubmitted.body.expenseWorkflowStatus).toBe('PENDING_APPROVAL');
 
-    const approved = await request(app.getHttpServer())
+    const approved = (await request(app.getHttpServer())
       .post(`/api/finances/transactions/${id}/approve`)
       .set('Authorization', `Bearer ${supervisorToken}`)
       .send({})
-      .expect(201);
+      .expect(201)) as { body: TransactionResponse };
     expect(approved.body.expenseWorkflowStatus).toBe('APPROVED');
 
-    const hist = await history(id, directorToken).expect(200);
+    const hist = (await history(id, directorToken).expect(200)) as {
+      body: ValidationHistoryEntry[];
+    };
     expect(hist.body).toHaveLength(2);
     // Newest first (matches every other resource type's history ordering).
     const [second, first] = hist.body;
@@ -170,7 +209,9 @@ describe('Expense workflow validation integration (e2e)', () => {
   // ─── Scenario 3 ───────────────────────────────────────────────────────
 
   it('scenario 3: reject without a comment is a validation error', async () => {
-    const created = await createExpense().expect(201);
+    const created = (await createExpense().expect(201)) as {
+      body: TransactionResponse;
+    };
     const id = created.body.id;
     await request(app.getHttpServer())
       .post(`/api/finances/transactions/${id}/submit`)
@@ -194,7 +235,9 @@ describe('Expense workflow validation integration (e2e)', () => {
   // ─── Scenario 4 ───────────────────────────────────────────────────────
 
   it('scenario 4: DIRECTOR cannot approve, SUPERVISOR cannot submit', async () => {
-    const created = await createExpense().expect(201);
+    const created = (await createExpense().expect(201)) as {
+      body: TransactionResponse;
+    };
     const id = created.body.id;
 
     await request(app.getHttpServer())
@@ -219,7 +262,9 @@ describe('Expense workflow validation integration (e2e)', () => {
   // ─── Scenario 5 ───────────────────────────────────────────────────────
 
   it('scenario 5: concurrent approve + reject on the same expense — only one succeeds', async () => {
-    const created = await createExpense().expect(201);
+    const created = (await createExpense().expect(201)) as {
+      body: TransactionResponse;
+    };
     const id = created.body.id;
     await request(app.getHttpServer())
       .post(`/api/finances/transactions/${id}/submit`)
@@ -244,15 +289,17 @@ describe('Expense workflow validation integration (e2e)', () => {
     // failing.
     expect(statuses).toEqual([201, 409]);
 
-    const final = await request(app.getHttpServer())
+    const final = (await request(app.getHttpServer())
       .get(`/api/finances/transactions/${id}`)
       .set('Authorization', `Bearer ${directorToken}`)
-      .expect(200);
+      .expect(200)) as { body: TransactionResponse };
     expect(['APPROVED', 'REJECTED']).toContain(
       final.body.expenseWorkflowStatus,
     );
 
-    const hist = await history(id, directorToken).expect(200);
+    const hist = (await history(id, directorToken).expect(200)) as {
+      body: ValidationHistoryEntry[];
+    };
     expect(hist.body).toHaveLength(1);
     expect(hist.body[0].status).toBe(final.body.expenseWorkflowStatus);
   });
@@ -260,13 +307,13 @@ describe('Expense workflow validation integration (e2e)', () => {
   // ─── Scenario 6 ───────────────────────────────────────────────────────
 
   it('scenario 6: existing non-expense validation flows still work (maintenance ticket lifecycle unaffected)', async () => {
-    const spaceRes = await request(app.getHttpServer())
+    const spaceRes = (await request(app.getHttpServer())
       .post('/api/spaces')
       .set('Authorization', `Bearer ${directorToken}`)
       .send({ name: 'Cuisine', type: 'CUISINE' })
-      .expect(201);
+      .expect(201)) as { body: SpaceResponse };
 
-    const ticket = await request(app.getHttpServer())
+    const ticket = (await request(app.getHttpServer())
       .post('/api/maintenance-tickets')
       .set('Authorization', `Bearer ${directorToken}`)
       .send({
@@ -275,7 +322,7 @@ describe('Expense workflow validation integration (e2e)', () => {
         urgency: 'CRITIQUE',
         reportedBy: 'Jean',
       })
-      .expect(201);
+      .expect(201)) as { body: MaintenanceTicketResponse };
 
     await request(app.getHttpServer())
       .post(`/api/maintenance-tickets/${ticket.body.id}/submit-validation`)
@@ -283,17 +330,17 @@ describe('Expense workflow validation integration (e2e)', () => {
       .send({})
       .expect(201);
 
-    const approved = await request(app.getHttpServer())
+    const approved = (await request(app.getHttpServer())
       .patch(`/api/maintenance-tickets/${ticket.body.id}/approve`)
       .set('Authorization', `Bearer ${supervisorToken}`)
       .send({})
-      .expect(200);
+      .expect(200)) as { body: MaintenanceTicketResponse };
     expect(approved.body.status).toBe('FERME');
 
-    const hist = await request(app.getHttpServer())
+    const hist = (await request(app.getHttpServer())
       .get(`/api/maintenance-tickets/${ticket.body.id}/validation-history`)
       .set('Authorization', `Bearer ${directorToken}`)
-      .expect(200);
+      .expect(200)) as { body: ValidationHistoryEntry[] };
     expect(hist.body).toHaveLength(1);
     expect(hist.body[0].status).toBe('APPROVED');
   });
@@ -301,10 +348,14 @@ describe('Expense workflow validation integration (e2e)', () => {
   // ─── Legacy + additional guardrail checks ──────────────────────────────
 
   it('legacy transaction (expenseWorkflowStatus null) has no automatic validation history and stays usable', async () => {
-    const created = await createExpense().expect(201);
+    const created = (await createExpense().expect(201)) as {
+      body: TransactionResponse;
+    };
     expect(created.body.expenseWorkflowStatus).toBeNull();
 
-    const hist = await history(created.body.id, directorToken).expect(200);
+    const hist = (await history(created.body.id, directorToken).expect(
+      200,
+    )) as { body: ValidationHistoryEntry[] };
     expect(hist.body).toHaveLength(0);
 
     // Legacy read/update APIs remain fully usable, untouched by the workflow.
@@ -316,7 +367,7 @@ describe('Expense workflow validation integration (e2e)', () => {
   });
 
   it('RECETTE never enters the expense workflow and gets no ValidationRequest', async () => {
-    const income = await request(app.getHttpServer())
+    const income = (await request(app.getHttpServer())
       .post('/api/finances/transactions')
       .set('Authorization', `Bearer ${directorToken}`)
       .send({
@@ -326,7 +377,7 @@ describe('Expense workflow validation integration (e2e)', () => {
         amountXof: 10000,
         date: '2026-08-01',
       })
-      .expect(201);
+      .expect(201)) as { body: TransactionResponse };
 
     await request(app.getHttpServer())
       .post(`/api/finances/transactions/${income.body.id}/submit`)
@@ -336,7 +387,9 @@ describe('Expense workflow validation integration (e2e)', () => {
   });
 
   it('completing an approved expense does not alter its validation history', async () => {
-    const created = await createExpense().expect(201);
+    const created = (await createExpense().expect(201)) as {
+      body: TransactionResponse;
+    };
     const id = created.body.id;
     await request(app.getHttpServer())
       .post(`/api/finances/transactions/${id}/submit`)
@@ -349,15 +402,19 @@ describe('Expense workflow validation integration (e2e)', () => {
       .send({})
       .expect(201);
 
-    const histBefore = await history(id, directorToken).expect(200);
+    const histBefore = (await history(id, directorToken).expect(200)) as {
+      body: ValidationHistoryEntry[];
+    };
 
-    const completed = await request(app.getHttpServer())
+    const completed = (await request(app.getHttpServer())
       .post(`/api/finances/transactions/${id}/complete`)
       .set('Authorization', `Bearer ${directorToken}`)
-      .expect(201);
+      .expect(201)) as { body: TransactionResponse };
     expect(completed.body.expenseWorkflowStatus).toBe('COMPLETED');
 
-    const histAfter = await history(id, directorToken).expect(200);
+    const histAfter = (await history(id, directorToken).expect(200)) as {
+      body: ValidationHistoryEntry[];
+    };
     expect(histAfter.body).toEqual(histBefore.body);
   });
 });

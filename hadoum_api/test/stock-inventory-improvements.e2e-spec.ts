@@ -16,6 +16,43 @@ import { PrismaService } from '../src/prisma/prisma.service';
 // explicit prerequisite — that every stock movement (including the new
 // inventory count) produces an AuditLog row through the existing PR 13
 // AuditLogsService/interceptor, unmodified.
+
+interface StockItemResponse {
+  id: string;
+  name: string;
+  category: string;
+  supplierName: string | null;
+  currentQuantity: number;
+  isLowStock: boolean;
+  validationStatus: string | null;
+}
+
+interface StockMovementResponse {
+  id: string;
+  type: string;
+  quantity: number;
+  quantityBefore: number;
+  quantityAfter: number;
+  reason: string | null;
+  performedBy: { id: string };
+  movementDate: string;
+  createdAt: string;
+}
+
+interface InventoryCountResponse {
+  expectedQuantity: number;
+  actualQuantity: number;
+  difference: number;
+  item: StockItemResponse;
+}
+
+interface AuditLogEntry {
+  entityId: string;
+  action: string;
+  after: { difference: number };
+  user: { id: string };
+}
+
 describe('Stock & Inventory improvements (e2e)', () => {
   let app: INestApplication<App>;
   let prisma: PrismaService;
@@ -32,14 +69,16 @@ describe('Stock & Inventory improvements (e2e)', () => {
     const users = await seedTestUsers(prisma);
 
     directorToken = (
-      await request(app.getHttpServer())
-        .post('/api/auth/login')
-        .send({ email: users.director.email, password: TEST_PASSWORD })
+      (await request(app.getHttpServer()).post('/api/auth/login').send({
+        email: users.director.email,
+        password: TEST_PASSWORD,
+      })) as { body: { token: string } }
     ).body.token;
     supervisorToken = (
-      await request(app.getHttpServer())
-        .post('/api/auth/login')
-        .send({ email: users.supervisor.email, password: TEST_PASSWORD })
+      (await request(app.getHttpServer()).post('/api/auth/login').send({
+        email: users.supervisor.email,
+        password: TEST_PASSWORD,
+      })) as { body: { token: string } }
     ).body.token;
   });
 
@@ -54,8 +93,8 @@ describe('Stock & Inventory improvements (e2e)', () => {
   async function createItem(
     token: string,
     overrides: Record<string, unknown> = {},
-  ) {
-    const res = await request(app.getHttpServer())
+  ): Promise<StockItemResponse> {
+    const res = (await request(app.getHttpServer())
       .post('/api/stock-items')
       .set('Authorization', auth(token))
       .send({
@@ -66,38 +105,35 @@ describe('Stock & Inventory improvements (e2e)', () => {
         initialQuantity: 100,
         ...overrides,
       })
-      .expect(201);
+      .expect(201)) as { body: StockItemResponse };
     return res.body;
   }
 
-  async function auditFor(entityId: string) {
-    const res = await request(app.getHttpServer())
+  async function auditFor(entityId: string): Promise<AuditLogEntry[]> {
+    const res = (await request(app.getHttpServer())
       .get(`/api/audit-logs?module=STOCK`)
       .set('Authorization', auth(directorToken))
-      .expect(200);
-    return res.body.filter(
-      (l: { entityId: string }) => l.entityId === entityId,
-    );
+      .expect(200)) as { body: AuditLogEntry[] };
+    return res.body.filter((l) => l.entityId === entityId);
   }
 
   describe('stock entry', () => {
     it('DIRECTOR records an entry: quantity, user and timestamp are correct', async () => {
       const item = await createItem(directorToken);
 
-      const res = await request(app.getHttpServer())
+      const res = (await request(app.getHttpServer())
         .post(`/api/stock-items/${item.id}/entries`)
         .set('Authorization', auth(directorToken))
         .send({ quantity: 20, reason: 'Livraison mensuelle' })
-        .expect(201);
+        .expect(201)) as { body: StockItemResponse };
       expect(res.body.currentQuantity).toBe(120);
 
-      const movements = await request(app.getHttpServer())
+      const movements = (await request(app.getHttpServer())
         .get(`/api/stock-items/${item.id}/movements`)
         .set('Authorization', auth(directorToken))
-        .expect(200);
-      const entry = movements.body.find(
-        (m: { type: string }) => m.type === 'ENTREE',
-      );
+        .expect(200)) as { body: StockMovementResponse[] };
+      const entry = movements.body.find((m) => m.type === 'ENTREE');
+      if (!entry) throw new Error('ENTREE movement not found');
       expect(entry.quantity).toBe(20);
       expect(entry.reason).toBe('Livraison mensuelle');
       expect(entry.performedBy.id).toBeTruthy();
@@ -123,16 +159,14 @@ describe('Stock & Inventory improvements (e2e)', () => {
         .expect(201);
 
       const entries = await auditFor(item.id);
-      expect(
-        entries.some((e: { action: string }) => e.action === 'ENTRY'),
-      ).toBe(true);
+      expect(entries.some((e) => e.action === 'ENTRY')).toBe(true);
     });
   });
 
   describe('stock exit', () => {
     it('DIRECTOR records an exit and stock decreases correctly', async () => {
       const item = await createItem(directorToken);
-      const res = await request(app.getHttpServer())
+      const res = (await request(app.getHttpServer())
         .post(`/api/stock-items/${item.id}/exits`)
         .set('Authorization', auth(directorToken))
         .send({
@@ -140,7 +174,7 @@ describe('Stock & Inventory improvements (e2e)', () => {
           destination: 'Cuisine',
           reason: 'Repas de la semaine',
         })
-        .expect(201);
+        .expect(201)) as { body: StockItemResponse };
       expect(res.body.currentQuantity).toBe(70);
     });
 
@@ -170,26 +204,22 @@ describe('Stock & Inventory improvements (e2e)', () => {
         .send({ quantity: 5 })
         .expect(201);
       const entries = await auditFor(item.id);
-      expect(entries.some((e: { action: string }) => e.action === 'EXIT')).toBe(
-        true,
-      );
+      expect(entries.some((e) => e.action === 'EXIT')).toBe(true);
     });
   });
 
   describe('adjustment', () => {
     it('DIRECTOR applies a small adjustment directly and it is audited', async () => {
       const item = await createItem(directorToken);
-      const res = await request(app.getHttpServer())
+      const res = (await request(app.getHttpServer())
         .post(`/api/stock-items/${item.id}/adjustments`)
         .set('Authorization', auth(directorToken))
         .send({ quantityDelta: -5, reason: 'Casse constatée' })
-        .expect(201);
+        .expect(201)) as { body: StockItemResponse };
       expect(res.body.currentQuantity).toBe(95);
 
       const entries = await auditFor(item.id);
-      expect(
-        entries.some((e: { action: string }) => e.action === 'ADJUSTMENT'),
-      ).toBe(true);
+      expect(entries.some((e) => e.action === 'ADJUSTMENT')).toBe(true);
     });
 
     it('SUPERVISOR cannot create a manual adjustment (only entry/exit/inventory)', async () => {
@@ -206,11 +236,11 @@ describe('Stock & Inventory improvements (e2e)', () => {
     it('a count matching the current quantity reports zero difference and creates no movement', async () => {
       const item = await createItem(directorToken, { initialQuantity: 50 });
 
-      const res = await request(app.getHttpServer())
+      const res = (await request(app.getHttpServer())
         .post(`/api/stock-items/${item.id}/inventory-count`)
         .set('Authorization', auth(directorToken))
         .send({ actualQuantity: 50 })
-        .expect(201);
+        .expect(201)) as { body: InventoryCountResponse };
 
       expect(res.body).toMatchObject({
         expectedQuantity: 50,
@@ -218,21 +248,21 @@ describe('Stock & Inventory improvements (e2e)', () => {
         difference: 0,
       });
 
-      const movements = await request(app.getHttpServer())
+      const movements = (await request(app.getHttpServer())
         .get(`/api/stock-items/${item.id}/movements`)
         .set('Authorization', auth(directorToken))
-        .expect(200);
+        .expect(200)) as { body: StockMovementResponse[] };
       expect(movements.body).toHaveLength(1); // just the initial ENTREE from creation
     });
 
     it('a small positive variance is applied immediately as an INVENTAIRE_CORRECTION movement', async () => {
       const item = await createItem(directorToken, { initialQuantity: 100 });
 
-      const res = await request(app.getHttpServer())
+      const res = (await request(app.getHttpServer())
         .post(`/api/stock-items/${item.id}/inventory-count`)
         .set('Authorization', auth(directorToken))
         .send({ actualQuantity: 105, comment: 'Comptage mensuel' })
-        .expect(201);
+        .expect(201)) as { body: InventoryCountResponse };
 
       expect(res.body).toMatchObject({
         expectedQuantity: 100,
@@ -241,14 +271,16 @@ describe('Stock & Inventory improvements (e2e)', () => {
       });
       expect(res.body.item.currentQuantity).toBe(105);
 
-      const movements = await request(app.getHttpServer())
+      const movements = (await request(app.getHttpServer())
         .get(`/api/stock-items/${item.id}/movements`)
         .set('Authorization', auth(directorToken))
-        .expect(200);
+        .expect(200)) as { body: StockMovementResponse[] };
       const correction = movements.body.find(
-        (m: { type: string }) => m.type === 'INVENTAIRE_CORRECTION',
+        (m) => m.type === 'INVENTAIRE_CORRECTION',
       );
       expect(correction).toBeTruthy();
+      if (!correction)
+        throw new Error('INVENTAIRE_CORRECTION movement not found');
       expect(correction.quantityBefore).toBe(100);
       expect(correction.quantityAfter).toBe(105);
       expect(correction.reason).toBe('Comptage mensuel');
@@ -256,11 +288,11 @@ describe('Stock & Inventory improvements (e2e)', () => {
 
     it('a small negative variance is applied immediately and decreases stock', async () => {
       const item = await createItem(directorToken, { initialQuantity: 100 });
-      const res = await request(app.getHttpServer())
+      const res = (await request(app.getHttpServer())
         .post(`/api/stock-items/${item.id}/inventory-count`)
         .set('Authorization', auth(directorToken))
         .send({ actualQuantity: 92 })
-        .expect(201);
+        .expect(201)) as { body: InventoryCountResponse };
 
       expect(res.body.difference).toBe(-8);
       expect(res.body.item.currentQuantity).toBe(92);
@@ -268,11 +300,11 @@ describe('Stock & Inventory improvements (e2e)', () => {
 
     it('SUPERVISOR can perform an inventory count (PR 12)', async () => {
       const item = await createItem(directorToken, { initialQuantity: 100 });
-      const res = await request(app.getHttpServer())
+      const res = (await request(app.getHttpServer())
         .post(`/api/stock-items/${item.id}/inventory-count`)
         .set('Authorization', auth(supervisorToken))
         .send({ actualQuantity: 98 })
-        .expect(201);
+        .expect(201)) as { body: InventoryCountResponse };
       expect(res.body.item.currentQuantity).toBe(98);
     });
 
@@ -285,10 +317,9 @@ describe('Stock & Inventory improvements (e2e)', () => {
         .expect(201);
 
       const entries = await auditFor(item.id);
-      const countEntry = entries.find(
-        (e: { action: string }) => e.action === 'INVENTORY_COUNT',
-      );
+      const countEntry = entries.find((e) => e.action === 'INVENTORY_COUNT');
       expect(countEntry).toBeTruthy();
+      if (!countEntry) throw new Error('INVENTORY_COUNT audit entry not found');
       expect(countEntry.after.difference).toBe(-10);
       expect(countEntry.user.id).toBeTruthy();
     });
@@ -297,11 +328,11 @@ describe('Stock & Inventory improvements (e2e)', () => {
   describe('inventory count — large variance goes through validation', () => {
     it('a large positive variance (>20%) is held for validation, not applied immediately', async () => {
       const item = await createItem(directorToken, { initialQuantity: 100 });
-      const res = await request(app.getHttpServer())
+      const res = (await request(app.getHttpServer())
         .post(`/api/stock-items/${item.id}/inventory-count`)
         .set('Authorization', auth(directorToken))
         .send({ actualQuantity: 150 }) // +50%
-        .expect(201);
+        .expect(201)) as { body: InventoryCountResponse };
 
       expect(res.body.difference).toBe(50);
       expect(res.body.item.validationStatus).toBe('PENDING_VALIDATION');
@@ -316,11 +347,11 @@ describe('Stock & Inventory improvements (e2e)', () => {
         .send({ actualQuantity: 150 })
         .expect(201);
 
-      const approved = await request(app.getHttpServer())
+      const approved = (await request(app.getHttpServer())
         .patch(`/api/stock-items/${item.id}/approve`)
         .set('Authorization', auth(supervisorToken))
         .send({})
-        .expect(200);
+        .expect(200)) as { body: StockItemResponse };
 
       expect(approved.body.currentQuantity).toBe(150);
       expect(approved.body.validationStatus).toBe('APPROVED');
@@ -334,11 +365,11 @@ describe('Stock & Inventory improvements (e2e)', () => {
         .send({ actualQuantity: 30 }) // -70%
         .expect(201);
 
-      const approved = await request(app.getHttpServer())
+      const approved = (await request(app.getHttpServer())
         .patch(`/api/stock-items/${item.id}/approve`)
         .set('Authorization', auth(supervisorToken))
         .send({})
-        .expect(200);
+        .expect(200)) as { body: StockItemResponse };
 
       expect(approved.body.currentQuantity).toBe(30);
     });
@@ -350,10 +381,10 @@ describe('Stock & Inventory improvements (e2e)', () => {
         initialQuantity: 10,
         minimumQuantity: 10,
       });
-      const res = await request(app.getHttpServer())
+      const res = (await request(app.getHttpServer())
         .get(`/api/stock-items/${item.id}`)
         .set('Authorization', auth(directorToken))
-        .expect(200);
+        .expect(200)) as { body: StockItemResponse };
       expect(res.body.isLowStock).toBe(true);
       expect(res.body.currentQuantity).toBe(10);
     });
@@ -363,10 +394,10 @@ describe('Stock & Inventory improvements (e2e)', () => {
         initialQuantity: 50,
         minimumQuantity: 10,
       });
-      const res = await request(app.getHttpServer())
+      const res = (await request(app.getHttpServer())
         .get(`/api/stock-items/${item.id}`)
         .set('Authorization', auth(directorToken))
-        .expect(200);
+        .expect(200)) as { body: StockItemResponse };
       expect(res.body.isLowStock).toBe(false);
     });
   });
@@ -390,37 +421,37 @@ describe('Stock & Inventory improvements (e2e)', () => {
     });
 
     it('filters by category', async () => {
-      const res = await request(app.getHttpServer())
+      const res = (await request(app.getHttpServer())
         .get('/api/stock-items?category=HYGIENE')
         .set('Authorization', auth(directorToken))
-        .expect(200);
+        .expect(200)) as { body: StockItemResponse[] };
       expect(res.body).toHaveLength(1);
       expect(res.body[0].category).toBe('HYGIENE');
     });
 
     it('filters by supplier', async () => {
-      const res = await request(app.getHttpServer())
+      const res = (await request(app.getHttpServer())
         .get('/api/stock-items?supplier=Hygi%C3%A8ne')
         .set('Authorization', auth(directorToken))
-        .expect(200);
+        .expect(200)) as { body: StockItemResponse[] };
       expect(res.body).toHaveLength(1);
       expect(res.body[0].supplierName).toBe('Hygiène Plus');
     });
 
     it('filters low-stock-only', async () => {
-      const res = await request(app.getHttpServer())
+      const res = (await request(app.getHttpServer())
         .get('/api/stock-items?lowStock=true')
         .set('Authorization', auth(directorToken))
-        .expect(200);
+        .expect(200)) as { body: StockItemResponse[] };
       expect(res.body).toHaveLength(1);
       expect(res.body[0].name).toBe('Savon de Marseille');
     });
 
     it('applies a text search on the item name', async () => {
-      const res = await request(app.getHttpServer())
+      const res = (await request(app.getHttpServer())
         .get('/api/stock-items?search=Riz')
         .set('Authorization', auth(directorToken))
-        .expect(200);
+        .expect(200)) as { body: StockItemResponse[] };
       expect(res.body).toHaveLength(1);
       expect(res.body[0].name).toContain('Riz');
     });
@@ -488,11 +519,11 @@ describe('Stock & Inventory improvements (e2e)', () => {
   describe('history integrity (never deleted)', () => {
     it('has no route to delete a stock movement', async () => {
       const item = await createItem(directorToken);
-      const movements = await request(app.getHttpServer())
+      const movements = (await request(app.getHttpServer())
         .get(`/api/stock-items/${item.id}/movements`)
         .set('Authorization', auth(directorToken))
-        .expect(200);
-      const movementId = movements.body[0].id as string;
+        .expect(200)) as { body: StockMovementResponse[] };
+      const movementId = movements.body[0].id;
 
       await request(app.getHttpServer())
         .delete(`/api/stock-movements/${movementId}`)
@@ -515,10 +546,10 @@ describe('Stock & Inventory improvements (e2e)', () => {
         .set('Authorization', auth(directorToken))
         .send({ actualQuantity: 60 });
 
-      const movements = await request(app.getHttpServer())
+      const movements = (await request(app.getHttpServer())
         .get(`/api/stock-items/${item.id}/movements`)
         .set('Authorization', auth(directorToken))
-        .expect(200);
+        .expect(200)) as { body: StockMovementResponse[] };
       // initial ENTREE + entry + exit + inventory correction
       expect(movements.body.length).toBeGreaterThanOrEqual(4);
     });

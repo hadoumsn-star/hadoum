@@ -1,10 +1,15 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  NotFoundException,
+} from '@nestjs/common';
 import { EntryLogsService } from './entry-logs.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { UploadService } from '../upload/upload.service';
 import { ValidationsService } from '../validations/validations.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { matching } from '../test-utils/jest-matchers';
 
 function createMockPrisma() {
   return {
@@ -35,7 +40,11 @@ describe('EntryLogsService', () => {
     findHistory: jest.Mock;
   };
   let notifications: { create: jest.Mock; createForRole: jest.Mock };
-  let upload: { upload: jest.Mock; getPresignedUrl: jest.Mock; deleteFile: jest.Mock };
+  let upload: {
+    upload: jest.Mock;
+    getPresignedUrl: jest.Mock;
+    deleteFile: jest.Mock;
+  };
 
   const baseEntry = {
     id: 'entry-1',
@@ -83,7 +92,11 @@ describe('EntryLogsService', () => {
       findHistory: jest.fn(),
     };
     notifications = { create: jest.fn(), createForRole: jest.fn() };
-    upload = { upload: jest.fn(), getPresignedUrl: jest.fn(), deleteFile: jest.fn() };
+    upload = {
+      upload: jest.fn(),
+      getPresignedUrl: jest.fn(),
+      deleteFile: jest.fn(),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -99,25 +112,45 @@ describe('EntryLogsService', () => {
 
   describe('create', () => {
     it('creates an immediate entry type as PRESENT', async () => {
-      prisma.entryLog.create.mockResolvedValue({ ...baseEntry, status: 'PRESENT' });
+      prisma.entryLog.create.mockResolvedValue({
+        ...baseEntry,
+        status: 'PRESENT',
+      });
       const result = await service.create(
-        { entryType: 'VISITE_IMPREVUE', visitorCategory: 'VISITEUR', fullName: 'x', purpose: 'x' } as any,
+        {
+          entryType: 'VISITE_IMPREVUE',
+          visitorCategory: 'VISITEUR',
+          fullName: 'x',
+          purpose: 'x',
+        } as any,
         'director-1',
       );
       expect(result.status).toBe('PRESENT');
       expect(prisma.entryLog.create).toHaveBeenCalledWith(
-        expect.objectContaining({ data: expect.objectContaining({ status: 'PRESENT' }) }),
+        matching({
+          data: matching({ status: 'PRESENT' }),
+        }),
       );
     });
 
     it('creates a planned entry type as PREVUE', async () => {
-      prisma.entryLog.create.mockResolvedValue({ ...baseEntry, status: 'PREVUE' });
+      prisma.entryLog.create.mockResolvedValue({
+        ...baseEntry,
+        status: 'PREVUE',
+      });
       await service.create(
-        { entryType: 'VISITE_PREVUE', visitorCategory: 'VISITEUR', fullName: 'x', purpose: 'x' } as any,
+        {
+          entryType: 'VISITE_PREVUE',
+          visitorCategory: 'VISITEUR',
+          fullName: 'x',
+          purpose: 'x',
+        } as any,
         'director-1',
       );
       expect(prisma.entryLog.create).toHaveBeenCalledWith(
-        expect.objectContaining({ data: expect.objectContaining({ status: 'PREVUE' }) }),
+        matching({
+          data: matching({ status: 'PREVUE' }),
+        }),
       );
     });
 
@@ -174,19 +207,28 @@ describe('EntryLogsService', () => {
 
   describe('checkIn', () => {
     it('checks in a planned visit directly during business hours', async () => {
-      prisma.entryLog.findUnique.mockResolvedValue({ ...baseEntry, status: 'PREVUE' });
-      prisma.entryLog.update.mockResolvedValue({ ...baseEntry, status: 'PRESENT' });
+      prisma.entryLog.findUnique.mockResolvedValue({
+        ...baseEntry,
+        status: 'PREVUE',
+      });
+      prisma.entryLog.update.mockResolvedValue({
+        ...baseEntry,
+        status: 'PRESENT',
+      });
 
       const result = await service.checkIn('entry-1', 'director-1', {
         arrivalDateTime: '2026-01-01T10:00:00',
-      } as any);
+      });
 
       expect(result.status).toBe('PRESENT');
       expect(validations.create).not.toHaveBeenCalled();
     });
 
     it('routes a check-in on a previously refused entry through ACCESS_OVERRIDE validation', async () => {
-      prisma.entryLog.findUnique.mockResolvedValue({ ...baseEntry, status: 'REFUSEE' });
+      prisma.entryLog.findUnique.mockResolvedValue({
+        ...baseEntry,
+        status: 'REFUSEE',
+      });
       prisma.entryLog.update.mockResolvedValue({
         ...baseEntry,
         validationStatus: 'PENDING_VALIDATION',
@@ -195,14 +237,17 @@ describe('EntryLogsService', () => {
 
       const result = await service.checkIn('entry-1', 'director-1', {
         arrivalDateTime: '2026-01-01T10:00:00',
-      } as any);
+      });
 
       expect(validations.create).toHaveBeenCalled();
       expect(result.pendingValidationAction).toBe('ACCESS_OVERRIDE');
     });
 
     it('routes an after-hours check-in through AFTER_HOURS_ACCESS validation', async () => {
-      prisma.entryLog.findUnique.mockResolvedValue({ ...baseEntry, status: 'PREVUE' });
+      prisma.entryLog.findUnique.mockResolvedValue({
+        ...baseEntry,
+        status: 'PREVUE',
+      });
       prisma.entryLog.update.mockResolvedValue({
         ...baseEntry,
         validationStatus: 'PENDING_VALIDATION',
@@ -211,21 +256,27 @@ describe('EntryLogsService', () => {
 
       const result = await service.checkIn('entry-1', 'director-1', {
         arrivalDateTime: '2026-01-01T23:00:00', // 11pm, outside 7-20
-      } as any);
+      });
 
       expect(validations.create).toHaveBeenCalled();
       expect(result.pendingValidationAction).toBe('AFTER_HOURS_ACCESS');
     });
 
     it('rejects checking in someone already present', async () => {
-      prisma.entryLog.findUnique.mockResolvedValue({ ...baseEntry, status: 'PRESENT' });
+      prisma.entryLog.findUnique.mockResolvedValue({
+        ...baseEntry,
+        status: 'PRESENT',
+      });
       await expect(
         service.checkIn('entry-1', 'director-1', {} as any),
       ).rejects.toBeInstanceOf(ConflictException);
     });
 
     it('rejects checking in a cancelled visit', async () => {
-      prisma.entryLog.findUnique.mockResolvedValue({ ...baseEntry, status: 'ANNULEE' });
+      prisma.entryLog.findUnique.mockResolvedValue({
+        ...baseEntry,
+        status: 'ANNULEE',
+      });
       await expect(
         service.checkIn('entry-1', 'director-1', {} as any),
       ).rejects.toBeInstanceOf(ConflictException);
@@ -234,10 +285,16 @@ describe('EntryLogsService', () => {
 
   describe('checkOut', () => {
     it('checks out a present visitor directly on the happy path', async () => {
-      prisma.entryLog.findUnique.mockResolvedValue({ ...baseEntry, status: 'PRESENT' });
-      prisma.entryLog.update.mockResolvedValue({ ...baseEntry, status: 'SORTI' });
+      prisma.entryLog.findUnique.mockResolvedValue({
+        ...baseEntry,
+        status: 'PRESENT',
+      });
+      prisma.entryLog.update.mockResolvedValue({
+        ...baseEntry,
+        status: 'SORTI',
+      });
 
-      const result = await service.checkOut('entry-1', 'director-1', {} as any);
+      const result = await service.checkOut('entry-1', 'director-1', {});
 
       expect(result.status).toBe('SORTI');
       expect(validations.create).not.toHaveBeenCalled();
@@ -255,14 +312,17 @@ describe('EntryLogsService', () => {
         pendingValidationAction: 'EXCEPTIONAL_EXIT',
       });
 
-      const result = await service.checkOut('entry-1', 'director-1', {} as any);
+      const result = await service.checkOut('entry-1', 'director-1', {});
 
       expect(validations.create).toHaveBeenCalled();
       expect(result.pendingValidationAction).toBe('EXCEPTIONAL_EXIT');
     });
 
     it('rejects checking out someone not currently present', async () => {
-      prisma.entryLog.findUnique.mockResolvedValue({ ...baseEntry, status: 'PREVUE' });
+      prisma.entryLog.findUnique.mockResolvedValue({
+        ...baseEntry,
+        status: 'PREVUE',
+      });
       await expect(
         service.checkOut('entry-1', 'director-1', {} as any),
       ).rejects.toBeInstanceOf(ConflictException);
@@ -284,30 +344,50 @@ describe('EntryLogsService', () => {
 
   describe('cancel / refuse (invalid transitions)', () => {
     it('cancels a planned visit', async () => {
-      prisma.entryLog.findUnique.mockResolvedValue({ ...baseEntry, status: 'PREVUE' });
-      prisma.entryLog.update.mockResolvedValue({ ...baseEntry, status: 'ANNULEE' });
+      prisma.entryLog.findUnique.mockResolvedValue({
+        ...baseEntry,
+        status: 'PREVUE',
+      });
+      prisma.entryLog.update.mockResolvedValue({
+        ...baseEntry,
+        status: 'ANNULEE',
+      });
 
-      const result = await service.cancel('entry-1', { reason: 'x' } as any);
+      const result = await service.cancel('entry-1', { reason: 'x' });
       expect(result.status).toBe('ANNULEE');
     });
 
     it('refuses to cancel a visit that is not planned', async () => {
-      prisma.entryLog.findUnique.mockResolvedValue({ ...baseEntry, status: 'PRESENT' });
+      prisma.entryLog.findUnique.mockResolvedValue({
+        ...baseEntry,
+        status: 'PRESENT',
+      });
       await expect(
         service.cancel('entry-1', { reason: 'x' } as any),
       ).rejects.toBeInstanceOf(ConflictException);
     });
 
     it('refuses access for a planned visit not yet checked in', async () => {
-      prisma.entryLog.findUnique.mockResolvedValue({ ...baseEntry, status: 'PREVUE' });
-      prisma.entryLog.update.mockResolvedValue({ ...baseEntry, status: 'REFUSEE' });
+      prisma.entryLog.findUnique.mockResolvedValue({
+        ...baseEntry,
+        status: 'PREVUE',
+      });
+      prisma.entryLog.update.mockResolvedValue({
+        ...baseEntry,
+        status: 'REFUSEE',
+      });
 
-      const result = await service.refuse('entry-1', { reason: 'Not identifiable' } as any);
+      const result = await service.refuse('entry-1', {
+        reason: 'Not identifiable',
+      });
       expect(result.status).toBe('REFUSEE');
     });
 
     it('refuses to mark as refused someone already admitted', async () => {
-      prisma.entryLog.findUnique.mockResolvedValue({ ...baseEntry, status: 'PRESENT' });
+      prisma.entryLog.findUnique.mockResolvedValue({
+        ...baseEntry,
+        status: 'PRESENT',
+      });
       await expect(
         service.refuse('entry-1', { reason: 'x' } as any),
       ).rejects.toBeInstanceOf(ConflictException);
@@ -316,7 +396,10 @@ describe('EntryLogsService', () => {
 
   describe('archive (smart gating)', () => {
     it('archives directly from a terminal state (SORTI)', async () => {
-      prisma.entryLog.findUnique.mockResolvedValue({ ...baseEntry, status: 'SORTI' });
+      prisma.entryLog.findUnique.mockResolvedValue({
+        ...baseEntry,
+        status: 'SORTI',
+      });
       prisma.entryLog.update.mockResolvedValue({
         ...baseEntry,
         status: 'ARCHIVEE',
@@ -330,7 +413,10 @@ describe('EntryLogsService', () => {
     });
 
     it('routes archiving a non-terminal record through validation', async () => {
-      prisma.entryLog.findUnique.mockResolvedValue({ ...baseEntry, status: 'PRESENT' });
+      prisma.entryLog.findUnique.mockResolvedValue({
+        ...baseEntry,
+        status: 'PRESENT',
+      });
       prisma.entryLog.update.mockResolvedValue({
         ...baseEntry,
         pendingValidationAction: 'RECORD_ARCHIVE',
@@ -354,9 +440,12 @@ describe('EntryLogsService', () => {
       };
       prisma.entryLog.findUnique.mockResolvedValue(pending);
       validations.approve.mockResolvedValue({ submittedById: 'director-1' });
-      prisma.entryLog.update.mockResolvedValue({ ...pending, status: 'PRESENT' });
+      prisma.entryLog.update.mockResolvedValue({
+        ...pending,
+        status: 'PRESENT',
+      });
 
-      const result = await service.approve('entry-1', 'supervisor-1', {} as any);
+      const result = await service.approve('entry-1', 'supervisor-1', {});
 
       expect(result.status).toBe('PRESENT');
     });
@@ -370,9 +459,12 @@ describe('EntryLogsService', () => {
       };
       prisma.entryLog.findUnique.mockResolvedValue(pending);
       validations.approve.mockResolvedValue({ submittedById: 'director-1' });
-      prisma.entryLog.update.mockResolvedValue({ ...pending, status: 'ARCHIVEE' });
+      prisma.entryLog.update.mockResolvedValue({
+        ...pending,
+        status: 'ARCHIVEE',
+      });
 
-      const result = await service.approve('entry-1', 'supervisor-1', {} as any);
+      const result = await service.approve('entry-1', 'supervisor-1', {});
 
       expect(result.status).toBe('ARCHIVEE');
     });
@@ -391,9 +483,14 @@ describe('EntryLogsService', () => {
   describe('findAll / currentPresence / expectedVisits', () => {
     it('applies search and status filters, masking identity numbers throughout', async () => {
       prisma.entryLog.findMany.mockResolvedValue([baseEntry]);
-      const result = await service.findAll({ search: 'Marie', status: 'PRESENT' } as any);
+      const result = await service.findAll({
+        search: 'Marie',
+        status: 'PRESENT',
+      } as any);
       expect(prisma.entryLog.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({ where: expect.objectContaining({ status: 'PRESENT' }) }),
+        matching({
+          where: matching({ status: 'PRESENT' }),
+        }),
       );
       expect(result[0].identityDocumentNumber).toBe('*********0123');
     });
@@ -421,14 +518,16 @@ describe('EntryLogsService', () => {
     });
 
     it('sends an incident-reported notification once (dedup guard)', async () => {
-      prisma.entryLog.findMany.mockResolvedValue([{ ...baseEntry, incidentReported: true }]);
+      prisma.entryLog.findMany.mockResolvedValue([
+        { ...baseEntry, incidentReported: true },
+      ]);
       prisma.notification.findFirst.mockResolvedValue(null);
 
       await service.findAll({});
 
       expect(notifications.createForRole).toHaveBeenCalledWith(
         'DIRECTOR',
-        expect.objectContaining({ type: 'REGISTER_INCIDENT_UNRESOLVED' }),
+        matching({ type: 'REGISTER_INCIDENT_UNRESOLVED' }),
       );
     });
   });
@@ -436,11 +535,14 @@ describe('EntryLogsService', () => {
   describe('update', () => {
     it('updates editable fields on an active entry', async () => {
       prisma.entryLog.findUnique.mockResolvedValue(baseEntry);
-      prisma.entryLog.update.mockResolvedValue({ ...baseEntry, purpose: 'Nouveau motif' });
+      prisma.entryLog.update.mockResolvedValue({
+        ...baseEntry,
+        purpose: 'Nouveau motif',
+      });
 
       const result = await service.update('entry-1', 'director-1', {
         purpose: 'Nouveau motif',
-      } as any);
+      });
 
       expect(result.purpose).toBe('Nouveau motif');
     });
@@ -458,14 +560,17 @@ describe('EntryLogsService', () => {
 
       const result = await service.update('entry-1', 'director-1', {
         actualDepartureDateTime: '2026-01-01T13:00:00',
-      } as any);
+      });
 
       expect(validations.create).toHaveBeenCalled();
       expect(result.pendingValidationAction).toBe('MANUAL_CHECKOUT_OVERRIDE');
     });
 
     it('refuses to update an archived entry', async () => {
-      prisma.entryLog.findUnique.mockResolvedValue({ ...baseEntry, status: 'ARCHIVEE' });
+      prisma.entryLog.findUnique.mockResolvedValue({
+        ...baseEntry,
+        status: 'ARCHIVEE',
+      });
       await expect(
         service.update('entry-1', 'director-1', { purpose: 'x' } as any),
       ).rejects.toBeInstanceOf(ConflictException);
@@ -478,12 +583,21 @@ describe('EntryLogsService', () => {
       upload.upload.mockResolvedValue('entry-logs/entry-1/file.pdf');
       prisma.entryLogDocument.create.mockResolvedValue({ id: 'doc-1' });
 
-      const file = { mimetype: 'application/pdf' } as any;
-      await service.uploadDocument('entry-1', 'director-1', file, 'PIECE_IDENTITE', 'CNI');
+      const file = { mimetype: 'application/pdf' } as Express.Multer.File;
+      await service.uploadDocument(
+        'entry-1',
+        'director-1',
+        file,
+        'PIECE_IDENTITE',
+        'CNI',
+      );
 
       expect(prisma.entryLogDocument.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ entryLogId: 'entry-1', uploadedById: 'director-1' }),
+        matching({
+          data: matching({
+            entryLogId: 'entry-1',
+            uploadedById: 'director-1',
+          }),
         }),
       );
     });
@@ -500,7 +614,10 @@ describe('EntryLogsService', () => {
     it('delegates to ValidationsService with the correct resource type', () => {
       validations.findHistory.mockReturnValue([{ id: 'v1' }]);
       const result = service.history('entry-1');
-      expect(validations.findHistory).toHaveBeenCalledWith('ENTRY_LOG', 'entry-1');
+      expect(validations.findHistory).toHaveBeenCalledWith(
+        'ENTRY_LOG',
+        'entry-1',
+      );
       expect(result).toEqual([{ id: 'v1' }]);
     });
   });
@@ -512,9 +629,9 @@ describe('EntryLogsService', () => {
         entryLogId: 'some-other-entry',
         fileKey: 'x',
       });
-      await expect(service.getDocumentUrl('entry-1', 'doc-1')).rejects.toBeInstanceOf(
-        NotFoundException,
-      );
+      await expect(
+        service.getDocumentUrl('entry-1', 'doc-1'),
+      ).rejects.toBeInstanceOf(NotFoundException);
     });
 
     it('allows fetching a document that belongs to the given entry log', async () => {

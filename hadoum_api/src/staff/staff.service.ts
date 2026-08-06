@@ -309,7 +309,9 @@ export class StaffService {
       }),
     ]);
 
-    const confirmationByStaff = new Map(confirmations.map((c) => [c.staffId, c]));
+    const confirmationByStaff = new Map(
+      confirmations.map((c) => [c.staffId, c]),
+    );
     const onLeaveByStaff = new Map(onLeave.map((a) => [a.staffId, a.type]));
 
     const entries = staff.map((m) => {

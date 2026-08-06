@@ -20,6 +20,27 @@ import { PrismaService } from '../src/prisma/prisma.service';
 // supplier-contracts-validation-workflow.e2e-spec.ts for the dedicated
 // creation-workflow coverage) — only the modify -> resubmit step after a
 // rejection still uses the submit-validation endpoint here.
+
+interface SupplierContractResponse {
+  id: string;
+  status: string;
+  validationStatus: string;
+}
+
+interface AdministrativeProcedureResponse {
+  id: string;
+  status: string;
+  pendingValidationAction: string | null;
+}
+
+interface NotificationEntry {
+  type: string;
+}
+
+interface ValidationHistoryEntry {
+  status: string;
+}
+
 describe('Full lifecycle scenarios: Supplier contract & Administrative procedure (e2e)', () => {
   let app: INestApplication<App>;
   let prisma: PrismaService;
@@ -37,14 +58,18 @@ describe('Full lifecycle scenarios: Supplier contract & Administrative procedure
     users = await seedTestUsers(prisma);
 
     directorToken = (
-      await request(app.getHttpServer())
+      (await request(app.getHttpServer())
         .post('/api/auth/login')
-        .send({ email: users.director.email, password: TEST_PASSWORD })
+        .send({ email: users.director.email, password: TEST_PASSWORD })) as {
+        body: { token: string };
+      }
     ).body.token;
     supervisorToken = (
-      await request(app.getHttpServer())
+      (await request(app.getHttpServer())
         .post('/api/auth/login')
-        .send({ email: users.supervisor.email, password: TEST_PASSWORD })
+        .send({ email: users.supervisor.email, password: TEST_PASSWORD })) as {
+        body: { token: string };
+      }
     ).body.token;
   });
 
@@ -53,7 +78,7 @@ describe('Full lifecycle scenarios: Supplier contract & Administrative procedure
   });
 
   it('Supplier contract: create (already pending) -> rejected -> modify -> resubmit -> approved (ACTIF)', async () => {
-    const createRes = await request(app.getHttpServer())
+    const createRes = (await request(app.getHttpServer())
       .post('/api/supplier-contracts')
       .set('Authorization', `Bearer ${directorToken}`)
       .send({
@@ -63,8 +88,8 @@ describe('Full lifecycle scenarios: Supplier contract & Administrative procedure
         startDate: '2026-01-01',
         amount: 600_000,
       })
-      .expect(201);
-    const contractId = createRes.body.id as string;
+      .expect(201)) as { body: SupplierContractResponse };
+    const contractId = createRes.body.id;
     // Supplier Contracts workflow update: creation itself already enters
     // the validation workflow — no separate submit step for a brand-new
     // contract any more.
@@ -77,12 +102,12 @@ describe('Full lifecycle scenarios: Supplier contract & Administrative procedure
       .send({ comment: 'Montant à renégocier' })
       .expect(200);
 
-    const directorNotifs = await request(app.getHttpServer())
+    const directorNotifs = (await request(app.getHttpServer())
       .get('/api/notifications')
       .set('Authorization', `Bearer ${directorToken}`)
-      .expect(200);
+      .expect(200)) as { body: NotificationEntry[] };
     expect(
-      directorNotifs.body.some((n: { type: string }) => n.type === 'VALIDATION_REJECTED'),
+      directorNotifs.body.some((n) => n.type === 'VALIDATION_REJECTED'),
     ).toBe(true);
 
     // Modify (e.g. lower the amount, still stays a draft) then resubmit.
@@ -98,26 +123,26 @@ describe('Full lifecycle scenarios: Supplier contract & Administrative procedure
       .send({})
       .expect(201);
 
-    const approveRes = await request(app.getHttpServer())
+    const approveRes = (await request(app.getHttpServer())
       .patch(`/api/supplier-contracts/${contractId}/approve`)
       .set('Authorization', `Bearer ${supervisorToken}`)
       .send({})
-      .expect(200);
+      .expect(200)) as { body: SupplierContractResponse };
     expect(approveRes.body.status).toBe('ACTIF');
 
-    const history = await request(app.getHttpServer())
+    const history = (await request(app.getHttpServer())
       .get(`/api/supplier-contracts/${contractId}/validation-history`)
       .set('Authorization', `Bearer ${directorToken}`)
-      .expect(200);
+      .expect(200)) as { body: ValidationHistoryEntry[] };
     expect(history.body).toHaveLength(2);
-    expect(history.body.map((h: { status: string }) => h.status).sort()).toEqual([
+    expect(history.body.map((h) => h.status).sort()).toEqual([
       'APPROVED',
       'REJECTED',
     ]);
   });
 
   it('Supplier contract: DIRECTOR cannot approve/reject their own submission (role-level self-approval block)', async () => {
-    const createRes = await request(app.getHttpServer())
+    const createRes = (await request(app.getHttpServer())
       .post('/api/supplier-contracts')
       .set('Authorization', `Bearer ${directorToken}`)
       .send({
@@ -127,7 +152,7 @@ describe('Full lifecycle scenarios: Supplier contract & Administrative procedure
         startDate: '2026-01-01',
         amount: 600_000,
       })
-      .expect(201);
+      .expect(201)) as { body: SupplierContractResponse };
     // Already pending as of creation — no submit-validation call needed.
     expect(createRes.body.validationStatus).toBe('PENDING_VALIDATION');
 
@@ -139,7 +164,7 @@ describe('Full lifecycle scenarios: Supplier contract & Administrative procedure
   });
 
   it('Administrative procedure: create -> submit (SUBMISSION) -> rejected -> modify -> resubmit -> approved (SOUMIS)', async () => {
-    const createRes = await request(app.getHttpServer())
+    const createRes = (await request(app.getHttpServer())
       .post('/api/administrative-procedures')
       .set('Authorization', `Bearer ${directorToken}`)
       .send({
@@ -147,15 +172,15 @@ describe('Full lifecycle scenarios: Supplier contract & Administrative procedure
         procedureType: 'AGREMENT',
         authority: 'Ministère de la Famille',
       })
-      .expect(201);
-    const procId = createRes.body.id as string;
+      .expect(201)) as { body: AdministrativeProcedureResponse };
+    const procId = createRes.body.id;
     expect(createRes.body.status).toBe('A_PREPARER');
 
-    const submitRes = await request(app.getHttpServer())
+    const submitRes = (await request(app.getHttpServer())
       .post(`/api/administrative-procedures/${procId}/submit-validation`)
       .set('Authorization', `Bearer ${directorToken}`)
       .send({})
-      .expect(201);
+      .expect(201)) as { body: AdministrativeProcedureResponse };
     expect(submitRes.body.pendingValidationAction).toBe('SUBMISSION');
 
     await request(app.getHttpServer())
@@ -176,30 +201,30 @@ describe('Full lifecycle scenarios: Supplier contract & Administrative procedure
       .send({})
       .expect(201);
 
-    const approveRes = await request(app.getHttpServer())
+    const approveRes = (await request(app.getHttpServer())
       .patch(`/api/administrative-procedures/${procId}/approve`)
       .set('Authorization', `Bearer ${supervisorToken}`)
       .send({})
-      .expect(200);
+      .expect(200)) as { body: AdministrativeProcedureResponse };
     expect(approveRes.body.status).toBe('SOUMIS');
 
-    const directorNotifs = await request(app.getHttpServer())
+    const directorNotifs = (await request(app.getHttpServer())
       .get('/api/notifications')
       .set('Authorization', `Bearer ${directorToken}`)
-      .expect(200);
-    const types = directorNotifs.body.map((n: { type: string }) => n.type);
+      .expect(200)) as { body: NotificationEntry[] };
+    const types = directorNotifs.body.map((n) => n.type);
     expect(types).toEqual(
       expect.arrayContaining(['VALIDATION_REJECTED', 'VALIDATION_APPROVED']),
     );
   });
 
   it('Administrative procedure: cannot submit a procedure already in a terminal state (archived)', async () => {
-    const createRes = await request(app.getHttpServer())
+    const createRes = (await request(app.getHttpServer())
       .post('/api/administrative-procedures')
       .set('Authorization', `Bearer ${directorToken}`)
       .send({ title: 'x', procedureType: 'AGREMENT', authority: 'x' })
-      .expect(201);
-    const procId = createRes.body.id as string;
+      .expect(201)) as { body: AdministrativeProcedureResponse };
+    const procId = createRes.body.id;
 
     await request(app.getHttpServer())
       .patch(`/api/administrative-procedures/${procId}/archive`)

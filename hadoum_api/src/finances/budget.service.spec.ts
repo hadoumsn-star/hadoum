@@ -16,6 +16,15 @@ function sum(amountXof: number | null) {
   return { _sum: { amountXof } };
 }
 
+interface AggregateCallArgs {
+  where: {
+    type: string;
+    status?: string;
+    expenseWorkflowStatus: string | null;
+    date?: { gte: Date; lt: Date };
+  };
+}
+
 describe('BudgetService', () => {
   let service: BudgetService;
   let prisma: ReturnType<typeof createMockPrisma>;
@@ -90,7 +99,10 @@ describe('BudgetService', () => {
         8,
         2026,
       );
-      for (const call of prisma.transaction.aggregate.mock.calls) {
+      const calls = prisma.transaction.aggregate.mock.calls as [
+        AggregateCallArgs,
+      ][];
+      for (const call of calls) {
         expect(call[0].where.type).toBe('DEPENSE');
       }
     });
@@ -107,9 +119,10 @@ describe('BudgetService', () => {
         8,
         2026,
       );
-      const statuses = prisma.transaction.aggregate.mock.calls.map(
-        (c: any) => c[0].where.expenseWorkflowStatus,
-      );
+      const statusCalls = prisma.transaction.aggregate.mock.calls as [
+        AggregateCallArgs,
+      ][];
+      const statuses = statusCalls.map((c) => c[0].where.expenseWorkflowStatus);
       expect(statuses.sort()).toEqual(['APPROVED', 'COMPLETED', null].sort());
     });
 
@@ -121,9 +134,14 @@ describe('BudgetService', () => {
         8,
         2026,
       );
-      const legacyCall = prisma.transaction.aggregate.mock.calls.find(
-        (c: any) => c[0].where.expenseWorkflowStatus === null,
+      const legacyCalls = prisma.transaction.aggregate.mock.calls as [
+        AggregateCallArgs,
+      ][];
+      const legacyCall = legacyCalls.find(
+        (c) => c[0].where.expenseWorkflowStatus === null,
       );
+      if (!legacyCall)
+        throw new Error('No call with expenseWorkflowStatus = null');
       expect(legacyCall[0].where.status).toBe('VALIDE');
     });
 
@@ -135,8 +153,10 @@ describe('BudgetService', () => {
         8,
         2026,
       );
-      const { gte, lt } =
-        prisma.transaction.aggregate.mock.calls[0][0].where.date;
+      const aggregateCalls = prisma.transaction.aggregate.mock.calls as [
+        { where: { date: { gte: Date; lt: Date } } },
+      ][];
+      const { gte, lt } = aggregateCalls[0][0].where.date;
       expect(gte.toISOString()).toBe('2026-08-01T00:00:00.000Z');
       expect(lt.toISOString()).toBe('2026-09-01T00:00:00.000Z');
     });
@@ -149,8 +169,10 @@ describe('BudgetService', () => {
         12,
         2026,
       );
-      const { gte, lt } =
-        prisma.transaction.aggregate.mock.calls[0][0].where.date;
+      const aggregateCalls = prisma.transaction.aggregate.mock.calls as [
+        { where: { date: { gte: Date; lt: Date } } },
+      ][];
+      const { gte, lt } = aggregateCalls[0][0].where.date;
       expect(gte.toISOString()).toBe('2026-12-01T00:00:00.000Z');
       expect(lt.toISOString()).toBe('2027-01-01T00:00:00.000Z');
     });

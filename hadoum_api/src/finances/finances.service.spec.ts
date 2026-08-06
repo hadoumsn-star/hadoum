@@ -9,6 +9,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { UploadService } from '../upload/upload.service';
 import { ExpenseWorkflowService } from './expense-workflow.service';
 import { BudgetService } from './budget.service';
+import { matching } from '../test-utils/jest-matchers';
 
 function createMockPrisma() {
   return {
@@ -139,8 +140,8 @@ describe('FinancesService', () => {
       } as any);
       expect(prisma.contact.findUnique).not.toHaveBeenCalled();
       expect(prisma.transaction.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ supplierContactId: undefined }),
+        matching({
+          data: matching({ supplierContactId: undefined }),
         }),
       );
     });
@@ -164,8 +165,8 @@ describe('FinancesService', () => {
       } as any);
 
       expect(prisma.transaction.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({
+        matching({
+          data: matching({
             supplierContactId: activeSupplier.id,
           }),
         }),
@@ -220,8 +221,8 @@ describe('FinancesService', () => {
         paymentMethod: 'VIREMENT',
       } as any);
       expect(prisma.transaction.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ paymentMethod: 'VIREMENT' }),
+        matching({
+          data: matching({ paymentMethod: 'VIREMENT' }),
         }),
       );
     });
@@ -271,7 +272,7 @@ describe('FinancesService', () => {
       prisma.transaction.findMany.mockResolvedValue([baseExpense]);
       await service.findAllTransactions({});
       expect(prisma.transaction.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({
+        matching({
           include: { supplierContact: { include: { category: true } } },
         }),
       );
@@ -281,7 +282,7 @@ describe('FinancesService', () => {
       prisma.transaction.findUnique.mockResolvedValue(baseExpense);
       await service.findOneTransaction('txn-1');
       expect(prisma.transaction.findUnique).toHaveBeenCalledWith(
-        expect.objectContaining({
+        matching({
           include: { supplierContact: { include: { category: true } } },
         }),
       );
@@ -324,8 +325,8 @@ describe('FinancesService', () => {
       });
 
       expect(prisma.transaction.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({
+        matching({
+          data: matching({
             supplierContactId: activeSupplier.id,
           }),
         }),
@@ -359,8 +360,8 @@ describe('FinancesService', () => {
 
       expect(prisma.contact.findUnique).not.toHaveBeenCalled();
       expect(prisma.transaction.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ supplierContactId: null }),
+        matching({
+          data: matching({ supplierContactId: null }),
         }),
       );
     });
@@ -377,7 +378,10 @@ describe('FinancesService', () => {
       });
 
       expect(prisma.contact.findUnique).not.toHaveBeenCalled();
-      const call = prisma.transaction.update.mock.calls[0][0];
+      const updateCalls1 = prisma.transaction.update.mock.calls as [
+        { data: Record<string, unknown> },
+      ][];
+      const call = updateCalls1[0][0];
       expect(call.data).not.toHaveProperty('supplierContactId');
     });
 
@@ -407,7 +411,10 @@ describe('FinancesService', () => {
         supplierContactId: activeSupplier.id,
       });
 
-      const call = prisma.transaction.update.mock.calls[0][0];
+      const updateCalls2 = prisma.transaction.update.mock.calls as [
+        { data: Record<string, unknown> },
+      ][];
+      const call = updateCalls2[0][0];
       expect(call.data).not.toHaveProperty('status');
     });
   });
@@ -423,8 +430,8 @@ describe('FinancesService', () => {
         paymentMethod: 'CARTE',
       } as any);
       expect(prisma.transaction.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ paymentMethod: 'CARTE' }),
+        matching({
+          data: matching({ paymentMethod: 'CARTE' }),
         }),
       );
     });
@@ -562,7 +569,7 @@ describe('FinancesService', () => {
         purchaseOrderKey: 'finances/txn-1/purchase-order/new.pdf',
       });
 
-      const file = { mimetype: 'application/pdf' } as any;
+      const file = { mimetype: 'application/pdf' } as Express.Multer.File;
       await service.uploadPurchaseOrder('txn-1', file);
 
       expect(upload.upload).toHaveBeenCalled();
@@ -613,7 +620,7 @@ describe('FinancesService', () => {
       await service.deletePurchaseOrder('txn-1');
       expect(upload.deleteFile).toHaveBeenCalledWith('key-1');
       expect(prisma.transaction.update).toHaveBeenCalledWith(
-        expect.objectContaining({
+        matching({
           data: { purchaseOrderKey: null, purchaseOrderMime: null },
         }),
       );
@@ -852,7 +859,7 @@ describe('FinancesService', () => {
       const result = await service.ensureDefaultBudgetLines();
 
       expect(prisma.budgetLine.createMany).toHaveBeenCalledWith(
-        expect.objectContaining({ skipDuplicates: true }),
+        matching({ skipDuplicates: true }),
       );
       expect(result).toEqual([
         { id: 'b1', category: 'ALIMENTATION', budgetXof: 999_999 },
@@ -890,13 +897,13 @@ describe('FinancesService', () => {
       // status, category, and date — asserting this pins the aggregation
       // semantics so a future change accidentally scoping by
       // supplierContactId/paymentMethod would fail this test.
+      type WhereCall = [{ where: Record<string, unknown> }];
+      const aggregateCalls = prisma.transaction.aggregate.mock
+        .calls as WhereCall[];
+      const groupByCalls = prisma.transaction.groupBy.mock.calls as WhereCall[];
       const allWhereKeys = [
-        ...prisma.transaction.aggregate.mock.calls.map((c: any) =>
-          Object.keys(c[0].where),
-        ),
-        ...prisma.transaction.groupBy.mock.calls.map((c: any) =>
-          Object.keys(c[0].where),
-        ),
+        ...aggregateCalls.map((c) => Object.keys(c[0].where)),
+        ...groupByCalls.map((c) => Object.keys(c[0].where)),
       ].flat();
       expect(new Set(allWhereKeys)).toEqual(
         new Set(['type', 'status', 'date']),
@@ -925,8 +932,10 @@ describe('FinancesService', () => {
 
       const dashboard = await service.getDashboard(2026, 8);
       const entretien = dashboard.byCategory.find(
-        (c: any) => c.category === 'ENTRETIEN',
+        (c) => c.category === 'ENTRETIEN',
       );
+      if (!entretien)
+        throw new Error('ENTRETIEN not found in dashboard.byCategory');
       expect(entretien).toMatchObject({
         category: 'ENTRETIEN',
         realizedXof: 0,
@@ -946,8 +955,10 @@ describe('FinancesService', () => {
 
       const dashboard = await service.getDashboard(2026, 8);
       const entretien = dashboard.byCategory.find(
-        (c: any) => c.category === 'ENTRETIEN',
+        (c) => c.category === 'ENTRETIEN',
       );
+      if (!entretien)
+        throw new Error('ENTRETIEN not found in dashboard.byCategory');
       expect(entretien.reservedXof).toBe(30000);
       expect(entretien.consumedXof).toBe(20000);
       expect(entretien.availableXof).toBe(50000);
@@ -967,8 +978,10 @@ describe('FinancesService', () => {
 
       const dashboard = await service.getDashboard(2026, 8);
       const entretien = dashboard.byCategory.find(
-        (c: any) => c.category === 'ENTRETIEN',
+        (c) => c.category === 'ENTRETIEN',
       );
+      if (!entretien)
+        throw new Error('ENTRETIEN not found in dashboard.byCategory');
       expect(entretien.committedOverBudget).toBe(true);
       // Legacy overBudget is realizedXof-based and untouched — realizedXof
       // is 0 here (mocked), so it stays false even though committed isn't.
@@ -985,8 +998,10 @@ describe('FinancesService', () => {
 
       const dashboard = await service.getDashboard(2026, 8);
       const entretien = dashboard.byCategory.find(
-        (c: any) => c.category === 'ENTRETIEN',
+        (c) => c.category === 'ENTRETIEN',
       );
+      if (!entretien)
+        throw new Error('ENTRETIEN not found in dashboard.byCategory');
       expect(entretien.reservedPercentage).toBeNull();
       expect(entretien.consumedPercentage).toBeNull();
       expect(entretien.totalCommittedPercentage).toBeNull();
@@ -1001,8 +1016,10 @@ describe('FinancesService', () => {
 
       const dashboard = await service.getDashboard(2026, 8);
       const entretien = dashboard.byCategory.find(
-        (c: any) => c.category === 'ENTRETIEN',
+        (c) => c.category === 'ENTRETIEN',
       );
+      if (!entretien)
+        throw new Error('ENTRETIEN not found in dashboard.byCategory');
       expect(entretien.budgetXof).toBeNull();
       expect(entretien.availableXof).toBeNull();
       expect(entretien.reservedPercentage).toBeNull();
@@ -1019,8 +1036,10 @@ describe('FinancesService', () => {
 
       const dashboard = await service.getDashboard(2026, 8);
       const entretien = dashboard.byCategory.find(
-        (c: any) => c.category === 'ENTRETIEN',
+        (c) => c.category === 'ENTRETIEN',
       );
+      if (!entretien)
+        throw new Error('ENTRETIEN not found in dashboard.byCategory');
       expect(entretien.overBudget).toBe(true);
       expect(entretien.realizedXof).toBe(150000);
       expect(dashboard.alerts).toHaveLength(1);
@@ -1038,8 +1057,8 @@ describe('FinancesService', () => {
         date: '2026-08-01',
       } as any);
       expect(prisma.transaction.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ status: 'EN_ATTENTE' }),
+        matching({
+          data: matching({ status: 'EN_ATTENTE' }),
         }),
       );
     });
@@ -1058,8 +1077,8 @@ describe('FinancesService', () => {
         status: 'VALIDE',
       } as any);
       expect(prisma.transaction.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ status: 'VALIDE' }),
+        matching({
+          data: matching({ status: 'VALIDE' }),
         }),
       );
     });

@@ -1,5 +1,6 @@
 import { Test } from '@nestjs/testing';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
+import type { App } from 'supertest/types';
 import * as bcrypt from 'bcryptjs';
 import { AppModule } from '../../src/app.module';
 import { PrismaService } from '../../src/prisma/prisma.service';
@@ -9,18 +10,22 @@ import { PrismaExceptionFilter } from '../../src/prisma/prisma-exception.filter'
 // Integration/e2e tests never touch real object storage. Every upload
 // returns a deterministic fake key/URL instead.
 class FakeUploadService {
-  async upload(file: Express.Multer.File, folder: string): Promise<string> {
-    return `${folder}/fake-${Date.now()}-${Math.random().toString(36).slice(2)}.bin`;
+  upload(file: Express.Multer.File, folder: string): Promise<string> {
+    void file;
+    return Promise.resolve(
+      `${folder}/fake-${Date.now()}-${Math.random().toString(36).slice(2)}.bin`,
+    );
   }
-  async getPresignedUrl(key: string): Promise<string> {
-    return `https://fake-signed-url.test/${key}`;
+  getPresignedUrl(key: string): Promise<string> {
+    return Promise.resolve(`https://fake-signed-url.test/${key}`);
   }
-  async deleteFile(_key: string): Promise<void> {
+  deleteFile(_key: string): Promise<void> {
     void _key;
+    return Promise.resolve();
   }
 }
 
-export async function createTestApp(): Promise<INestApplication> {
+export async function createTestApp(): Promise<INestApplication<App>> {
   const moduleRef = await Test.createTestingModule({
     imports: [AppModule],
   })
@@ -28,7 +33,7 @@ export async function createTestApp(): Promise<INestApplication> {
     .useClass(FakeUploadService)
     .compile();
 
-  const app = moduleRef.createNestApplication();
+  const app = moduleRef.createNestApplication<INestApplication<App>>();
   app.setGlobalPrefix('api');
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
   app.useGlobalFilters(new PrismaExceptionFilter());

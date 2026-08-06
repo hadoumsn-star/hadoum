@@ -17,6 +17,18 @@ import { PrismaService } from '../src/prisma/prisma.service';
 // *recipient* and only once the underlying transition actually committed
 // (see expense-workflow.service.spec.ts for the unit-level coverage of the
 // wiring and failure paths).
+
+interface TransactionResponse {
+  id: string;
+}
+
+interface NotificationEntry {
+  title: string;
+  resourceType: string;
+  resourceId: string;
+  message: string;
+}
+
 describe('Expense workflow notifications (e2e)', () => {
   let app: INestApplication<App>;
   let prisma: PrismaService;
@@ -33,14 +45,18 @@ describe('Expense workflow notifications (e2e)', () => {
     const users = await seedTestUsers(prisma);
 
     directorToken = (
-      await request(app.getHttpServer())
+      (await request(app.getHttpServer())
         .post('/api/auth/login')
-        .send({ email: users.director.email, password: TEST_PASSWORD })
+        .send({ email: users.director.email, password: TEST_PASSWORD })) as {
+        body: { token: string };
+      }
     ).body.token;
     supervisorToken = (
-      await request(app.getHttpServer())
+      (await request(app.getHttpServer())
         .post('/api/auth/login')
-        .send({ email: users.supervisor.email, password: TEST_PASSWORD })
+        .send({ email: users.supervisor.email, password: TEST_PASSWORD })) as {
+        body: { token: string };
+      }
     ).body.token;
 
     await request(app.getHttpServer())
@@ -81,29 +97,33 @@ describe('Expense workflow notifications (e2e)', () => {
   // ─── 1. Submit → SUPERVISOR ──────────────────────────────────────────────
 
   it('DIRECTOR submits: notifies SUPERVISOR with title, label, amount, and no supplier mention when absent', async () => {
-    const created = await createExpense().expect(201);
+    const created = (await createExpense().expect(201)) as {
+      body: TransactionResponse;
+    };
     await request(app.getHttpServer())
       .post(`/api/finances/transactions/${created.body.id}/submit`)
       .set('Authorization', `Bearer ${directorToken}`)
       .send({})
       .expect(201);
 
-    const notifs = await notificationsFor(supervisorToken).expect(200);
+    const notifs = (await notificationsFor(supervisorToken).expect(200)) as {
+      body: NotificationEntry[];
+    };
     const notif = notifs.body.find(
-      (n: any) => n.title === 'Nouvelle dépense à valider',
+      (n) => n.title === 'Nouvelle dépense à valider',
     );
-    expect(notif).toBeTruthy();
+    if (!notif) throw new Error('Submit notification not found');
     expect(notif.resourceType).toBe('EXPENSE_TRANSACTION');
     expect(notif.resourceId).toBe(created.body.id);
     expect(notif.message).toContain('Réparation plomberie');
     expect(notif.message).toContain('25000');
 
     // The DIRECTOR who submitted is never notified about their own submission.
-    const directorNotifs = await notificationsFor(directorToken).expect(200);
+    const directorNotifs = (await notificationsFor(directorToken).expect(
+      200,
+    )) as { body: NotificationEntry[] };
     expect(
-      directorNotifs.body.some(
-        (n: any) => n.title === 'Nouvelle dépense à valider',
-      ),
+      directorNotifs.body.some((n) => n.title === 'Nouvelle dépense à valider'),
     ).toBe(false);
   });
 
@@ -114,26 +134,31 @@ describe('Expense workflow notifications (e2e)', () => {
     const supplier = await prisma.contact.create({
       data: { fullName: 'Ets Diop Fournitures', categoryId: category.id },
     });
-    const created = await createExpense({
+    const created = (await createExpense({
       supplierContactId: supplier.id,
-    }).expect(201);
+    }).expect(201)) as { body: TransactionResponse };
     await request(app.getHttpServer())
       .post(`/api/finances/transactions/${created.body.id}/submit`)
       .set('Authorization', `Bearer ${directorToken}`)
       .send({})
       .expect(201);
 
-    const notifs = await notificationsFor(supervisorToken).expect(200);
+    const notifs = (await notificationsFor(supervisorToken).expect(200)) as {
+      body: NotificationEntry[];
+    };
     const notif = notifs.body.find(
-      (n: any) => n.title === 'Nouvelle dépense à valider',
+      (n) => n.title === 'Nouvelle dépense à valider',
     );
+    if (!notif) throw new Error('Submit notification not found');
     expect(notif.message).toContain('Ets Diop Fournitures');
   });
 
   // ─── 2. Approve → submitting DIRECTOR ────────────────────────────────────
 
   it('SUPERVISOR approves: notifies the submitting DIRECTOR', async () => {
-    const created = await createExpense().expect(201);
+    const created = (await createExpense().expect(201)) as {
+      body: TransactionResponse;
+    };
     await request(app.getHttpServer())
       .post(`/api/finances/transactions/${created.body.id}/submit`)
       .set('Authorization', `Bearer ${directorToken}`)
@@ -145,9 +170,11 @@ describe('Expense workflow notifications (e2e)', () => {
       .send({})
       .expect(201);
 
-    const notifs = await notificationsFor(directorToken).expect(200);
-    const notif = notifs.body.find((n: any) => n.title === 'Dépense approuvée');
-    expect(notif).toBeTruthy();
+    const notifs = (await notificationsFor(directorToken).expect(200)) as {
+      body: NotificationEntry[];
+    };
+    const notif = notifs.body.find((n) => n.title === 'Dépense approuvée');
+    if (!notif) throw new Error('Approval notification not found');
     expect(notif.resourceId).toBe(created.body.id);
   });
 
@@ -156,7 +183,9 @@ describe('Expense workflow notifications (e2e)', () => {
       .put('/api/finances/budget-lines')
       .set('Authorization', `Bearer ${directorToken}`)
       .send({ category: 'ENTRETIEN', month: 8, year: 2026, budgetXof: 1000 });
-    const created = await createExpense().expect(201); // amountXof 25000 > 1000
+    const created = (await createExpense().expect(201)) as {
+      body: TransactionResponse;
+    }; // amountXof 25000 > 1000
     await request(app.getHttpServer())
       .post(`/api/finances/transactions/${created.body.id}/submit`)
       .set('Authorization', `Bearer ${directorToken}`)
@@ -169,8 +198,10 @@ describe('Expense workflow notifications (e2e)', () => {
       .send({})
       .expect(409);
 
-    const notifs = await notificationsFor(directorToken).expect(200);
-    expect(notifs.body.some((n: any) => n.title === 'Dépense approuvée')).toBe(
+    const notifs = (await notificationsFor(directorToken).expect(200)) as {
+      body: NotificationEntry[];
+    };
+    expect(notifs.body.some((n) => n.title === 'Dépense approuvée')).toBe(
       false,
     );
   });
@@ -178,7 +209,9 @@ describe('Expense workflow notifications (e2e)', () => {
   // ─── 3. Reject → submitting DIRECTOR ─────────────────────────────────────
 
   it('SUPERVISOR rejects: notifies the submitting DIRECTOR with the rejection comment', async () => {
-    const created = await createExpense().expect(201);
+    const created = (await createExpense().expect(201)) as {
+      body: TransactionResponse;
+    };
     await request(app.getHttpServer())
       .post(`/api/finances/transactions/${created.body.id}/submit`)
       .set('Authorization', `Bearer ${directorToken}`)
@@ -190,14 +223,18 @@ describe('Expense workflow notifications (e2e)', () => {
       .send({ comment: 'Justificatif manquant' })
       .expect(201);
 
-    const notifs = await notificationsFor(directorToken).expect(200);
-    const notif = notifs.body.find((n: any) => n.title === 'Dépense refusée');
-    expect(notif).toBeTruthy();
+    const notifs = (await notificationsFor(directorToken).expect(200)) as {
+      body: NotificationEntry[];
+    };
+    const notif = notifs.body.find((n) => n.title === 'Dépense refusée');
+    if (!notif) throw new Error('Rejection notification not found');
     expect(notif.message).toContain('Justificatif manquant');
   });
 
   it('does not notify when reject fails validation (empty comment)', async () => {
-    const created = await createExpense().expect(201);
+    const created = (await createExpense().expect(201)) as {
+      body: TransactionResponse;
+    };
     await request(app.getHttpServer())
       .post(`/api/finances/transactions/${created.body.id}/submit`)
       .set('Authorization', `Bearer ${directorToken}`)
@@ -209,16 +246,18 @@ describe('Expense workflow notifications (e2e)', () => {
       .send({ comment: '' })
       .expect(400);
 
-    const notifs = await notificationsFor(directorToken).expect(200);
-    expect(notifs.body.some((n: any) => n.title === 'Dépense refusée')).toBe(
-      false,
-    );
+    const notifs = (await notificationsFor(directorToken).expect(200)) as {
+      body: NotificationEntry[];
+    };
+    expect(notifs.body.some((n) => n.title === 'Dépense refusée')).toBe(false);
   });
 
   // ─── 4. Resubmit → SUPERVISOR ─────────────────────────────────────────────
 
   it('DIRECTOR resubmits: notifies SUPERVISOR', async () => {
-    const created = await createExpense().expect(201);
+    const created = (await createExpense().expect(201)) as {
+      body: TransactionResponse;
+    };
     await request(app.getHttpServer())
       .post(`/api/finances/transactions/${created.body.id}/submit`)
       .set('Authorization', `Bearer ${directorToken}`)
@@ -235,18 +274,22 @@ describe('Expense workflow notifications (e2e)', () => {
       .send({})
       .expect(201);
 
-    const notifs = await notificationsFor(supervisorToken).expect(200);
+    const notifs = (await notificationsFor(supervisorToken).expect(200)) as {
+      body: NotificationEntry[];
+    };
     const notif = notifs.body.find(
-      (n: any) => n.title === 'Dépense soumise à nouveau',
+      (n) => n.title === 'Dépense soumise à nouveau',
     );
-    expect(notif).toBeTruthy();
+    if (!notif) throw new Error('Resubmit notification not found');
     expect(notif.resourceId).toBe(created.body.id);
   });
 
   // ─── 5. Complete → SUPERVISOR ─────────────────────────────────────────────
 
   it('DIRECTOR completes: notifies SUPERVISOR', async () => {
-    const created = await createExpense().expect(201);
+    const created = (await createExpense().expect(201)) as {
+      body: TransactionResponse;
+    };
     await request(app.getHttpServer())
       .post(`/api/finances/transactions/${created.body.id}/submit`)
       .set('Authorization', `Bearer ${directorToken}`)
@@ -262,14 +305,18 @@ describe('Expense workflow notifications (e2e)', () => {
       .set('Authorization', `Bearer ${directorToken}`)
       .expect(201);
 
-    const notifs = await notificationsFor(supervisorToken).expect(200);
-    const notif = notifs.body.find((n: any) => n.title === 'Dépense clôturée');
-    expect(notif).toBeTruthy();
+    const notifs = (await notificationsFor(supervisorToken).expect(200)) as {
+      body: NotificationEntry[];
+    };
+    const notif = notifs.body.find((n) => n.title === 'Dépense clôturée');
+    if (!notif) throw new Error('Completion notification not found');
     expect(notif.resourceId).toBe(created.body.id);
   });
 
   it('does not notify completion of a non-approved expense (still PENDING_APPROVAL)', async () => {
-    const created = await createExpense().expect(201);
+    const created = (await createExpense().expect(201)) as {
+      body: TransactionResponse;
+    };
     await request(app.getHttpServer())
       .post(`/api/finances/transactions/${created.body.id}/submit`)
       .set('Authorization', `Bearer ${directorToken}`)
@@ -280,16 +327,18 @@ describe('Expense workflow notifications (e2e)', () => {
       .set('Authorization', `Bearer ${directorToken}`)
       .expect(409);
 
-    const notifs = await notificationsFor(supervisorToken).expect(200);
-    expect(notifs.body.some((n: any) => n.title === 'Dépense clôturée')).toBe(
-      false,
-    );
+    const notifs = (await notificationsFor(supervisorToken).expect(200)) as {
+      body: NotificationEntry[];
+    };
+    expect(notifs.body.some((n) => n.title === 'Dépense clôturée')).toBe(false);
   });
 
   // ─── 6. Cancel → SUPERVISOR ───────────────────────────────────────────────
 
   it('DIRECTOR cancels: notifies SUPERVISOR', async () => {
-    const created = await createExpense().expect(201);
+    const created = (await createExpense().expect(201)) as {
+      body: TransactionResponse;
+    };
     await request(app.getHttpServer())
       .post(`/api/finances/transactions/${created.body.id}/submit`)
       .set('Authorization', `Bearer ${directorToken}`)
@@ -305,16 +354,20 @@ describe('Expense workflow notifications (e2e)', () => {
       .set('Authorization', `Bearer ${directorToken}`)
       .expect(201);
 
-    const notifs = await notificationsFor(supervisorToken).expect(200);
-    const notif = notifs.body.find((n: any) => n.title === 'Dépense annulée');
-    expect(notif).toBeTruthy();
+    const notifs = (await notificationsFor(supervisorToken).expect(200)) as {
+      body: NotificationEntry[];
+    };
+    const notif = notifs.body.find((n) => n.title === 'Dépense annulée');
+    if (!notif) throw new Error('Cancel notification not found');
     expect(notif.resourceId).toBe(created.body.id);
   });
 
   // ─── No duplicate on concurrent transitions ──────────────────────────────
 
   it('a concurrent approve/reject race produces exactly one notification, matching whichever won', async () => {
-    const created = await createExpense().expect(201);
+    const created = (await createExpense().expect(201)) as {
+      body: TransactionResponse;
+    };
     await request(app.getHttpServer())
       .post(`/api/finances/transactions/${created.body.id}/submit`)
       .set('Authorization', `Bearer ${directorToken}`)
@@ -334,12 +387,14 @@ describe('Expense workflow notifications (e2e)', () => {
     const winnerIsApprove = approveRes.status === 201;
     expect([approveRes.status, rejectRes.status].sort()).toEqual([201, 409]);
 
-    const notifs = await notificationsFor(directorToken).expect(200);
+    const notifs = (await notificationsFor(directorToken).expect(200)) as {
+      body: NotificationEntry[];
+    };
     const approvedNotifs = notifs.body.filter(
-      (n: any) => n.title === 'Dépense approuvée',
+      (n) => n.title === 'Dépense approuvée',
     );
     const rejectedNotifs = notifs.body.filter(
-      (n: any) => n.title === 'Dépense refusée',
+      (n) => n.title === 'Dépense refusée',
     );
     expect(approvedNotifs).toHaveLength(winnerIsApprove ? 1 : 0);
     expect(rejectedNotifs).toHaveLength(winnerIsApprove ? 0 : 1);

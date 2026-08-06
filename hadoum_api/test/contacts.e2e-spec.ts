@@ -11,6 +11,30 @@ import {
 } from './utils/test-app';
 import { PrismaService } from '../src/prisma/prisma.service';
 
+interface ContactResponse {
+  id: string;
+  fullName: string;
+  organization: string | null;
+  phone: string | null;
+  active: boolean;
+  photoKey: string | null;
+  photoMime: string | null;
+}
+
+interface ContactListResponse {
+  total: number;
+  data: ContactResponse[];
+}
+
+interface ContactCategoryResponse {
+  id: string;
+  key: string;
+}
+
+interface DuplicateWarningResponse {
+  possibleDuplicate: { fullName: string };
+}
+
 describe('Contacts CRUD, categories, and role restrictions (e2e)', () => {
   let app: INestApplication<App>;
   let prisma: PrismaService;
@@ -45,19 +69,25 @@ describe('Contacts CRUD, categories, and role restrictions (e2e)', () => {
     });
 
     directorToken = (
-      await request(app.getHttpServer())
+      (await request(app.getHttpServer())
         .post('/api/auth/login')
-        .send({ email: users.director.email, password: TEST_PASSWORD })
+        .send({ email: users.director.email, password: TEST_PASSWORD })) as {
+        body: { token: string };
+      }
     ).body.token;
     supervisorToken = (
-      await request(app.getHttpServer())
+      (await request(app.getHttpServer())
         .post('/api/auth/login')
-        .send({ email: users.supervisor.email, password: TEST_PASSWORD })
+        .send({ email: users.supervisor.email, password: TEST_PASSWORD })) as {
+        body: { token: string };
+      }
     ).body.token;
     educatorToken = (
-      await request(app.getHttpServer())
+      (await request(app.getHttpServer())
         .post('/api/auth/login')
-        .send({ email: 'educator@test.local', password: TEST_PASSWORD })
+        .send({ email: 'educator@test.local', password: TEST_PASSWORD })) as {
+        body: { token: string };
+      }
     ).body.token;
 
     const category = await prisma.contactCategory.create({
@@ -75,10 +105,10 @@ describe('Contacts CRUD, categories, and role restrictions (e2e)', () => {
   // so `/contacts/categories` isn't swallowed by `/contacts/:id`.
 
   it('routes GET /contacts/categories to the categories controller, not :id', async () => {
-    const res = await request(app.getHttpServer())
+    const res = (await request(app.getHttpServer())
       .get('/api/contacts/categories')
       .set('Authorization', `Bearer ${directorToken}`)
-      .expect(200);
+      .expect(200)) as { body: ContactCategoryResponse[] };
     expect(Array.isArray(res.body)).toBe(true);
     expect(res.body[0].key).toBe('FOURNISSEUR');
   });
@@ -141,17 +171,17 @@ describe('Contacts CRUD, categories, and role restrictions (e2e)', () => {
   });
 
   it('updates a contact, preserving fields that are not sent', async () => {
-    const created = await request(app.getHttpServer())
+    const created = (await request(app.getHttpServer())
       .post('/api/contacts')
       .set('Authorization', `Bearer ${directorToken}`)
       .send({ fullName: 'Amadou Diop', categoryId, phone: '+221 77 000 00 00' })
-      .expect(201);
+      .expect(201)) as { body: ContactResponse };
 
-    const updated = await request(app.getHttpServer())
+    const updated = (await request(app.getHttpServer())
       .patch(`/api/contacts/${created.body.id}`)
       .set('Authorization', `Bearer ${directorToken}`)
       .send({ organization: 'Sénégal Gaz' })
-      .expect(200);
+      .expect(200)) as { body: ContactResponse };
 
     expect(updated.body.organization).toBe('Sénégal Gaz');
     expect(updated.body.phone).toBe('+221 77 000 00 00'); // unchanged
@@ -159,17 +189,17 @@ describe('Contacts CRUD, categories, and role restrictions (e2e)', () => {
   });
 
   it('cannot set `active` through the generic update endpoint', async () => {
-    const created = await request(app.getHttpServer())
+    const created = (await request(app.getHttpServer())
       .post('/api/contacts')
       .set('Authorization', `Bearer ${directorToken}`)
       .send({ fullName: 'Amadou Diop', categoryId })
-      .expect(201);
+      .expect(201)) as { body: ContactResponse };
 
-    const updated = await request(app.getHttpServer())
+    const updated = (await request(app.getHttpServer())
       .patch(`/api/contacts/${created.body.id}`)
       .set('Authorization', `Bearer ${directorToken}`)
       .send({ active: false }) // whitelist:true silently strips unknown fields
-      .expect(200);
+      .expect(200)) as { body: ContactResponse };
 
     expect(updated.body.active).toBe(true);
   });
@@ -197,19 +227,19 @@ describe('Contacts CRUD, categories, and role restrictions (e2e)', () => {
       '77 999 88 77',
       'livraisons',
     ]) {
-      const res = await request(app.getHttpServer())
+      const res = (await request(app.getHttpServer())
         .get('/api/contacts')
         .query({ search: q })
         .set('Authorization', `Bearer ${directorToken}`)
-        .expect(200);
+        .expect(200)) as { body: ContactListResponse };
       expect(res.body.total).toBe(1);
     }
 
-    const noMatch = await request(app.getHttpServer())
+    const noMatch = (await request(app.getHttpServer())
       .get('/api/contacts')
       .query({ search: 'zzz-no-such-contact' })
       .set('Authorization', `Bearer ${directorToken}`)
-      .expect(200);
+      .expect(200)) as { body: ContactListResponse };
     expect(noMatch.body.total).toBe(0);
   });
 
@@ -228,38 +258,38 @@ describe('Contacts CRUD, categories, and role restrictions (e2e)', () => {
       .send({ fullName: 'B', categoryId: otherCategory.id })
       .expect(201);
 
-    const res = await request(app.getHttpServer())
+    const res = (await request(app.getHttpServer())
       .get('/api/contacts')
       .query({ categoryId })
       .set('Authorization', `Bearer ${directorToken}`)
-      .expect(200);
+      .expect(200)) as { body: ContactListResponse };
 
     expect(res.body.total).toBe(1);
     expect(res.body.data[0].fullName).toBe('A');
   });
 
   it('defaults to active-only and includes inactive contacts only when requested', async () => {
-    const created = await request(app.getHttpServer())
+    const created = (await request(app.getHttpServer())
       .post('/api/contacts')
       .set('Authorization', `Bearer ${directorToken}`)
       .send({ fullName: 'Amadou Diop', categoryId })
-      .expect(201);
+      .expect(201)) as { body: ContactResponse };
     await request(app.getHttpServer())
       .patch(`/api/contacts/${created.body.id}/deactivate`)
       .set('Authorization', `Bearer ${directorToken}`)
       .expect(200);
 
-    const defaultList = await request(app.getHttpServer())
+    const defaultList = (await request(app.getHttpServer())
       .get('/api/contacts')
       .set('Authorization', `Bearer ${directorToken}`)
-      .expect(200);
+      .expect(200)) as { body: ContactListResponse };
     expect(defaultList.body.total).toBe(0);
 
-    const inactiveList = await request(app.getHttpServer())
+    const inactiveList = (await request(app.getHttpServer())
       .get('/api/contacts')
       .query({ active: 'false' })
       .set('Authorization', `Bearer ${directorToken}`)
-      .expect(200);
+      .expect(200)) as { body: ContactListResponse };
     expect(inactiveList.body.total).toBe(1);
 
     // A deactivated contact stays individually readable regardless.
@@ -278,11 +308,11 @@ describe('Contacts CRUD, categories, and role restrictions (e2e)', () => {
       .send({ fullName: 'Amadou Diop', categoryId, phone: '+221 77 123 45 67' })
       .expect(201);
 
-    const dup = await request(app.getHttpServer())
+    const dup = (await request(app.getHttpServer())
       .post('/api/contacts')
       .set('Authorization', `Bearer ${directorToken}`)
       .send({ fullName: 'Amadou D.', categoryId, phone: '221771234567' })
-      .expect(409);
+      .expect(409)) as { body: DuplicateWarningResponse };
     expect(dup.body.possibleDuplicate.fullName).toBe('Amadou Diop');
 
     await request(app.getHttpServer())
@@ -295,11 +325,11 @@ describe('Contacts CRUD, categories, and role restrictions (e2e)', () => {
   // ─── Deactivate / reactivate — DIRECTOR only ──────────────────────────────
 
   it('allows DIRECTOR but not SUPERVISOR to deactivate/reactivate a contact', async () => {
-    const created = await request(app.getHttpServer())
+    const created = (await request(app.getHttpServer())
       .post('/api/contacts')
       .set('Authorization', `Bearer ${directorToken}`)
       .send({ fullName: 'Amadou Diop', categoryId })
-      .expect(201);
+      .expect(201)) as { body: ContactResponse };
     const id = created.body.id;
 
     await request(app.getHttpServer())
@@ -332,11 +362,11 @@ describe('Contacts CRUD, categories, and role restrictions (e2e)', () => {
       .send({ key: 'SOCIAL', label: 'Social' })
       .expect(403);
 
-    const created = await request(app.getHttpServer())
+    const created = (await request(app.getHttpServer())
       .post('/api/contacts/categories')
       .set('Authorization', `Bearer ${directorToken}`)
       .send({ key: 'SOCIAL', label: 'Social' })
-      .expect(201);
+      .expect(201)) as { body: ContactCategoryResponse };
 
     await request(app.getHttpServer())
       .patch(`/api/contacts/categories/${created.body.id}/deactivate`)
@@ -373,11 +403,11 @@ describe('Contacts CRUD, categories, and role restrictions (e2e)', () => {
   });
 
   it('allows deactivating a category once no active contact references it', async () => {
-    const created = await request(app.getHttpServer())
+    const created = (await request(app.getHttpServer())
       .post('/api/contacts')
       .set('Authorization', `Bearer ${directorToken}`)
       .send({ fullName: 'Amadou Diop', categoryId })
-      .expect(201);
+      .expect(201)) as { body: ContactResponse };
     await request(app.getHttpServer())
       .patch(`/api/contacts/${created.body.id}/deactivate`)
       .set('Authorization', `Bearer ${directorToken}`)
@@ -392,25 +422,25 @@ describe('Contacts CRUD, categories, and role restrictions (e2e)', () => {
   // ─── Photo (via FakeUploadService — no real S3 call) ─────────────────────
 
   it('uploads, retrieves the URL for, and deletes a contact photo', async () => {
-    const created = await request(app.getHttpServer())
+    const created = (await request(app.getHttpServer())
       .post('/api/contacts')
       .set('Authorization', `Bearer ${directorToken}`)
       .send({ fullName: 'Amadou Diop', categoryId })
-      .expect(201);
+      .expect(201)) as { body: ContactResponse };
     const id = created.body.id;
 
-    const uploaded = await request(app.getHttpServer())
+    const uploaded = (await request(app.getHttpServer())
       .post(`/api/contacts/${id}/photo`)
       .set('Authorization', `Bearer ${directorToken}`)
       .attach('file', Buffer.from('fake image bytes'), 'photo.jpg')
-      .expect(201);
+      .expect(201)) as { body: ContactResponse };
     expect(uploaded.body.photoKey).toContain('contacts/');
     expect(uploaded.body.photoMime).toBe('image/jpeg');
 
-    const urlRes = await request(app.getHttpServer())
+    const urlRes = (await request(app.getHttpServer())
       .get(`/api/contacts/${id}/photo-url`)
       .set('Authorization', `Bearer ${directorToken}`)
-      .expect(200);
+      .expect(200)) as { body: { url: string } };
     expect(urlRes.body.url).toContain('fake-signed-url.test');
 
     await request(app.getHttpServer())

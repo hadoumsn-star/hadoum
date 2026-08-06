@@ -35,21 +35,29 @@ describe('Supervisor validation queue — assignedContact enrichment (e2e)', () 
     const users = await seedTestUsers(prisma);
 
     directorToken = (
-      await request(app.getHttpServer())
+      (await request(app.getHttpServer())
         .post('/api/auth/login')
-        .send({ email: users.director.email, password: TEST_PASSWORD })
+        .send({ email: users.director.email, password: TEST_PASSWORD })) as {
+        body: { token: string };
+      }
     ).body.token;
     supervisorToken = (
-      await request(app.getHttpServer())
+      (await request(app.getHttpServer())
         .post('/api/auth/login')
-        .send({ email: users.supervisor.email, password: TEST_PASSWORD })
+        .send({ email: users.supervisor.email, password: TEST_PASSWORD })) as {
+        body: { token: string };
+      }
     ).body.token;
 
     const category = await prisma.contactCategory.create({
       data: { key: 'ADMINISTRATION', label: 'Administration', sortOrder: 1 },
     });
     const contact = await prisma.contact.create({
-      data: { fullName: 'Awa Diop', categoryId: category.id, phone: '771234567' },
+      data: {
+        fullName: 'Awa Diop',
+        categoryId: category.id,
+        phone: '771234567',
+      },
     });
     activeContactId = contact.id;
     activeContactName = contact.fullName;
@@ -64,12 +72,34 @@ describe('Supervisor validation queue — assignedContact enrichment (e2e)', () 
     await app.close();
   });
 
-  function findPendingEntry(body: Array<{ resourceType: string; resourceId: string }>, resourceId: string) {
-    return body.find((v) => v.resourceId === resourceId);
+  interface CreatedResourceResponse {
+    id: string;
+    assignedContact: { id: string; fullName: string } | null;
+  }
+
+  interface PendingValidationEntry {
+    resourceType: string;
+    resourceId: string;
+    resource: {
+      title?: string;
+      authority?: string;
+      assignedContact?: { id: string; fullName: string } | null;
+      assignedTo?: string | null;
+    };
+  }
+
+  function findPendingEntry(
+    body: PendingValidationEntry[],
+    resourceId: string,
+  ): PendingValidationEntry {
+    const entry = body.find((v) => v.resourceId === resourceId);
+    if (!entry)
+      throw new Error(`No pending validation entry for resource ${resourceId}`);
+    return entry;
   }
 
   it('a pending Administrative Procedure carries its assigned Contact in the Supervisor queue', async () => {
-    const created = await request(app.getHttpServer())
+    const created = (await request(app.getHttpServer())
       .post('/api/administrative-procedures')
       .set('Authorization', `Bearer ${directorToken}`)
       .send({
@@ -78,29 +108,34 @@ describe('Supervisor validation queue — assignedContact enrichment (e2e)', () 
         authority: 'Ministère de la Famille',
         assignedContactId: activeContactId,
       })
-      .expect(201);
-    expect(created.body.assignedContact.id).toBe(activeContactId);
+      .expect(201)) as { body: CreatedResourceResponse };
+    expect(created.body.assignedContact?.id).toBe(activeContactId);
 
     await request(app.getHttpServer())
-      .post(`/api/administrative-procedures/${created.body.id}/submit-validation`)
+      .post(
+        `/api/administrative-procedures/${created.body.id}/submit-validation`,
+      )
       .set('Authorization', `Bearer ${directorToken}`)
       .send({})
       .expect(201);
 
-    const pending = await request(app.getHttpServer())
+    const pending = (await request(app.getHttpServer())
       .get('/api/validations/pending')
       .set('Authorization', `Bearer ${supervisorToken}`)
-      .expect(200);
+      .expect(200)) as { body: PendingValidationEntry[] };
 
     const entry = findPendingEntry(pending.body, created.body.id);
     expect(entry).toBeTruthy();
     expect(entry.resource.title).toBe("Agrément d'ouverture");
     expect(entry.resource.authority).toBe('Ministère de la Famille');
-    expect(entry.resource.assignedContact).toEqual({ id: activeContactId, fullName: activeContactName });
+    expect(entry.resource.assignedContact).toEqual({
+      id: activeContactId,
+      fullName: activeContactName,
+    });
   });
 
   it('a pending Administrative Procedure with no responsible assigned carries a null assignedContact and assignedTo', async () => {
-    const created = await request(app.getHttpServer())
+    const created = (await request(app.getHttpServer())
       .post('/api/administrative-procedures')
       .set('Authorization', `Bearer ${directorToken}`)
       .send({
@@ -108,19 +143,21 @@ describe('Supervisor validation queue — assignedContact enrichment (e2e)', () 
         procedureType: 'AGREMENT',
         authority: 'Préfecture',
       })
-      .expect(201);
+      .expect(201)) as { body: CreatedResourceResponse };
     expect(created.body.assignedContact).toBeNull();
 
     await request(app.getHttpServer())
-      .post(`/api/administrative-procedures/${created.body.id}/submit-validation`)
+      .post(
+        `/api/administrative-procedures/${created.body.id}/submit-validation`,
+      )
       .set('Authorization', `Bearer ${directorToken}`)
       .send({})
       .expect(201);
 
-    const pending = await request(app.getHttpServer())
+    const pending = (await request(app.getHttpServer())
       .get('/api/validations/pending')
       .set('Authorization', `Bearer ${supervisorToken}`)
-      .expect(200);
+      .expect(200)) as { body: PendingValidationEntry[] };
 
     const entry = findPendingEntry(pending.body, created.body.id);
     expect(entry.resource.assignedContact).toBeNull();
@@ -128,14 +165,17 @@ describe('Supervisor validation queue — assignedContact enrichment (e2e)', () 
   });
 
   it('a pending Maintenance Ticket carries its assigned Contact in the Supervisor queue', async () => {
-    const created = await request(app.getHttpServer())
+    const created = (await request(app.getHttpServer())
       .post('/api/maintenance-tickets')
       .set('Authorization', `Bearer ${directorToken}`)
       .send({
-        title: 'Fuite au robinet', spaceId, urgency: 'MOYENNE',
-        reportedBy: 'Test Director', assignedContactId: activeContactId,
+        title: 'Fuite au robinet',
+        spaceId,
+        urgency: 'MOYENNE',
+        reportedBy: 'Test Director',
+        assignedContactId: activeContactId,
       })
-      .expect(201);
+      .expect(201)) as { body: CreatedResourceResponse };
 
     await request(app.getHttpServer())
       .post(`/api/maintenance-tickets/${created.body.id}/submit-validation`)
@@ -143,14 +183,17 @@ describe('Supervisor validation queue — assignedContact enrichment (e2e)', () 
       .send({})
       .expect(201);
 
-    const pending = await request(app.getHttpServer())
+    const pending = (await request(app.getHttpServer())
       .get('/api/validations/pending')
       .set('Authorization', `Bearer ${supervisorToken}`)
-      .expect(200);
+      .expect(200)) as { body: PendingValidationEntry[] };
 
     const entry = findPendingEntry(pending.body, created.body.id);
     expect(entry).toBeTruthy();
     expect(entry.resource.title).toBe('Fuite au robinet');
-    expect(entry.resource.assignedContact).toEqual({ id: activeContactId, fullName: activeContactName });
+    expect(entry.resource.assignedContact).toEqual({
+      id: activeContactId,
+      fullName: activeContactName,
+    });
   });
 });

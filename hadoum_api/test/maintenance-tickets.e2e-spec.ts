@@ -17,6 +17,22 @@ import { PrismaService } from '../src/prisma/prisma.service';
 // is exactly the kind of thing a mocked-Prisma unit test can't actually
 // prove, which is why this exists alongside maintenance-tickets.service.spec.ts
 // rather than instead of it.
+
+interface MaintenanceTicketResponse {
+  id: string;
+  title: string;
+  status: string;
+  validationStatus: string | null;
+  assignedContactId: string | null;
+  assignedTo: string | null;
+  assignedContact: {
+    id: string;
+    fullName: string;
+    active: boolean;
+    category: { key: string };
+  } | null;
+}
+
 describe('Maintenance Tickets — Contact assignment (e2e)', () => {
   let app: INestApplication<App>;
   let prisma: PrismaService;
@@ -36,14 +52,18 @@ describe('Maintenance Tickets — Contact assignment (e2e)', () => {
     const users = await seedTestUsers(prisma);
 
     directorToken = (
-      await request(app.getHttpServer())
+      (await request(app.getHttpServer())
         .post('/api/auth/login')
-        .send({ email: users.director.email, password: TEST_PASSWORD })
+        .send({ email: users.director.email, password: TEST_PASSWORD })) as {
+        body: { token: string };
+      }
     ).body.token;
     supervisorToken = (
-      await request(app.getHttpServer())
+      (await request(app.getHttpServer())
         .post('/api/auth/login')
-        .send({ email: users.supervisor.email, password: TEST_PASSWORD })
+        .send({ email: users.supervisor.email, password: TEST_PASSWORD })) as {
+        body: { token: string };
+      }
     ).body.token;
 
     const space = await prisma.space.create({
@@ -83,18 +103,22 @@ describe('Maintenance Tickets — Contact assignment (e2e)', () => {
   }
 
   it('creates a ticket without a contact exactly as before', async () => {
-    const res = await createTicket({}).expect(201);
+    const res = (await createTicket({}).expect(201)) as {
+      body: MaintenanceTicketResponse;
+    };
     expect(res.body.assignedContactId).toBeNull();
     expect(res.body.assignedContact).toBeNull();
     expect(res.body.assignedTo).toBeNull();
   });
 
   it('creates a ticket with an active contact and derives the assignedTo snapshot', async () => {
-    const res = await createTicket({ assignedContactId: activeContactId }).expect(201);
+    const res = (await createTicket({
+      assignedContactId: activeContactId,
+    }).expect(201)) as { body: MaintenanceTicketResponse };
     expect(res.body.assignedContactId).toBe(activeContactId);
     expect(res.body.assignedTo).toBe(activeContactName);
-    expect(res.body.assignedContact.id).toBe(activeContactId);
-    expect(res.body.assignedContact.category.key).toBe('MAINTENANCE');
+    expect(res.body.assignedContact?.id).toBe(activeContactId);
+    expect(res.body.assignedContact?.category.key).toBe('MAINTENANCE');
   });
 
   it('rejects an unknown contact id on create', async () => {
@@ -111,47 +135,53 @@ describe('Maintenance Tickets — Contact assignment (e2e)', () => {
 
   it('lists tickets with assignedContact included', async () => {
     await createTicket({ assignedContactId: activeContactId }).expect(201);
-    const res = await request(app.getHttpServer())
+    const res = (await request(app.getHttpServer())
       .get('/api/maintenance-tickets')
       .set('Authorization', `Bearer ${directorToken}`)
-      .expect(200);
-    expect(res.body[0].assignedContact.fullName).toBe(activeContactName);
+      .expect(200)) as { body: MaintenanceTicketResponse[] };
+    expect(res.body[0].assignedContact?.fullName).toBe(activeContactName);
   });
 
   it('returns the ticket detail with assignedContact included', async () => {
-    const created = await createTicket({ assignedContactId: activeContactId }).expect(201);
-    const res = await request(app.getHttpServer())
+    const created = (await createTicket({
+      assignedContactId: activeContactId,
+    }).expect(201)) as { body: MaintenanceTicketResponse };
+    const res = (await request(app.getHttpServer())
       .get(`/api/maintenance-tickets/${created.body.id}`)
       .set('Authorization', `Bearer ${directorToken}`)
-      .expect(200);
-    expect(res.body.assignedContact.fullName).toBe(activeContactName);
+      .expect(200)) as { body: MaintenanceTicketResponse };
+    expect(res.body.assignedContact?.fullName).toBe(activeContactName);
   });
 
   it('updates a ticket to a different contact', async () => {
-    const created = await createTicket({}).expect(201);
+    const created = (await createTicket({}).expect(201)) as {
+      body: MaintenanceTicketResponse;
+    };
     const category = await prisma.contactCategory.findFirstOrThrow();
     const otherContact = await prisma.contact.create({
       data: { fullName: 'Fatou Ndiaye', categoryId: category.id },
     });
 
-    const res = await request(app.getHttpServer())
+    const res = (await request(app.getHttpServer())
       .patch(`/api/maintenance-tickets/${created.body.id}`)
       .set('Authorization', `Bearer ${directorToken}`)
       .send({ assignedContactId: otherContact.id })
-      .expect(200);
+      .expect(200)) as { body: MaintenanceTicketResponse };
 
     expect(res.body.assignedContactId).toBe(otherContact.id);
     expect(res.body.assignedTo).toBe('Fatou Ndiaye');
   });
 
   it('clears the assigned contact when assignedContactId is explicitly null', async () => {
-    const created = await createTicket({ assignedContactId: activeContactId }).expect(201);
+    const created = (await createTicket({
+      assignedContactId: activeContactId,
+    }).expect(201)) as { body: MaintenanceTicketResponse };
 
-    const res = await request(app.getHttpServer())
+    const res = (await request(app.getHttpServer())
       .patch(`/api/maintenance-tickets/${created.body.id}`)
       .set('Authorization', `Bearer ${directorToken}`)
       .send({ assignedContactId: null })
-      .expect(200);
+      .expect(200)) as { body: MaintenanceTicketResponse };
 
     expect(res.body.assignedContactId).toBeNull();
     expect(res.body.assignedContact).toBeNull();
@@ -159,13 +189,15 @@ describe('Maintenance Tickets — Contact assignment (e2e)', () => {
   });
 
   it('leaves the existing relation untouched when assignedContactId is omitted', async () => {
-    const created = await createTicket({ assignedContactId: activeContactId }).expect(201);
+    const created = (await createTicket({
+      assignedContactId: activeContactId,
+    }).expect(201)) as { body: MaintenanceTicketResponse };
 
-    const res = await request(app.getHttpServer())
+    const res = (await request(app.getHttpServer())
       .patch(`/api/maintenance-tickets/${created.body.id}`)
       .set('Authorization', `Bearer ${directorToken}`)
       .send({ title: 'Titre modifié' })
-      .expect(200);
+      .expect(200)) as { body: MaintenanceTicketResponse };
 
     expect(res.body.title).toBe('Titre modifié');
     expect(res.body.assignedContactId).toBe(activeContactId);
@@ -173,53 +205,62 @@ describe('Maintenance Tickets — Contact assignment (e2e)', () => {
   });
 
   it('keeps a legacy assignedTo-only ticket (no linked contact) fully readable', async () => {
-    const created = await createTicket({ assignedTo: 'Paul (texte libre)' }).expect(201);
+    const created = (await createTicket({
+      assignedTo: 'Paul (texte libre)',
+    }).expect(201)) as { body: MaintenanceTicketResponse };
     expect(created.body.assignedContactId).toBeNull();
     expect(created.body.assignedTo).toBe('Paul (texte libre)');
 
-    const res = await request(app.getHttpServer())
+    const res = (await request(app.getHttpServer())
       .get(`/api/maintenance-tickets/${created.body.id}`)
       .set('Authorization', `Bearer ${directorToken}`)
-      .expect(200);
+      .expect(200)) as { body: MaintenanceTicketResponse };
     expect(res.body.assignedTo).toBe('Paul (texte libre)');
     expect(res.body.assignedContact).toBeNull();
   });
 
   it('keeps a ticket readable, with the reference intact, after its contact is deactivated', async () => {
-    const created = await createTicket({ assignedContactId: activeContactId }).expect(201);
-    await prisma.contact.update({ where: { id: activeContactId }, data: { active: false } });
+    const created = (await createTicket({
+      assignedContactId: activeContactId,
+    }).expect(201)) as { body: MaintenanceTicketResponse };
+    await prisma.contact.update({
+      where: { id: activeContactId },
+      data: { active: false },
+    });
 
-    const res = await request(app.getHttpServer())
+    const res = (await request(app.getHttpServer())
       .get(`/api/maintenance-tickets/${created.body.id}`)
       .set('Authorization', `Bearer ${directorToken}`)
-      .expect(200);
+      .expect(200)) as { body: MaintenanceTicketResponse };
 
-    expect(res.body.assignedContact.id).toBe(activeContactId);
-    expect(res.body.assignedContact.active).toBe(false);
+    expect(res.body.assignedContact?.id).toBe(activeContactId);
+    expect(res.body.assignedContact?.active).toBe(false);
   });
 
   it('does not change validationStatus when only the assigned contact changes', async () => {
-    const created = await createTicket({ urgency: 'CRITIQUE' }).expect(201);
+    const created = (await createTicket({ urgency: 'CRITIQUE' }).expect(
+      201,
+    )) as { body: MaintenanceTicketResponse };
     await request(app.getHttpServer())
       .post(`/api/maintenance-tickets/${created.body.id}/submit-validation`)
       .set('Authorization', `Bearer ${directorToken}`)
       .send({})
       .expect(201);
 
-    const res = await request(app.getHttpServer())
+    const res = (await request(app.getHttpServer())
       .patch(`/api/maintenance-tickets/${created.body.id}`)
       .set('Authorization', `Bearer ${directorToken}`)
       .send({ assignedContactId: activeContactId })
-      .expect(200);
+      .expect(200)) as { body: MaintenanceTicketResponse };
 
     expect(res.body.validationStatus).toBe('PENDING_VALIDATION');
   });
 
   it('still supports the full submit -> approve validation workflow on a contact-linked ticket', async () => {
-    const created = await createTicket({
+    const created = (await createTicket({
       urgency: 'CRITIQUE',
       assignedContactId: activeContactId,
-    }).expect(201);
+    }).expect(201)) as { body: MaintenanceTicketResponse };
 
     await request(app.getHttpServer())
       .post(`/api/maintenance-tickets/${created.body.id}/submit-validation`)
@@ -227,11 +268,11 @@ describe('Maintenance Tickets — Contact assignment (e2e)', () => {
       .send({})
       .expect(201);
 
-    const approved = await request(app.getHttpServer())
+    const approved = (await request(app.getHttpServer())
       .patch(`/api/maintenance-tickets/${created.body.id}/approve`)
       .set('Authorization', `Bearer ${supervisorToken}`)
       .send({})
-      .expect(200);
+      .expect(200)) as { body: MaintenanceTicketResponse };
 
     expect(approved.body.status).toBe('FERME');
     expect(approved.body.validationStatus).toBe('APPROVED');
@@ -244,7 +285,9 @@ describe('Maintenance Tickets — Contact assignment (e2e)', () => {
       .send({ title: 'x', spaceId, urgency: 'MOYENNE', reportedBy: 'x' })
       .expect(403);
 
-    const created = await createTicket({}).expect(201);
+    const created = (await createTicket({}).expect(201)) as {
+      body: MaintenanceTicketResponse;
+    };
     await request(app.getHttpServer())
       .patch(`/api/maintenance-tickets/${created.body.id}`)
       .set('Authorization', `Bearer ${supervisorToken}`)

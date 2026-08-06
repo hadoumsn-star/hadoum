@@ -44,7 +44,10 @@ export class SupplierContractsController {
     entity: 'SupplierContract',
     action: 'CREATE',
   })
-  create(@Body() dto: CreateSupplierContractDto, @CurrentUser() user: AuthUser) {
+  create(
+    @Body() dto: CreateSupplierContractDto,
+    @CurrentUser() user: AuthUser,
+  ) {
     return this.contractsService.create(dto, user.id);
   }
 

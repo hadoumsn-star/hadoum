@@ -17,6 +17,31 @@ import { PrismaService } from '../src/prisma/prisma.service';
 // inactive-but-readable references) is exactly the kind of thing a
 // mocked-Prisma unit test can't actually prove, which is why this exists
 // alongside supplier-contracts.service.spec.ts rather than instead of it.
+
+interface ContactResponse {
+  id: string;
+}
+
+interface SupplierContractResponse {
+  id: string;
+  contractName: string;
+  status: string;
+  validationStatus: string | null;
+  pendingValidationAction: string | null;
+  effectiveStatus: string;
+  supplierContactId: string | null;
+  supplierName: string | null;
+  contactPerson: string | null;
+  phone: string | null;
+  email: string | null;
+  supplierContact: {
+    id: string;
+    fullName: string;
+    active: boolean;
+    category: { key: string };
+  } | null;
+}
+
 describe('Supplier Contracts — Contact assignment (e2e)', () => {
   let app: INestApplication<App>;
   let prisma: PrismaService;
@@ -35,14 +60,18 @@ describe('Supplier Contracts — Contact assignment (e2e)', () => {
     const users = await seedTestUsers(prisma);
 
     directorToken = (
-      await request(app.getHttpServer())
+      (await request(app.getHttpServer())
         .post('/api/auth/login')
-        .send({ email: users.director.email, password: TEST_PASSWORD })
+        .send({ email: users.director.email, password: TEST_PASSWORD })) as {
+        body: { token: string };
+      }
     ).body.token;
     supervisorToken = (
-      await request(app.getHttpServer())
+      (await request(app.getHttpServer())
         .post('/api/auth/login')
-        .send({ email: users.supervisor.email, password: TEST_PASSWORD })
+        .send({ email: users.supervisor.email, password: TEST_PASSWORD })) as {
+        body: { token: string };
+      }
     ).body.token;
 
     const category = await prisma.contactCategory.create({
@@ -78,33 +107,39 @@ describe('Supplier Contracts — Contact assignment (e2e)', () => {
   }
 
   it('creates a contract with an active Contact and derives the legacy snapshot fields', async () => {
-    const res = await createContract({ supplierContactId: activeContactId }).expect(201);
+    const res = (await createContract({
+      supplierContactId: activeContactId,
+    }).expect(201)) as { body: SupplierContractResponse };
     expect(res.body.supplierContactId).toBe(activeContactId);
     expect(res.body.supplierName).toBe('SENELEC');
     expect(res.body.contactPerson).toBe(activeContactName);
     expect(res.body.phone).toBe('771234567');
     expect(res.body.email).toBe('awa.diop@senelec.sn');
-    expect(res.body.supplierContact.id).toBe(activeContactId);
-    expect(res.body.supplierContact.category.key).toBe('FOURNISSEUR');
+    expect(res.body.supplierContact?.id).toBe(activeContactId);
+    expect(res.body.supplierContact?.category.key).toBe('FOURNISSEUR');
   });
 
   it('inline-creates a supplier via the Contact API, then links it on contract creation', async () => {
     const category = await prisma.contactCategory.findFirstOrThrow({
       where: { key: 'FOURNISSEUR' },
     });
-    const created = await request(app.getHttpServer())
+    const created = (await request(app.getHttpServer())
       .post('/api/contacts')
       .set('Authorization', `Bearer ${directorToken}`)
       .send({ fullName: 'Nouveau Fournisseur', categoryId: category.id })
-      .expect(201);
+      .expect(201)) as { body: ContactResponse };
 
-    const res = await createContract({ supplierContactId: created.body.id }).expect(201);
+    const res = (await createContract({
+      supplierContactId: created.body.id,
+    }).expect(201)) as { body: SupplierContractResponse };
     expect(res.body.supplierContactId).toBe(created.body.id);
     expect(res.body.supplierName).toBe('Nouveau Fournisseur');
   });
 
   it('still supports the legacy free-text path when no Contact is selected', async () => {
-    const res = await createContract({ supplierName: 'Fournisseur en texte libre' }).expect(201);
+    const res = (await createContract({
+      supplierName: 'Fournisseur en texte libre',
+    }).expect(201)) as { body: SupplierContractResponse };
     expect(res.body.supplierContactId).toBeNull();
     expect(res.body.supplierContact).toBeNull();
     expect(res.body.supplierName).toBe('Fournisseur en texte libre');
@@ -119,57 +154,66 @@ describe('Supplier Contracts — Contact assignment (e2e)', () => {
   });
 
   it('rejects an inactive contact for a new assignment on create', async () => {
-    await prisma.contact.update({ where: { id: activeContactId }, data: { active: false } });
+    await prisma.contact.update({
+      where: { id: activeContactId },
+      data: { active: false },
+    });
     await createContract({ supplierContactId: activeContactId }).expect(400);
   });
 
   it('lists contracts with supplierContact and category included', async () => {
     await createContract({ supplierContactId: activeContactId }).expect(201);
-    const res = await request(app.getHttpServer())
+    const res = (await request(app.getHttpServer())
       .get('/api/supplier-contracts')
       .set('Authorization', `Bearer ${directorToken}`)
-      .expect(200);
-    expect(res.body[0].supplierContact.fullName).toBe(activeContactName);
-    expect(res.body[0].supplierContact.category.key).toBe('FOURNISSEUR');
+      .expect(200)) as { body: SupplierContractResponse[] };
+    expect(res.body[0].supplierContact?.fullName).toBe(activeContactName);
+    expect(res.body[0].supplierContact?.category.key).toBe('FOURNISSEUR');
   });
 
   it('returns the contract detail with supplierContact included', async () => {
-    const created = await createContract({ supplierContactId: activeContactId }).expect(201);
-    const res = await request(app.getHttpServer())
+    const created = (await createContract({
+      supplierContactId: activeContactId,
+    }).expect(201)) as { body: SupplierContractResponse };
+    const res = (await request(app.getHttpServer())
       .get(`/api/supplier-contracts/${created.body.id}`)
       .set('Authorization', `Bearer ${directorToken}`)
-      .expect(200);
-    expect(res.body.supplierContact.fullName).toBe(activeContactName);
+      .expect(200)) as { body: SupplierContractResponse };
+    expect(res.body.supplierContact?.fullName).toBe(activeContactName);
   });
 
   it('keeps a legacy supplierName-only contract (no linked contact) fully readable and editable', async () => {
-    const created = await createContract({ supplierName: 'Fournisseur (texte libre)' }).expect(201);
+    const created = (await createContract({
+      supplierName: 'Fournisseur (texte libre)',
+    }).expect(201)) as { body: SupplierContractResponse };
     expect(created.body.supplierContactId).toBeNull();
 
-    const res = await request(app.getHttpServer())
+    const res = (await request(app.getHttpServer())
       .get(`/api/supplier-contracts/${created.body.id}`)
       .set('Authorization', `Bearer ${directorToken}`)
-      .expect(200);
+      .expect(200)) as { body: SupplierContractResponse };
     expect(res.body.supplierName).toBe('Fournisseur (texte libre)');
     expect(res.body.supplierContact).toBeNull();
 
-    const updated = await request(app.getHttpServer())
+    const updated = (await request(app.getHttpServer())
       .patch(`/api/supplier-contracts/${created.body.id}`)
       .set('Authorization', `Bearer ${directorToken}`)
       .send({ contractName: 'Nom modifié' })
-      .expect(200);
+      .expect(200)) as { body: SupplierContractResponse };
     expect(updated.body.contractName).toBe('Nom modifié');
     expect(updated.body.supplierName).toBe('Fournisseur (texte libre)');
   });
 
   it('replaces a legacy free-text supplier with a Contact on update', async () => {
-    const created = await createContract({ supplierName: 'Ancien fournisseur texte' }).expect(201);
+    const created = (await createContract({
+      supplierName: 'Ancien fournisseur texte',
+    }).expect(201)) as { body: SupplierContractResponse };
 
-    const res = await request(app.getHttpServer())
+    const res = (await request(app.getHttpServer())
       .patch(`/api/supplier-contracts/${created.body.id}`)
       .set('Authorization', `Bearer ${directorToken}`)
       .send({ supplierContactId: activeContactId })
-      .expect(200);
+      .expect(200)) as { body: SupplierContractResponse };
 
     expect(res.body.supplierContactId).toBe(activeContactId);
     expect(res.body.supplierName).toBe('SENELEC');
@@ -177,13 +221,15 @@ describe('Supplier Contracts — Contact assignment (e2e)', () => {
   });
 
   it('disconnecting the Contact (explicit null) preserves the last-known snapshot as plain text', async () => {
-    const created = await createContract({ supplierContactId: activeContactId }).expect(201);
+    const created = (await createContract({
+      supplierContactId: activeContactId,
+    }).expect(201)) as { body: SupplierContractResponse };
 
-    const res = await request(app.getHttpServer())
+    const res = (await request(app.getHttpServer())
       .patch(`/api/supplier-contracts/${created.body.id}`)
       .set('Authorization', `Bearer ${directorToken}`)
       .send({ supplierContactId: null })
-      .expect(200);
+      .expect(200)) as { body: SupplierContractResponse };
 
     expect(res.body.supplierContactId).toBeNull();
     expect(res.body.supplierContact).toBeNull();
@@ -192,13 +238,15 @@ describe('Supplier Contracts — Contact assignment (e2e)', () => {
   });
 
   it('leaves the existing relation untouched when supplierContactId is omitted', async () => {
-    const created = await createContract({ supplierContactId: activeContactId }).expect(201);
+    const created = (await createContract({
+      supplierContactId: activeContactId,
+    }).expect(201)) as { body: SupplierContractResponse };
 
-    const res = await request(app.getHttpServer())
+    const res = (await request(app.getHttpServer())
       .patch(`/api/supplier-contracts/${created.body.id}`)
       .set('Authorization', `Bearer ${directorToken}`)
       .send({ contractName: 'Titre modifié' })
-      .expect(200);
+      .expect(200)) as { body: SupplierContractResponse };
 
     expect(res.body.contractName).toBe('Titre modifié');
     expect(res.body.supplierContactId).toBe(activeContactId);
@@ -206,16 +254,21 @@ describe('Supplier Contracts — Contact assignment (e2e)', () => {
   });
 
   it('keeps a contract readable, with the reference intact, after its Contact is deactivated', async () => {
-    const created = await createContract({ supplierContactId: activeContactId }).expect(201);
-    await prisma.contact.update({ where: { id: activeContactId }, data: { active: false } });
+    const created = (await createContract({
+      supplierContactId: activeContactId,
+    }).expect(201)) as { body: SupplierContractResponse };
+    await prisma.contact.update({
+      where: { id: activeContactId },
+      data: { active: false },
+    });
 
-    const res = await request(app.getHttpServer())
+    const res = (await request(app.getHttpServer())
       .get(`/api/supplier-contracts/${created.body.id}`)
       .set('Authorization', `Bearer ${directorToken}`)
-      .expect(200);
+      .expect(200)) as { body: SupplierContractResponse };
 
-    expect(res.body.supplierContact.id).toBe(activeContactId);
-    expect(res.body.supplierContact.active).toBe(false);
+    expect(res.body.supplierContact?.id).toBe(activeContactId);
+    expect(res.body.supplierContact?.active).toBe(false);
   });
 
   // Supplier Contracts workflow update: creation now enters the validation
@@ -223,56 +276,58 @@ describe('Supplier Contracts — Contact assignment (e2e)', () => {
   // "Soumettre pour validation" click) — a fresh contract is already
   // PENDING_VALIDATION, so SUPERVISOR can approve it directly.
   it('a freshly-created contract already requires validation and can be approved directly, on a contact-linked contract', async () => {
-    const created = await createContract({
+    const created = (await createContract({
       supplierContactId: activeContactId,
       amount: 600_000,
-    }).expect(201);
+    }).expect(201)) as { body: SupplierContractResponse };
     expect(created.body.status).toBe('BROUILLON');
     expect(created.body.validationStatus).toBe('PENDING_VALIDATION');
     expect(created.body.pendingValidationAction).toBe('CREATION');
 
-    const approved = await request(app.getHttpServer())
+    const approved = (await request(app.getHttpServer())
       .patch(`/api/supplier-contracts/${created.body.id}/approve`)
       .set('Authorization', `Bearer ${supervisorToken}`)
       .send({})
-      .expect(200);
+      .expect(200)) as { body: SupplierContractResponse };
 
     expect(approved.body.status).toBe('ACTIF');
     expect(approved.body.validationStatus).toBe('APPROVED');
-    expect(approved.body.supplierContact.id).toBe(activeContactId);
+    expect(approved.body.supplierContact?.id).toBe(activeContactId);
   });
 
   it('still supports reject directly on a freshly-created, contact-linked contract', async () => {
-    const created = await createContract({
+    const created = (await createContract({
       supplierContactId: activeContactId,
       amount: 600_000,
-    }).expect(201);
+    }).expect(201)) as { body: SupplierContractResponse };
 
-    const rejected = await request(app.getHttpServer())
+    const rejected = (await request(app.getHttpServer())
       .patch(`/api/supplier-contracts/${created.body.id}/reject`)
       .set('Authorization', `Bearer ${supervisorToken}`)
       .send({ comment: 'Montant trop élevé' })
-      .expect(200);
+      .expect(200)) as { body: SupplierContractResponse };
 
     expect(rejected.body.validationStatus).toBe('REJECTED');
   });
 
   it('a low-amount, contact-linked contract also requires validation now (no more free pass)', async () => {
-    const created = await createContract({
+    const created = (await createContract({
       supplierContactId: activeContactId,
       amount: 1_000, // well under the old threshold
-    }).expect(201);
+    }).expect(201)) as { body: SupplierContractResponse };
 
     expect(created.body.status).toBe('BROUILLON');
     expect(created.body.validationStatus).toBe('PENDING_VALIDATION');
   });
 
   it('reports EXPIRE_BIENTOT for a contact-linked contract expiring within 30 days, once approved', async () => {
-    const soon = new Date(Date.now() + 10 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-    const created = await createContract({
+    const soon = new Date(Date.now() + 10 * 24 * 60 * 60 * 1000)
+      .toISOString()
+      .slice(0, 10);
+    const created = (await createContract({
       supplierContactId: activeContactId,
       endDate: soon,
-    }).expect(201);
+    }).expect(201)) as { body: SupplierContractResponse };
 
     // Supplier Contracts workflow update: every new contract now starts
     // BROUILLON/PENDING_VALIDATION — BROUILLON is one of effectiveStatus's
@@ -285,10 +340,10 @@ describe('Supplier Contracts — Contact assignment (e2e)', () => {
       .send({})
       .expect(200);
 
-    const res = await request(app.getHttpServer())
+    const res = (await request(app.getHttpServer())
       .get(`/api/supplier-contracts/${created.body.id}`)
       .set('Authorization', `Bearer ${directorToken}`)
-      .expect(200);
+      .expect(200)) as { body: SupplierContractResponse };
 
     expect(res.body.effectiveStatus).toBe('EXPIRE_BIENTOT');
   });
@@ -297,10 +352,17 @@ describe('Supplier Contracts — Contact assignment (e2e)', () => {
     await request(app.getHttpServer())
       .post('/api/supplier-contracts')
       .set('Authorization', `Bearer ${supervisorToken}`)
-      .send({ contractName: 'x', category: 'ELECTRICITE', startDate: '2026-01-01', supplierContactId: activeContactId })
+      .send({
+        contractName: 'x',
+        category: 'ELECTRICITE',
+        startDate: '2026-01-01',
+        supplierContactId: activeContactId,
+      })
       .expect(403);
 
-    const created = await createContract({ supplierContactId: activeContactId }).expect(201);
+    const created = (await createContract({
+      supplierContactId: activeContactId,
+    }).expect(201)) as { body: SupplierContractResponse };
     await request(app.getHttpServer())
       .patch(`/api/supplier-contracts/${created.body.id}`)
       .set('Authorization', `Bearer ${supervisorToken}`)

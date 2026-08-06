@@ -4,9 +4,11 @@ import {
   ConflictException,
   NotFoundException,
 } from '@nestjs/common';
+import { Contact } from '@prisma/client';
 import { ContactsService } from './contacts.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { UploadService } from '../upload/upload.service';
+import { matching } from '../test-utils/jest-matchers';
 
 function createMockPrisma() {
   return {
@@ -97,7 +99,7 @@ describe('ContactsService', () => {
       });
 
       expect(prisma.contact.create).toHaveBeenCalled();
-      expect((result as any).fullName).toBe('Amadou Diop');
+      expect((result as Contact).fullName).toBe('Amadou Diop');
     });
 
     it('rejects a categoryId that does not exist', async () => {
@@ -185,7 +187,7 @@ describe('ContactsService', () => {
         categoryId: 'cat-1',
       });
 
-      expect((result as any).fullName).toBe('Fatou Ndiaye');
+      expect((result as Contact).fullName).toBe('Fatou Ndiaye');
     });
 
     it('bypasses the duplicate check entirely when force=true', async () => {
@@ -213,8 +215,8 @@ describe('ContactsService', () => {
       await service.findAll({ page: 1, pageSize: 20 });
 
       expect(prisma.contact.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: expect.objectContaining({ active: true }),
+        matching({
+          where: matching({ active: true }),
         }),
       );
     });
@@ -226,8 +228,8 @@ describe('ContactsService', () => {
       await service.findAll({ active: false, page: 1, pageSize: 20 });
 
       expect(prisma.contact.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: expect.objectContaining({ active: false }),
+        matching({
+          where: matching({ active: false }),
         }),
       );
     });
@@ -243,8 +245,8 @@ describe('ContactsService', () => {
       });
 
       expect(prisma.contact.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: expect.objectContaining({ categoryId: 'cat-1' }),
+        matching({
+          where: matching({ categoryId: 'cat-1' }),
         }),
       );
     });
@@ -259,9 +261,12 @@ describe('ContactsService', () => {
         pageSize: 20,
       });
 
-      const call = prisma.contact.findMany.mock.calls[0][0];
+      const findManyCalls = prisma.contact.findMany.mock.calls as [
+        { where: { OR: Record<string, unknown>[] } },
+      ][];
+      const call = findManyCalls[0][0];
       const orFields = call.where.OR.map(
-        (clause: any) => Object.keys(clause)[0],
+        (clause: Record<string, unknown>) => Object.keys(clause)[0],
       );
       expect(orFields).toEqual([
         'fullName',
@@ -332,7 +337,10 @@ describe('ContactsService', () => {
 
       await service.update('contact-1', { phone: '+221 78 000 00 00' });
 
-      const call = prisma.contact.update.mock.calls[0][0];
+      const updateCalls = prisma.contact.update.mock.calls as [
+        { data: Record<string, unknown> },
+      ][];
+      const call = updateCalls[0][0];
       expect(call.data).toEqual({ phone: '+221 78 000 00 00' });
     });
 
@@ -359,7 +367,7 @@ describe('ContactsService', () => {
       const result = await service.deactivate('contact-1');
 
       expect(prisma.contact.update).toHaveBeenCalledWith(
-        expect.objectContaining({ data: { active: false } }),
+        matching({ data: { active: false } }),
       );
       expect(result.active).toBe(false);
     });
@@ -378,7 +386,7 @@ describe('ContactsService', () => {
       const result = await service.reactivate('contact-1');
 
       expect(prisma.contact.update).toHaveBeenCalledWith(
-        expect.objectContaining({ data: { active: true } }),
+        matching({ data: { active: true } }),
       );
       expect(result.active).toBe(true);
     });
@@ -399,12 +407,15 @@ describe('ContactsService', () => {
         category: activeCategory,
       });
 
-      const file = { mimetype: 'image/jpeg', buffer: Buffer.from('x') } as any;
+      const file = {
+        mimetype: 'image/jpeg',
+        buffer: Buffer.from('x'),
+      } as Express.Multer.File;
       await service.uploadPhoto('contact-1', file);
 
       expect(upload.upload).toHaveBeenCalledWith(file, 'contacts/contact-1');
       expect(prisma.contact.update).toHaveBeenCalledWith(
-        expect.objectContaining({
+        matching({
           data: {
             photoKey: 'contacts/contact-1/new.jpg',
             photoMime: 'image/jpeg',
@@ -428,7 +439,10 @@ describe('ContactsService', () => {
         category: activeCategory,
       });
 
-      const file = { mimetype: 'image/jpeg', buffer: Buffer.from('x') } as any;
+      const file = {
+        mimetype: 'image/jpeg',
+        buffer: Buffer.from('x'),
+      } as Express.Multer.File;
       await service.uploadPhoto('contact-1', file);
 
       expect(upload.deleteFile).not.toHaveBeenCalled();

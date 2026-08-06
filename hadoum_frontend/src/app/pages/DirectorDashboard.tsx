@@ -496,7 +496,7 @@ export function DirectorDashboard() {
       <QuickActions onAddChild={() => setShowAddChild(true)} />
 
       {/* ── Demandes à traiter ── */}
-      <DemandesATraiter incidents={incidents} />
+      <DemandesATraiter incidents={incidents} loading={loadingIncidents} />
 
       {/* ── Finance KPIs ── */}
       <div>

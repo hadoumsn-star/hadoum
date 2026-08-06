@@ -14,7 +14,11 @@ function createContext(opts: {
   params?: Record<string, string>;
   user?: { id: string } | undefined;
 }): ExecutionContext {
-  const request = { method: opts.method, params: opts.params ?? {}, user: opts.user };
+  const request = {
+    method: opts.method,
+    params: opts.params ?? {},
+    user: opts.user,
+  };
   return {
     switchToHttp: () => ({ getRequest: () => request }),
     getHandler: () => jest.fn(),
@@ -58,7 +62,11 @@ describe('AuditLogInterceptor', () => {
   });
 
   it('passes through unchanged for GET requests even if the route somehow carries metadata', async () => {
-    reflector.get.mockReturnValue({ module: 'FINANCE', entity: 'Transaction', action: 'CREATE' });
+    reflector.get.mockReturnValue({
+      module: 'FINANCE',
+      entity: 'Transaction',
+      action: 'CREATE',
+    });
     const context = createContext({ method: 'GET' });
     const handler = createHandler({ id: 'x' });
 
@@ -68,7 +76,11 @@ describe('AuditLogInterceptor', () => {
   });
 
   it('CREATE: does not snapshot "before" and takes entityId from the response body', async () => {
-    reflector.get.mockReturnValue({ module: 'FINANCE', entity: 'Transaction', action: 'CREATE' });
+    reflector.get.mockReturnValue({
+      module: 'FINANCE',
+      entity: 'Transaction',
+      action: 'CREATE',
+    });
     const context = createContext({ method: 'POST', user: { id: 'user-1' } });
     const handler = createHandler({ id: 'tx-1', label: 'Achat' });
 
@@ -90,15 +102,28 @@ describe('AuditLogInterceptor', () => {
   });
 
   it('UPDATE: snapshots "before" via the entity-derived Prisma model before the handler runs', async () => {
-    reflector.get.mockReturnValue({ module: 'INCIDENTS', entity: 'Incident', action: 'UPDATE' });
-    prisma.incident.findUnique.mockResolvedValue({ id: 'inc-1', title: 'Old title' });
-    const context = createContext({ method: 'PATCH', params: { id: 'inc-1' }, user: { id: 'user-1' } });
+    reflector.get.mockReturnValue({
+      module: 'INCIDENTS',
+      entity: 'Incident',
+      action: 'UPDATE',
+    });
+    prisma.incident.findUnique.mockResolvedValue({
+      id: 'inc-1',
+      title: 'Old title',
+    });
+    const context = createContext({
+      method: 'PATCH',
+      params: { id: 'inc-1' },
+      user: { id: 'user-1' },
+    });
     const handler = createHandler({ id: 'inc-1', title: 'New title' });
 
     const result = await interceptor.intercept(context, handler);
     await new Promise((resolve) => result.subscribe(resolve));
 
-    expect(prisma.incident.findUnique).toHaveBeenCalledWith({ where: { id: 'inc-1' } });
+    expect(prisma.incident.findUnique).toHaveBeenCalledWith({
+      where: { id: 'inc-1' },
+    });
     expect(auditLogsService.record).toHaveBeenCalledWith(
       expect.objectContaining({
         entityId: 'inc-1',
@@ -109,9 +134,17 @@ describe('AuditLogInterceptor', () => {
   });
 
   it('DELETE: forces `after` to null regardless of the (typically empty) response body', async () => {
-    reflector.get.mockReturnValue({ module: 'INCIDENTS', entity: 'Incident', action: 'DELETE' });
+    reflector.get.mockReturnValue({
+      module: 'INCIDENTS',
+      entity: 'Incident',
+      action: 'DELETE',
+    });
     prisma.incident.findUnique.mockResolvedValue({ id: 'inc-1' });
-    const context = createContext({ method: 'DELETE', params: { id: 'inc-1' }, user: { id: 'user-1' } });
+    const context = createContext({
+      method: 'DELETE',
+      params: { id: 'inc-1' },
+      user: { id: 'user-1' },
+    });
     const handler = createHandler(undefined);
 
     const result = await interceptor.intercept(context, handler);
@@ -140,14 +173,20 @@ describe('AuditLogInterceptor', () => {
     const result = await interceptor.intercept(context, handler);
     await new Promise((resolve) => result.subscribe(resolve));
 
-    expect(prisma.ticketAttachment.findUnique).toHaveBeenCalledWith({ where: { id: 'att-1' } });
+    expect(prisma.ticketAttachment.findUnique).toHaveBeenCalledWith({
+      where: { id: 'att-1' },
+    });
     expect(auditLogsService.record).toHaveBeenCalledWith(
       expect.objectContaining({ entityId: 'att-1' }),
     );
   });
 
   it('records without a user when the request has none', async () => {
-    reflector.get.mockReturnValue({ module: 'FINANCE', entity: 'Transaction', action: 'CREATE' });
+    reflector.get.mockReturnValue({
+      module: 'FINANCE',
+      entity: 'Transaction',
+      action: 'CREATE',
+    });
     const context = createContext({ method: 'POST' });
     const handler = createHandler({ id: 'tx-1' });
 

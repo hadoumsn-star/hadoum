@@ -1,10 +1,15 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  NotFoundException,
+} from '@nestjs/common';
 import { MaintenanceTicketsService } from './maintenance-tickets.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { UploadService } from '../upload/upload.service';
 import { ValidationsService } from '../validations/validations.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { matching } from '../test-utils/jest-matchers';
 
 function createMockPrisma() {
   return {
@@ -37,11 +42,15 @@ describe('MaintenanceTicketsService', () => {
     findHistory: jest.Mock;
   };
   let notifications: { create: jest.Mock; createForRole: jest.Mock };
-  let upload: { upload: jest.Mock; getPresignedUrl: jest.Mock; deleteFile: jest.Mock };
+  let upload: {
+    upload: jest.Mock;
+    getPresignedUrl: jest.Mock;
+    deleteFile: jest.Mock;
+  };
 
   const baseTicket = {
     id: 'ticket-1',
-    title: 'Fuite d\'eau',
+    title: "Fuite d'eau",
     spaceId: 'space-1',
     description: null,
     problemType: null,
@@ -78,7 +87,11 @@ describe('MaintenanceTicketsService', () => {
       findHistory: jest.fn(),
     };
     notifications = { create: jest.fn(), createForRole: jest.fn() };
-    upload = { upload: jest.fn(), getPresignedUrl: jest.fn(), deleteFile: jest.fn() };
+    upload = {
+      upload: jest.fn(),
+      getPresignedUrl: jest.fn(),
+      deleteFile: jest.fn(),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -116,8 +129,8 @@ describe('MaintenanceTicketsService', () => {
       } as any);
       expect(prisma.contact.findUnique).not.toHaveBeenCalled();
       expect(prisma.maintenanceTicket.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ assignedContactId: undefined }),
+        matching({
+          data: matching({ assignedContactId: undefined }),
         }),
       );
     });
@@ -139,8 +152,8 @@ describe('MaintenanceTicketsService', () => {
       } as any);
 
       expect(prisma.maintenanceTicket.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({
+        matching({
+          data: matching({
             assignedContactId: activeContact.id,
             assignedTo: activeContact.fullName,
           }),
@@ -180,15 +193,17 @@ describe('MaintenanceTicketsService', () => {
   describe('findOne', () => {
     it('throws NotFoundException for a missing ticket', async () => {
       prisma.maintenanceTicket.findUnique.mockResolvedValue(null);
-      await expect(service.findOne('missing')).rejects.toBeInstanceOf(NotFoundException);
+      await expect(service.findOne('missing')).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
     });
 
     it('includes assignedContact (with category) in the query', async () => {
       prisma.maintenanceTicket.findUnique.mockResolvedValue(baseTicket);
       await service.findOne('ticket-1');
       expect(prisma.maintenanceTicket.findUnique).toHaveBeenCalledWith(
-        expect.objectContaining({
-          include: expect.objectContaining({
+        matching({
+          include: matching({
             assignedContact: { include: { category: true } },
           }),
         }),
@@ -218,7 +233,9 @@ describe('MaintenanceTicketsService', () => {
       // Guards against a future regression where an `active: true` filter
       // gets added to the include — that would hide the reference instead
       // of surfacing it as inactive, which is the one thing this must not do.
-      const call = prisma.maintenanceTicket.findUnique.mock.calls[0][0];
+      const findUniqueCalls = prisma.maintenanceTicket.findUnique.mock
+        .calls as [{ where: Record<string, unknown> }][];
+      const call = findUniqueCalls[0][0];
       expect(call.where).toEqual({ id: 'ticket-1' });
     });
   });
@@ -226,9 +243,14 @@ describe('MaintenanceTicketsService', () => {
   describe('update (workflow-bypass regression guard)', () => {
     it('allows a routine status change (OUVERT -> EN_COURS)', async () => {
       prisma.maintenanceTicket.findUnique.mockResolvedValue(baseTicket);
-      prisma.maintenanceTicket.update.mockResolvedValue({ ...baseTicket, status: 'EN_COURS' });
+      prisma.maintenanceTicket.update.mockResolvedValue({
+        ...baseTicket,
+        status: 'EN_COURS',
+      });
 
-      const result = await service.update('ticket-1', { status: 'EN_COURS' } as any);
+      const result = await service.update('ticket-1', {
+        status: 'EN_COURS',
+      } as any);
 
       expect(result.status).toBe('EN_COURS');
     });
@@ -250,7 +272,10 @@ describe('MaintenanceTicketsService', () => {
     });
 
     it('refuses any status change starting from an already-terminal state', async () => {
-      prisma.maintenanceTicket.findUnique.mockResolvedValue({ ...baseTicket, status: 'FERME' });
+      prisma.maintenanceTicket.findUnique.mockResolvedValue({
+        ...baseTicket,
+        status: 'FERME',
+      });
       await expect(
         service.update('ticket-1', { status: 'OUVERT' } as any),
       ).rejects.toBeInstanceOf(ConflictException);
@@ -271,11 +296,13 @@ describe('MaintenanceTicketsService', () => {
         assignedTo: activeContact.fullName,
       });
 
-      await service.update('ticket-1', { assignedContactId: activeContact.id } as any);
+      await service.update('ticket-1', {
+        assignedContactId: activeContact.id,
+      });
 
       expect(prisma.maintenanceTicket.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({
+        matching({
+          data: matching({
             assignedContactId: activeContact.id,
             assignedTo: activeContact.fullName,
           }),
@@ -287,7 +314,9 @@ describe('MaintenanceTicketsService', () => {
       prisma.maintenanceTicket.findUnique.mockResolvedValue(baseTicket);
       prisma.contact.findUnique.mockResolvedValue(inactiveContact);
       await expect(
-        service.update('ticket-1', { assignedContactId: inactiveContact.id } as any),
+        service.update('ticket-1', {
+          assignedContactId: inactiveContact.id,
+        } as any),
       ).rejects.toBeInstanceOf(BadRequestException);
       expect(prisma.maintenanceTicket.update).not.toHaveBeenCalled();
     });
@@ -304,12 +333,15 @@ describe('MaintenanceTicketsService', () => {
         assignedTo: null,
       });
 
-      await service.update('ticket-1', { assignedContactId: null } as any);
+      await service.update('ticket-1', { assignedContactId: null });
 
       expect(prisma.contact.findUnique).not.toHaveBeenCalled();
       expect(prisma.maintenanceTicket.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ assignedContactId: null, assignedTo: null }),
+        matching({
+          data: matching({
+            assignedContactId: null,
+            assignedTo: null,
+          }),
         }),
       );
     });
@@ -322,10 +354,13 @@ describe('MaintenanceTicketsService', () => {
       });
       prisma.maintenanceTicket.update.mockResolvedValue(baseTicket);
 
-      await service.update('ticket-1', { title: 'Nouveau titre' } as any);
+      await service.update('ticket-1', { title: 'Nouveau titre' });
 
       expect(prisma.contact.findUnique).not.toHaveBeenCalled();
-      const call = prisma.maintenanceTicket.update.mock.calls[0][0];
+      const updateCalls = prisma.maintenanceTicket.update.mock.calls as [
+        { data: Record<string, unknown> },
+      ][];
+      const call = updateCalls[0][0];
       expect(call.data).not.toHaveProperty('assignedContactId');
       expect(call.data).not.toHaveProperty('assignedTo');
     });
@@ -342,9 +377,14 @@ describe('MaintenanceTicketsService', () => {
         assignedContactId: activeContact.id,
       });
 
-      await service.update('ticket-1', { assignedContactId: activeContact.id } as any);
+      await service.update('ticket-1', {
+        assignedContactId: activeContact.id,
+      });
 
-      const call = prisma.maintenanceTicket.update.mock.calls[0][0];
+      const updateCalls = prisma.maintenanceTicket.update.mock.calls as [
+        { data: Record<string, unknown> },
+      ][];
+      const call = updateCalls[0][0];
       expect(call.data).not.toHaveProperty('validationStatus');
     });
   });
@@ -358,31 +398,44 @@ describe('MaintenanceTicketsService', () => {
         status: 'ASSIGNE',
       });
 
-      const result = await service.assign('ticket-1', { assignedTo: 'Paul' } as any);
+      const result = await service.assign('ticket-1', {
+        assignedTo: 'Paul',
+      });
 
       expect(result.status).toBe('ASSIGNE');
     });
 
     it('does not change status when assigning a ticket that is already in progress', async () => {
-      prisma.maintenanceTicket.findUnique.mockResolvedValue({ ...baseTicket, status: 'EN_COURS' });
+      prisma.maintenanceTicket.findUnique.mockResolvedValue({
+        ...baseTicket,
+        status: 'EN_COURS',
+      });
       prisma.maintenanceTicket.update.mockResolvedValue({
         ...baseTicket,
         status: 'EN_COURS',
         assignedTo: 'Paul',
       });
 
-      await service.assign('ticket-1', { assignedTo: 'Paul' } as any);
+      await service.assign('ticket-1', { assignedTo: 'Paul' });
 
       expect(prisma.maintenanceTicket.update).toHaveBeenCalledWith(
-        expect.objectContaining({ data: expect.objectContaining({ status: 'EN_COURS' }) }),
+        matching({
+          data: matching({ status: 'EN_COURS' }),
+        }),
       );
     });
   });
 
   describe('close (business rule: critical tickets must go through validation)', () => {
     it('closes a non-critical ticket directly', async () => {
-      prisma.maintenanceTicket.findUnique.mockResolvedValue({ ...baseTicket, urgency: 'MOYENNE' });
-      prisma.maintenanceTicket.update.mockResolvedValue({ ...baseTicket, status: 'FERME' });
+      prisma.maintenanceTicket.findUnique.mockResolvedValue({
+        ...baseTicket,
+        urgency: 'MOYENNE',
+      });
+      prisma.maintenanceTicket.update.mockResolvedValue({
+        ...baseTicket,
+        status: 'FERME',
+      });
 
       const result = await service.close('ticket-1');
 
@@ -390,9 +443,14 @@ describe('MaintenanceTicketsService', () => {
     });
 
     it('refuses to close a CRITIQUE-urgency ticket directly', async () => {
-      prisma.maintenanceTicket.findUnique.mockResolvedValue({ ...baseTicket, urgency: 'CRITIQUE' });
+      prisma.maintenanceTicket.findUnique.mockResolvedValue({
+        ...baseTicket,
+        urgency: 'CRITIQUE',
+      });
 
-      await expect(service.close('ticket-1')).rejects.toBeInstanceOf(ConflictException);
+      await expect(service.close('ticket-1')).rejects.toBeInstanceOf(
+        ConflictException,
+      );
       expect(prisma.maintenanceTicket.update).not.toHaveBeenCalled();
     });
   });
@@ -405,14 +463,21 @@ describe('MaintenanceTicketsService', () => {
         validationStatus: 'PENDING_VALIDATION',
       });
 
-      const result = await service.submitValidation('ticket-1', 'director-1', {} as any);
+      const result = await service.submitValidation(
+        'ticket-1',
+        'director-1',
+        {},
+      );
 
       expect(validations.create).toHaveBeenCalledWith(
-        expect.objectContaining({ resourceType: 'MAINTENANCE_TICKET', submittedById: 'director-1' }),
+        matching({
+          resourceType: 'MAINTENANCE_TICKET',
+          submittedById: 'director-1',
+        }),
       );
       expect(notifications.createForRole).toHaveBeenCalledWith(
         'SUPERVISOR',
-        expect.objectContaining({ type: 'VALIDATION_SUBMITTED' }),
+        matching({ type: 'VALIDATION_SUBMITTED' }),
       );
       expect(result.validationStatus).toBe('PENDING_VALIDATION');
     });
@@ -426,11 +491,14 @@ describe('MaintenanceTicketsService', () => {
         validationStatus: 'APPROVED',
       });
 
-      const result = await service.approve('ticket-1', 'supervisor-1', {} as any);
+      const result = await service.approve('ticket-1', 'supervisor-1', {});
 
       expect(result.status).toBe('FERME');
       expect(notifications.create).toHaveBeenCalledWith(
-        expect.objectContaining({ type: 'VALIDATION_APPROVED', recipientId: 'director-1' }),
+        matching({
+          type: 'VALIDATION_APPROVED',
+          recipientId: 'director-1',
+        }),
       );
     });
 
@@ -442,24 +510,26 @@ describe('MaintenanceTicketsService', () => {
         validationStatus: 'REJECTED',
       });
 
-      const result = await service.reject('ticket-1', 'supervisor-1', { comment: 'No' } as any);
+      const result = await service.reject('ticket-1', 'supervisor-1', {
+        comment: 'No',
+      });
 
       expect(result.validationStatus).toBe('REJECTED');
     });
 
     it('requests changes on the ticket', async () => {
       prisma.maintenanceTicket.findUnique.mockResolvedValue(baseTicket);
-      validations.requestChanges.mockResolvedValue({ submittedById: 'director-1' });
+      validations.requestChanges.mockResolvedValue({
+        submittedById: 'director-1',
+      });
       prisma.maintenanceTicket.update.mockResolvedValue({
         ...baseTicket,
         validationStatus: 'CHANGES_REQUESTED',
       });
 
-      const result = await service.requestChanges(
-        'ticket-1',
-        'supervisor-1',
-        { comment: 'clarify' } as any,
-      );
+      const result = await service.requestChanges('ticket-1', 'supervisor-1', {
+        comment: 'clarify',
+      });
 
       expect(result.validationStatus).toBe('CHANGES_REQUESTED');
     });
@@ -468,20 +538,27 @@ describe('MaintenanceTicketsService', () => {
   describe('findAll', () => {
     it('applies spaceId/status/search filters', async () => {
       prisma.maintenanceTicket.findMany.mockResolvedValue([baseTicket]);
-      await service.findAll({ spaceId: 'space-1', status: 'OUVERT', search: 'eau' } as any);
+      await service.findAll({
+        spaceId: 'space-1',
+        status: 'OUVERT',
+        search: 'eau',
+      } as any);
       expect(prisma.maintenanceTicket.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: expect.objectContaining({ spaceId: 'space-1', status: 'OUVERT' }),
+        matching({
+          where: matching({
+            spaceId: 'space-1',
+            status: 'OUVERT',
+          }),
         }),
       );
     });
 
     it('includes assignedContact (with category) alongside space in every list response', async () => {
       prisma.maintenanceTicket.findMany.mockResolvedValue([baseTicket]);
-      await service.findAll({} as any);
+      await service.findAll({});
       expect(prisma.maintenanceTicket.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          include: expect.objectContaining({
+        matching({
+          include: matching({
             space: { select: { id: true, name: true } },
             assignedContact: { include: { category: true } },
           }),
@@ -496,11 +573,13 @@ describe('MaintenanceTicketsService', () => {
       upload.upload.mockResolvedValue('maintenance-tickets/ticket-1/file.pdf');
       prisma.ticketAttachment.create.mockResolvedValue({ id: 'att-1' });
 
-      const file = { mimetype: 'application/pdf' } as any;
+      const file = { mimetype: 'application/pdf' } as Express.Multer.File;
       await service.uploadAttachment('ticket-1', file);
 
       expect(prisma.ticketAttachment.create).toHaveBeenCalledWith(
-        expect.objectContaining({ data: expect.objectContaining({ ticketId: 'ticket-1' }) }),
+        matching({
+          data: matching({ ticketId: 'ticket-1' }),
+        }),
       );
     });
 
@@ -519,7 +598,9 @@ describe('MaintenanceTicketsService', () => {
       });
       await service.deleteAttachment('ticket-1', 'att-1');
       expect(upload.deleteFile).toHaveBeenCalledWith('x');
-      expect(prisma.ticketAttachment.delete).toHaveBeenCalledWith({ where: { id: 'att-1' } });
+      expect(prisma.ticketAttachment.delete).toHaveBeenCalledWith({
+        where: { id: 'att-1' },
+      });
     });
   });
 
@@ -527,7 +608,10 @@ describe('MaintenanceTicketsService', () => {
     it('delegates to ValidationsService with the correct resource type', () => {
       validations.findHistory.mockReturnValue([{ id: 'v1' }]);
       const result = service.history('ticket-1');
-      expect(validations.findHistory).toHaveBeenCalledWith('MAINTENANCE_TICKET', 'ticket-1');
+      expect(validations.findHistory).toHaveBeenCalledWith(
+        'MAINTENANCE_TICKET',
+        'ticket-1',
+      );
       expect(result).toEqual([{ id: 'v1' }]);
     });
   });
@@ -539,9 +623,9 @@ describe('MaintenanceTicketsService', () => {
         ticketId: 'some-other-ticket',
         fileKey: 'x',
       });
-      await expect(service.getAttachmentUrl('ticket-1', 'att-1')).rejects.toBeInstanceOf(
-        NotFoundException,
-      );
+      await expect(
+        service.getAttachmentUrl('ticket-1', 'att-1'),
+      ).rejects.toBeInstanceOf(NotFoundException);
     });
 
     it('allows fetching an attachment that belongs to the given ticket', async () => {
