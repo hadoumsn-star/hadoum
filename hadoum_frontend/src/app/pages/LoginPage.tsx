@@ -73,7 +73,7 @@ const DEMO_PROFILES: {
 ];
 
 export function LoginPage() {
-  const { login, loginWithUser, isAuthenticated, user } = useAuth();
+  const { login, loginWithUser, isAuthenticated } = useAuth();
 
   const [email, setEmail]         = useState('');
   const [password, setPassword]   = useState('');
@@ -83,7 +83,7 @@ export function LoginPage() {
   const [demoOpen, setDemoOpen]   = useState(false);
 
   if (isAuthenticated) {
-    return <Navigate to={user?.role === 'director' ? '/app/children' : '/app/dashboard'} replace />;
+    return <Navigate to="/app/dashboard" replace />;
   }
 
   const handleLogin = async (e: React.FormEvent) => {
