@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from 'react';
+import { useSearchParams } from 'react-router';
 import {
   Plus, Search, X, Edit3, UserCheck, AlertCircle,
   ChevronDown, ArrowUp, ArrowDown, Check, ChevronRight,
@@ -10,6 +11,12 @@ import { mapSummaryToChild, mapFormToPayload, mapStatus } from '../services/chil
 import { useAuth } from '../context/AuthContext';
 import { REQUIRED_DOCS, COMPLEMENTARY_DOCS, isDossierComplet, isDossierEnrichi } from '../config/documents.config';
 import type { ApiDocument, ApiDocumentType, ApiChildStatus } from '../types/api.types';
+import {
+  getChildSortieState as getSortieState,
+  getChildEffectiveAttendance as getEffectiveAttendance,
+  isChildEffectivelyActive,
+  daysFromToday,
+} from '../utils/childAttendance';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -1650,9 +1657,9 @@ export function AddModal({ onCreated, onClose }: {
 
 // ─── Stat Card ────────────────────────────────────────────────────────────────
 
-function StatCard({ label, value, total, color, bg, icon: Icon }: { label: string; value: number; total?: number; color: string; bg: string; icon: React.ElementType }) {
+function StatCard({ label, value, total, color, bg, icon: Icon, testId }: { label: string; value: number; total?: number; color: string; bg: string; icon: React.ElementType; testId?: string }) {
   return (
-    <div className="rounded-xl px-4 py-3 flex items-center gap-3" style={{ background: bg }}>
+    <div data-testid={testId} className="rounded-xl px-4 py-3 flex items-center gap-3" style={{ background: bg }}>
       <div className="flex items-center justify-center rounded-lg" style={{ width: 34, height: 34, background: 'rgba(255,255,255,0.75)' }}>
         <Icon size={16} style={{ color }} />
       </div>
@@ -1671,36 +1678,16 @@ function StatCard({ label, value, total, color, bg, icon: Icon }: { label: strin
 }
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
-
-// ─── Sortie date helpers ─────────────────────────────────────────────────────
-
-const TODAY = (() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; })();
-
-function daysFromToday(dateStr: string): number {
-  const d = new Date(dateStr); d.setHours(0, 0, 0, 0);
-  return Math.round((d.getTime() - TODAY.getTime()) / 86_400_000);
-}
-
-type SortieState = 'none' | 'pending' | 'active' | 'returned';
-
-function getSortieState(c: Child): SortieState {
-  if (c.exitType !== 'temporaire' || !c.exitDate) return 'none';
-  const daysUntilDep = daysFromToday(c.exitDate);
-  if (daysUntilDep > 0) return 'pending';
-  if (c.exitReturnDate && daysFromToday(c.exitReturnDate) <= 0) return 'returned';
-  return 'active';
-}
-
-function getEffectiveAttendance(c: Child): 'present' | 'absent' {
-  const state = getSortieState(c);
-  if (state === 'active' || state === 'returned') return 'absent';
-  return c.attendanceStatus;
-}
+// Sortie/attendance date helpers (getSortieState, getEffectiveAttendance,
+// daysFromToday) now live in ../utils/childAttendance — shared verbatim with
+// the Director Dashboard's "Présence des enfants" cards so the two never
+// diverge. See that module's docstring for the exact rules.
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export function ChildrenPage() {
   const { user } = useAuth();
+  const [searchParams] = useSearchParams();
   const [children, setChildren] = useState<Child[]>([]);
   const [crmData, setCrmData]   = useState<Record<number, ChildCRM>>({});
   const [loading, setLoading]   = useState(true);
@@ -1718,7 +1705,14 @@ export function ChildrenPage() {
   }, []);
 
   const [search, setSearch]                 = useState('');
-  const [filterAttendance, setFilterAttendance] = useState<AttendanceFilter>('all');
+  // Deep-link filter, e.g. /app/children?attendance=present — used by the
+  // Director Dashboard's "Présence des enfants" cards (see goToChildAttendance
+  // in DirectorDashboard.tsx). Read once on mount, same convention as
+  // TeamPage's own `?status=` presence filter.
+  const [filterAttendance, setFilterAttendance] = useState<AttendanceFilter>(() => {
+    const p = searchParams.get('attendance');
+    return p === 'present' || p === 'absent' ? p : 'all';
+  });
   const [filterDossier, setFilterDossier]   = useState<DossierFilter>('all');
   const [sortField, setSortField]           = useState<SortField>(null);
   const [sortDir, setSortDir]               = useState<SortDir>('asc');
@@ -1739,12 +1733,8 @@ export function ChildrenPage() {
     children.find(c => c.id === id)?.dossierStatus ?? 'incomplet';
 
   // A child is effectively active if: never exited, OR their temporary sortie return date has passed
-  const isEffectivelyActive = (c: Child) => {
-    const manuallySorti = crmData[c.id]?.isActive === false || c.exitStatus === 'sorti';
-    if (!manuallySorti) return true;
-    const state = getSortieState(c);
-    return state === 'active' || state === 'returned' || state === 'pending';
-  };
+  const isEffectivelyActive = (c: Child) =>
+    isChildEffectivelyActive(c, crmData[c.id]?.isActive === false || c.exitStatus === 'sorti');
 
   // Sortie alerts: departure or return within 7 days
   const sortieAlerts = useMemo(() => {
@@ -1898,7 +1888,7 @@ export function ChildrenPage() {
 
       {/* Stat cards */}
       <div className="grid grid-cols-2 gap-3">
-        <StatCard label="Présents aujourd'hui" value={presentCount}   total={activeCount}  color="#065F46" bg="#ECFDF5" icon={UserCheck} />
+        <StatCard testId="children-present-stat" label="Présents aujourd'hui" value={presentCount}   total={activeCount}  color="#065F46" bg="#ECFDF5" icon={UserCheck} />
         <StatCard label="Dossiers incomplets"  value={incompletTotal}                      color="#B91C1C" bg="#FEF2F2" icon={AlertCircle} />
       </div>
 
@@ -1928,7 +1918,7 @@ export function ChildrenPage() {
             <p style={{ color: '#9CA3AF', fontSize: 11, fontWeight: 600, marginBottom: 6 }}>PRÉSENCE</p>
             <div className="flex gap-1">
               {([['all', 'Tous'], ['present', 'Présents'], ['absent', 'Absents']] as [AttendanceFilter, string][]).map(([f, l]) => (
-                <button key={f} onClick={() => setFilterAttendance(f)}
+                <button key={f} data-testid={`children-attendance-filter-${f}`} onClick={() => setFilterAttendance(f)}
                   className="px-3 py-1.5 rounded-lg text-sm"
                   style={{ background: filterAttendance === f ? '#3E5A78' : '#FFFFFF', color: filterAttendance === f ? '#FFFFFF' : '#374151', fontSize: 12, border: `1px solid ${filterAttendance === f ? '#3E5A78' : '#E5E7EB'}`, cursor: 'pointer' }}>
                   {l}
