@@ -1,5 +1,5 @@
 import { test, expect, APIRequestContext } from '@playwright/test';
-import { DIRECTOR_CREDENTIALS, loginAsDirector, loginAsSupervisor } from './helpers';
+import { DIRECTOR_CREDENTIALS, SUPERVISOR_CREDENTIALS, loginAsDirector, loginAsSupervisor } from './helpers';
 
 // The generic "Demandes à valider" page (/app/validations), wired to the
 // real GET /validations/pending + history endpoints. This file keeps the
@@ -28,6 +28,10 @@ async function apiLogin(request: APIRequestContext, email: string, password: str
 
 async function directorToken(request: APIRequestContext): Promise<string> {
   return apiLogin(request, DIRECTOR_CREDENTIALS.email, DIRECTOR_CREDENTIALS.password);
+}
+
+async function supervisorToken(request: APIRequestContext): Promise<string> {
+  return apiLogin(request, SUPERVISOR_CREDENTIALS.email, SUPERVISOR_CREDENTIALS.password);
 }
 
 async function apiCreateExpense(request: APIRequestContext, token: string, data: Record<string, unknown> = {}) {
@@ -65,7 +69,8 @@ function pendingCard(page: import('@playwright/test').Page, label: string) {
 
 test.describe('Validations page — real expense workflow (PR 5F)', () => {
   test.beforeAll(async ({ request }) => {
-    const token = await directorToken(request);
+    // Budget editing is SUPERVISOR-only — directorToken would 403 here.
+    const token = await supervisorToken(request);
     await apiSetBudget(request, token, 5_000_000);
   });
 

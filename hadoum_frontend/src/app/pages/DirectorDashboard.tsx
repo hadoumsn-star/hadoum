@@ -21,6 +21,29 @@ import {
   INCIDENT_PRIORITY_BADGE_LABELS, INCIDENT_PRIORITY_STYLE, INCIDENT_PRIORITY_LABELS,
   incidentConcernedSummary,
 } from '../config/incidents.config';
+import { childrenApi } from '../services/children.api';
+import { mapSummaryToChild } from '../services/children.mapper';
+import { summarizeChildAttendance } from '../utils/childAttendance';
+
+// ─── Section title (shared across every Director Dashboard block) ─────────
+// One consistent heading style for "ACTIONS RAPIDES", "DEMANDES À TRAITER",
+// "FINANCES", "PRÉSENCE DE L'ÉQUIPE", "PRÉSENCE DES ENFANTS" and "Activité
+// récente" — larger and bolder than a KPICard's own title line (14px/500),
+// so section titles read clearly above the cards they head, on both mobile
+// and desktop. `style` lets call sites keep their own spacing unchanged
+// (some sit above a card grid with a bottom margin, RecentActivity's own
+// header already spaces itself from its subtitle).
+function SectionTitle({ children, testId, style }: { children: React.ReactNode; testId?: string; style?: React.CSSProperties }) {
+  return (
+    <h3
+      data-testid={testId}
+      className="text-[15px] sm:text-[17px] font-bold"
+      style={{ color: '#1A1A1A', letterSpacing: '0.02em', ...style }}
+    >
+      {children}
+    </h3>
+  );
+}
 
 // ─── KPI Card ────────────────────────────────────────────────────────────────
 
@@ -179,9 +202,9 @@ function QuickActions({ onAddChild }: { onAddChild: () => void }) {
 
   return (
     <div>
-      <p style={{ color: '#9CA3AF', fontSize: 11, fontWeight: 600, letterSpacing: '0.05em', marginBottom: 10 }}>
+      <SectionTitle testId="section-title-actions-rapides" style={{ marginBottom: 10 }}>
         ACTIONS RAPIDES
-      </p>
+      </SectionTitle>
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
         {actions.map((action) => {
           const Icon = action.icon;
@@ -289,9 +312,9 @@ function DemandesATraiter({ incidents, loading }: { incidents: ApiIncident[]; lo
 
   return (
     <div>
-      <p style={{ color: '#9CA3AF', fontSize: 11, fontWeight: 600, letterSpacing: '0.05em', marginBottom: 10 }}>
+      <SectionTitle testId="section-title-demandes-a-traiter" style={{ marginBottom: 10 }}>
         DEMANDES À TRAITER
-      </p>
+      </SectionTitle>
       {loading ? (
         // Distinct from the real empty state below — avoids claiming
         // "Aucune demande en cours." before the fetch has even resolved.
@@ -361,7 +384,7 @@ function RecentActivity({ items }: { items: ActivityItem[] }) {
   return (
     <div data-testid="recent-activity" className="rounded-xl" style={{ background: '#FFFFFF', border: '1px solid #E5E7EB' }}>
       <div className="px-5 py-4" style={{ borderBottom: '1px solid #F3F4F6' }}>
-        <h3 style={{ color: '#1A1A1A', fontSize: 15, fontWeight: 600 }}>Activité récente</h3>
+        <SectionTitle testId="section-title-activite-recente">Activité récente</SectionTitle>
         <p style={{ color: '#6B7280', fontSize: 12, marginTop: 2 }}>Dernières décisions et interventions</p>
       </div>
       {items.length === 0 ? (
@@ -412,6 +435,17 @@ export function DirectorDashboard() {
   const [incidents, setIncidents] = useState<ApiIncident[]>([]);
   const [loadingIncidents, setLoadingIncidents] = useState(true);
 
+  // Child attendance for today — same GET /children ChildrenPage itself
+  // uses (no separate/new endpoint), mapped through the same
+  // mapSummaryToChild, and tallied with the same summarizeChildAttendance
+  // helper ChildrenPage's own "Présent aujourd'hui" stat card is built
+  // from (../utils/childAttendance) — so these two counts can never
+  // disagree with what /app/children shows for the same list. Deliberately
+  // NOT the staff daily-presence model: children have no confirmation step
+  // and no "Non confirmée" state, so only two cards are shown here.
+  const [childrenList, setChildrenList] = useState<Array<ReturnType<typeof mapSummaryToChild>>>([]);
+  const [loadingChildren, setLoadingChildren] = useState(true);
+
   useEffect(() => {
     const now = new Date();
     const from = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
@@ -437,6 +471,11 @@ export function DirectorDashboard() {
       .then(setIncidents)
       .catch(() => toast.error('Erreur de chargement des incidents.'))
       .finally(() => setLoadingIncidents(false));
+
+    childrenApi.list()
+      .then(data => setChildrenList(data.map(mapSummaryToChild)))
+      .catch(() => toast.error('Erreur de chargement des présences enfants.'))
+      .finally(() => setLoadingChildren(false));
   }, []);
 
   const today = new Date().toLocaleDateString('fr-FR', {
@@ -457,6 +496,11 @@ export function DirectorDashboard() {
   // with `presenceSummary.nonConfirmed` above.
   const nonConfirmedEntries = presence ? nonConfirmedEligibleEntries(presence) : [];
 
+  // ── Child attendance aggregate (shared helper — see ../utils/childAttendance) ──
+  // Every effectively-active child is counted as exactly PRESENT or ABSENT —
+  // no third "unconfirmed" bucket, no confirmation step.
+  const childPresenceSummary = summarizeChildAttendance(childrenList);
+
   // ── Recent activity feed — rejected and pending expenses only ──
   const recentActivity: ActivityItem[] = expenses
     .filter(t => t.expenseWorkflowStatus === 'REJECTED' || t.expenseWorkflowStatus === 'PENDING_APPROVAL')
@@ -476,6 +520,12 @@ export function DirectorDashboard() {
   // what navigates onward, one specific person at a time.
   const goToAttendance = (status: 'PRESENT' | 'ABSENT') =>
     navigate(`/app/team?tab=attendance&status=${status}`);
+
+  // Children attendance is a filter on the existing /app/children page, not
+  // a separate route — same reasoning as goToAttendance above, just against
+  // ChildrenPage's own `?attendance=present|absent` deep-link.
+  const goToChildAttendance = (status: 'present' | 'absent') =>
+    navigate(`/app/children?attendance=${status}`);
 
   return (
     <div className="px-4 md:px-6 py-6 space-y-5" style={{ maxWidth: 1400 }}>
@@ -500,9 +550,9 @@ export function DirectorDashboard() {
 
       {/* ── Finance KPIs ── */}
       <div>
-        <p style={{ color: '#9CA3AF', fontSize: 11, fontWeight: 600, letterSpacing: '0.05em', marginBottom: 10 }}>
+        <SectionTitle testId="section-title-finances" style={{ marginBottom: 10 }}>
           FINANCES
-        </p>
+        </SectionTitle>
         <div data-testid="finance-kpis" className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
           <KPICard testId="kpi-budget-total"     title="Budget total"      value={loadingFinanceData ? '—' : formatXof(budgetTotal)}     subtitle="Toutes catégories · mois en cours" icon={DollarSign}   iconColor="#3E5A78" iconBg="#EEF2F7" />
           <KPICard testId="kpi-budget-reserved"  title="Budget réservé"    value={loadingFinanceData ? '—' : formatXof(budgetReserved)}  subtitle="Dépenses approuvées non clôturées" icon={Clock}        iconColor="#D97706" iconBg="#FFFBEB" />
@@ -513,9 +563,9 @@ export function DirectorDashboard() {
 
       {/* ── Présence de l'équipe (team attendance) ── */}
       <div>
-        <p style={{ color: '#9CA3AF', fontSize: 11, fontWeight: 600, letterSpacing: '0.05em', marginBottom: 10 }}>
+        <SectionTitle testId="section-title-presence-equipe" style={{ marginBottom: 10 }}>
           PRÉSENCE DE L'ÉQUIPE
-        </p>
+        </SectionTitle>
         <div data-testid="team-presence-kpis" className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <KPICard
             testId="kpi-presence-present"
@@ -537,6 +587,29 @@ export function DirectorDashboard() {
             iconBg={presenceSummary.nonConfirmed > 0 ? '#FFFBEB' : '#F3F4F6'}
             highlight={presenceSummary.nonConfirmed > 0}
             onClick={loadingPresence ? undefined : () => setShowNonConfirmed(true)}
+          />
+        </div>
+      </div>
+
+      {/* ── Présence des enfants (child attendance) ──
+          Deliberately two cards only (Présents/Absents) — children have no
+          "Non confirmée" state, see ../utils/childAttendance's docstring. */}
+      <div>
+        <SectionTitle testId="section-title-presence-enfants" style={{ marginBottom: 10 }}>
+          PRÉSENCE DES ENFANTS
+        </SectionTitle>
+        <div data-testid="child-presence-kpis" className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <KPICard
+            testId="kpi-child-presence-present"
+            title="Présents" value={loadingChildren ? '—' : childPresenceSummary.present} subtitle="Aujourd'hui"
+            icon={UserCheck} iconColor="#065F46" iconBg="#ECFDF5"
+            onClick={() => goToChildAttendance('present')}
+          />
+          <KPICard
+            testId="kpi-child-presence-absent"
+            title="Absents" value={loadingChildren ? '—' : childPresenceSummary.absent} subtitle="Aujourd'hui"
+            icon={UserX} iconColor="#B91C1C" iconBg="#FEF2F2"
+            onClick={() => goToChildAttendance('absent')}
           />
         </div>
       </div>

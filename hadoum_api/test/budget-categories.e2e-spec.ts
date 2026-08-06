@@ -42,6 +42,7 @@ describe('Default budget categories (e2e)', () => {
   let app: INestApplication<App>;
   let prisma: PrismaService;
   let directorToken: string;
+  let supervisorToken: string;
 
   beforeAll(async () => {
     app = await createTestApp();
@@ -58,16 +59,29 @@ describe('Default budget categories (e2e)', () => {
         body: { token: string };
       }
     ).body.token;
+    supervisorToken = (
+      (await request(app.getHttpServer()).post('/api/auth/login').send({
+        email: users.supervisor.email,
+        password: TEST_PASSWORD,
+      })) as {
+        body: { token: string };
+      }
+    ).body.token;
   });
 
   afterAll(async () => {
     await app.close();
   });
 
+  // Budget editing is SUPERVISOR-only (see finances.controller.ts) — every
+  // test below that seeds/edits budget lines authenticates as SUPERVISOR.
+  // Read calls (dashboard, transactions) stay on directorToken to prove
+  // DIRECTOR's read access is unaffected. See the "Budget editing
+  // authorization" describe block at the bottom for the 403 coverage itself.
   function ensureDefaults() {
     return request(app.getHttpServer())
       .post('/api/finances/budget-lines/ensure-defaults')
-      .set('Authorization', `Bearer ${directorToken}`)
+      .set('Authorization', `Bearer ${supervisorToken}`)
       .send();
   }
 
@@ -115,10 +129,10 @@ describe('Default budget categories (e2e)', () => {
   });
 
   it('preserves a custom amount already set for a default category — never overwrites', async () => {
-    // A Director sets a custom amount for TRANSPORT before defaults ever run.
+    // A Supervisor sets a custom amount for TRANSPORT before defaults ever run.
     await request(app.getHttpServer())
       .put('/api/finances/budget-lines')
-      .set('Authorization', `Bearer ${directorToken}`)
+      .set('Authorization', `Bearer ${supervisorToken}`)
       .send({
         category: 'TRANSPORT',
         month: new Date().getMonth() + 1,
@@ -207,5 +221,99 @@ describe('Default budget categories (e2e)', () => {
     expect(salaires.totalCommittedPercentage).toBeNull();
     expect(Number.isFinite(salaires.ecartXof)).toBe(true);
     expect(salaires.ecartXof).toBe(-150000);
+  });
+
+  // Budget editing authorization — SUPERVISOR can edit, DIRECTOR is
+  // read-only. Every budget-modification route gets its own 403 case;
+  // read routes (GET budget-lines, GET dashboard) are proven unaffected.
+  describe('Budget editing authorization', () => {
+    it('SUPERVISOR can create/update a budget line', async () => {
+      await request(app.getHttpServer())
+        .put('/api/finances/budget-lines')
+        .set('Authorization', `Bearer ${supervisorToken}`)
+        .send({
+          category: 'TRANSPORT',
+          month: new Date().getMonth() + 1,
+          year: new Date().getFullYear(),
+          budgetXof: 42000,
+        })
+        .expect(200);
+    });
+
+    it('DIRECTOR receives 403 when creating/updating a budget line', async () => {
+      await request(app.getHttpServer())
+        .put('/api/finances/budget-lines')
+        .set('Authorization', `Bearer ${directorToken}`)
+        .send({
+          category: 'TRANSPORT',
+          month: new Date().getMonth() + 1,
+          year: new Date().getFullYear(),
+          budgetXof: 42000,
+        })
+        .expect(403);
+    });
+
+    it('DIRECTOR receives 403 on ensure-defaults (also a budget-modification route)', async () => {
+      await request(app.getHttpServer())
+        .post('/api/finances/budget-lines/ensure-defaults')
+        .set('Authorization', `Bearer ${directorToken}`)
+        .send()
+        .expect(403);
+    });
+
+    it('DIRECTOR receives 403 when deleting a budget line', async () => {
+      const created = (await request(app.getHttpServer())
+        .put('/api/finances/budget-lines')
+        .set('Authorization', `Bearer ${supervisorToken}`)
+        .send({
+          category: 'SPORT',
+          month: new Date().getMonth() + 1,
+          year: new Date().getFullYear(),
+          budgetXof: 15000,
+        })
+        .expect(200)) as { body: { id: string } };
+
+      await request(app.getHttpServer())
+        .delete(`/api/finances/budget-lines/${created.body.id}`)
+        .set('Authorization', `Bearer ${directorToken}`)
+        .expect(403);
+    });
+
+    it('SUPERVISOR can delete a budget line', async () => {
+      const created = (await request(app.getHttpServer())
+        .put('/api/finances/budget-lines')
+        .set('Authorization', `Bearer ${supervisorToken}`)
+        .send({
+          category: 'LOISIRS',
+          month: new Date().getMonth() + 1,
+          year: new Date().getFullYear(),
+          budgetXof: 15000,
+        })
+        .expect(200)) as { body: { id: string } };
+
+      await request(app.getHttpServer())
+        .delete(`/api/finances/budget-lines/${created.body.id}`)
+        .set('Authorization', `Bearer ${supervisorToken}`)
+        .expect(204);
+    });
+
+    it('DIRECTOR can still read budget lines and the dashboard — read access is unaffected', async () => {
+      await ensureDefaults().expect(201);
+      const now = new Date();
+
+      await request(app.getHttpServer())
+        .get(
+          `/api/finances/budget-lines?year=${now.getFullYear()}&month=${now.getMonth() + 1}`,
+        )
+        .set('Authorization', `Bearer ${directorToken}`)
+        .expect(200);
+
+      await request(app.getHttpServer())
+        .get(
+          `/api/finances/dashboard?year=${now.getFullYear()}&month=${now.getMonth() + 1}`,
+        )
+        .set('Authorization', `Bearer ${directorToken}`)
+        .expect(200);
+    });
   });
 });

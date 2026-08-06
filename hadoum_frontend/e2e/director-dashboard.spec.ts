@@ -167,7 +167,10 @@ test.describe('Director Dashboard — Quick Actions', () => {
     await loginAsDirector(page);
     await page.goto('/app/dashboard');
     await page.getByTestId('quick-action-add-child').click();
-    await expect(page.getByRole('heading', { name: /enfant/i })).toBeVisible({ timeout: 10_000 });
+    // Exact match — the dashboard's own "PRÉSENCE DES ENFANTS" section title
+    // is also a heading and also matches a loose /enfant/i pattern, so this
+    // has to be specific to the modal's own heading, not a partial match.
+    await expect(page.getByRole('heading', { name: 'Ajouter un enfant', exact: true })).toBeVisible({ timeout: 10_000 });
   });
 
   test('"Saisir présences" and "Générer un rapport" navigate to the correct routes', async ({ page }) => {
@@ -231,7 +234,8 @@ test.describe('Director Dashboard — Recent Activity', () => {
     const pending = await apiCreateExpense(request, dToken, { label: pendingLabel });
     await apiSubmit(request, dToken, pending.id);
 
-    await apiFundCurrentMonth(request, dToken);
+    // Budget editing is SUPERVISOR-only — dToken would 403 here.
+    await apiFundCurrentMonth(request, sToken);
     const approvedLabel = unique('Approuvée Dashboard');
     const approved = await apiCreateExpense(request, dToken, { label: approvedLabel });
     await apiSubmit(request, dToken, approved.id);

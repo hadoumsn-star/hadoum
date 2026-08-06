@@ -7,7 +7,7 @@ import {
 import {
   Plus, X, Check, Eye, Loader2, Trash2, Pencil, FileCheck, AlertTriangle,
   TrendingUp, TrendingDown, ArrowUpRight, ArrowDownRight,
-  AlertCircle, Upload, Send, CheckCircle2, Ban, History,
+  AlertCircle, Upload, Send, CheckCircle2, Ban, History, Wallet,
 } from 'lucide-react';
 import {
   financesApi,
@@ -630,6 +630,13 @@ function BudgetEditorModal({ initial, onSave, onClose }: {
 export function FinancesPage() {
   const { user } = useAuth();
   const isDirector = user?.role === 'director';
+  // Budget editing (this page's "Éditer le budget" button, the modal it
+  // opens, and the ensure-defaults seed call below) is SUPERVISOR-only —
+  // DIRECTOR keeps full read access to the rest of the page (dashboard,
+  // charts, expenses, budget history) but never sees an editing control.
+  // Mirrors the backend's per-route @Roles('SUPERVISOR') override on the
+  // three budget-lines mutation routes (finances.controller.ts).
+  const isSupervisor = user?.role === 'supervisor';
 
   const now = new Date();
   const [dashboard, setDashboard] = useState<ApiDashboard | null>(null);
@@ -663,11 +670,14 @@ export function FinancesPage() {
     // missing for the current month, never overwrites a custom amount. Runs
     // before the first dashboard load so the seeded lines are visible
     // immediately, with no visible "empty budget" flash on a first visit.
-    financesApi.ensureDefaultBudgetLines()
-      .catch(() => {})
+    // SUPERVISOR-only server-side now (budget-lines/ensure-defaults is a
+    // budget-modification route) — DIRECTOR skips straight to reload()
+    // rather than firing a call that would only ever 403.
+    (isSupervisor ? financesApi.ensureDefaultBudgetLines().catch(() => {}) : Promise.resolve())
       .then(() => reload())
       .catch(() => toast.error('Erreur de chargement des finances.'))
       .finally(() => setLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -858,14 +868,24 @@ export function FinancesPage() {
       {/* KPIs */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         {[
-          { label: 'Solde caisse',    value: formatXof(dashboard.soldeCaisseXof), sub: formatEur(dashboard.soldeCaisseEur), color: '#065F46', bg: '#ECFDF5', icon: TrendingUp },
-          { label: 'Dépenses du mois', value: formatXof(totalRealized), sub: `${totalBudget > 0 ? Math.round(totalRealized / totalBudget * 100) : 0}% du budget`, color: '#D97706', bg: '#FFFBEB', icon: TrendingDown },
-          { label: 'Budget restant',   value: formatXof(totalRestant), sub: `Budget total ${formatXof(totalBudget)}`, color: '#3E5A78', bg: '#EEF2F7', icon: TrendingUp },
-        ].map(({ label, value, sub, color, bg, icon: Icon }) => (
-          <div key={label} className="rounded-xl p-5" style={{ background: '#FFFFFF', border: '1px solid #E5E7EB' }}>
+          // UI label only — "Budget total" (was "Solde caisse"). The
+          // underlying field (dashboard.soldeCaisseXof/Eur), its
+          // calculation, and the testid are all unchanged; this is a
+          // terminology change, not a data/business-logic change.
+          { testId: 'finance-kpi-solde-caisse', label: 'Budget total',    value: formatXof(dashboard.soldeCaisseXof), sub: formatEur(dashboard.soldeCaisseEur), color: '#065F46', bg: '#ECFDF5', icon: TrendingUp },
+          { testId: 'finance-kpi-depenses-mois', label: 'Dépenses du mois', value: formatXof(totalRealized), sub: `${totalBudget > 0 ? Math.round(totalRealized / totalBudget * 100) : 0}% du budget`, color: '#D97706', bg: '#FFFBEB', icon: TrendingDown },
+          // Wallet, not TrendingUp — "Budget restant" is a remaining-balance
+          // figure, not a growth metric; an upward arrow read as "budget is
+          // increasing", which is the opposite of what this card means.
+          // Same icon already used for the analogous "Budget disponible" KPI
+          // on the Director Dashboard (DirectorDashboard.tsx). Color/bg,
+          // card size and spacing are unchanged — icon only.
+          { testId: 'finance-kpi-budget-restant', label: 'Budget restant',   value: formatXof(totalRestant), sub: `Budget total ${formatXof(totalBudget)}`, color: '#3E5A78', bg: '#EEF2F7', icon: Wallet },
+        ].map(({ testId, label, value, sub, color, bg, icon: Icon }) => (
+          <div key={label} data-testid={testId} className="rounded-xl p-5" style={{ background: '#FFFFFF', border: '1px solid #E5E7EB' }}>
             <div className="flex items-start justify-between mb-3">
               <div className="flex items-center justify-center rounded-xl" style={{ width: 38, height: 38, background: bg }}>
-                <Icon size={18} style={{ color }} />
+                <Icon size={18} style={{ color }} data-testid={`${testId}-icon`} />
               </div>
             </div>
             <p style={{ color: '#1A1A1A', fontSize: 22, fontWeight: 700 }}>{value}</p>
@@ -912,13 +932,15 @@ export function FinancesPage() {
       </div>
 
       {/* Budget prévisionnel */}
-      <div className="rounded-xl" style={{ background: '#FFFFFF', border: '1px solid #E5E7EB' }}>
+      <div data-testid="budget-forecast-section" className="rounded-xl" style={{ background: '#FFFFFF', border: '1px solid #E5E7EB' }}>
         <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: '1px solid #F3F4F6' }}>
           <h3 style={{ color: '#1A1A1A', fontSize: 15, fontWeight: 600 }}>Budget prévisionnel</h3>
-          <button onClick={() => setShowBudgetEditor(true)}
-            className="px-3 py-1.5 rounded-lg" style={{ background: '#EEF2F7', color: '#3E5A78', fontSize: 12, fontWeight: 600, border: 'none', cursor: 'pointer' }}>
-            Éditer le budget
-          </button>
+          {isSupervisor && (
+            <button data-testid="budget-edit-button" onClick={() => setShowBudgetEditor(true)}
+              className="px-3 py-1.5 rounded-lg" style={{ background: '#EEF2F7', color: '#3E5A78', fontSize: 12, fontWeight: 600, border: 'none', cursor: 'pointer' }}>
+              Éditer le budget
+            </button>
+          )}
         </div>
         <div className="p-5 space-y-4">
           {dashboard.byCategory.filter(c => c.budgetXof !== null).map(c => {

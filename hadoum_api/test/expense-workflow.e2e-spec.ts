@@ -81,9 +81,11 @@ describe('Expense workflow validation integration (e2e)', () => {
     // coverage) — every test below uses createExpense()'s default category
     // (ENTRETIEN) and date (August 2026), so one generously-sized line here
     // covers all of them without changing what each test is actually about.
+    // Budget editing is SUPERVISOR-only (see finances.controller.ts) —
+    // directorToken would now 403 here.
     await request(app.getHttpServer())
       .put('/api/finances/budget-lines')
-      .set('Authorization', `Bearer ${directorToken}`)
+      .set('Authorization', `Bearer ${supervisorToken}`)
       .send({
         category: 'ENTRETIEN',
         month: 8,

@@ -38,7 +38,7 @@ test.describe('M3-001 — Open finance module', () => {
     await goToFinances(page);
     await snap(page, 'dashboard-loaded');
 
-    await expect(page.getByText('Solde caisse')).toBeVisible();
+    await expect(page.getByText('Budget total')).toBeVisible(); // was "Solde caisse"
     await expect(page.getByText('Dépenses du mois')).toBeVisible();
     await expect(page.getByText('Budget restant')).toBeVisible();
     await expect(page.getByText('Dépenses par catégorie')).toBeVisible();

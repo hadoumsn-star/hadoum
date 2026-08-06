@@ -93,9 +93,11 @@ describe('Expense budget reservation and consumption (e2e)', () => {
       budgetXof?: number;
     } = {},
   ) {
+    // Budget editing is SUPERVISOR-only (see finances.controller.ts) —
+    // directorToken would now 403 here.
     return request(app.getHttpServer())
       .put('/api/finances/budget-lines')
-      .set('Authorization', `Bearer ${directorToken}`)
+      .set('Authorization', `Bearer ${supervisorToken}`)
       .send({
         category: 'ENTRETIEN',
         month: 8,
