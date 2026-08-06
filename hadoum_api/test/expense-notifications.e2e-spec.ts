@@ -59,9 +59,11 @@ describe('Expense workflow notifications (e2e)', () => {
       }
     ).body.token;
 
+    // Budget editing is SUPERVISOR-only (see finances.controller.ts) —
+    // directorToken would now 403 here.
     await request(app.getHttpServer())
       .put('/api/finances/budget-lines')
-      .set('Authorization', `Bearer ${directorToken}`)
+      .set('Authorization', `Bearer ${supervisorToken}`)
       .send({
         category: 'ENTRETIEN',
         month: 8,
@@ -181,7 +183,7 @@ describe('Expense workflow notifications (e2e)', () => {
   it('does not notify approval when the budget is insufficient (no duplicate/false notification)', async () => {
     await request(app.getHttpServer())
       .put('/api/finances/budget-lines')
-      .set('Authorization', `Bearer ${directorToken}`)
+      .set('Authorization', `Bearer ${supervisorToken}`)
       .send({ category: 'ENTRETIEN', month: 8, year: 2026, budgetXof: 1000 });
     const created = (await createExpense().expect(201)) as {
       body: TransactionResponse;

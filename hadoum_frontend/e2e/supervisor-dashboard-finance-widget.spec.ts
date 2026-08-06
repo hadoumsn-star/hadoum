@@ -1,5 +1,5 @@
 import { test, expect, APIRequestContext, Page } from '@playwright/test';
-import { DIRECTOR_CREDENTIALS, loginAsSupervisor } from './helpers';
+import { DIRECTOR_CREDENTIALS, SUPERVISOR_CREDENTIALS, loginAsSupervisor } from './helpers';
 
 // Supervisor Dashboard "Vue d'ensemble" used to carry a *separate*
 // <PendingExpenseApprovals /> "Dépenses à valider" widget alongside its own
@@ -37,6 +37,10 @@ async function apiLogin(request: APIRequestContext, email: string, password: str
 
 async function directorToken(request: APIRequestContext): Promise<string> {
   return apiLogin(request, DIRECTOR_CREDENTIALS.email, DIRECTOR_CREDENTIALS.password);
+}
+
+async function supervisorToken(request: APIRequestContext): Promise<string> {
+  return apiLogin(request, SUPERVISOR_CREDENTIALS.email, SUPERVISOR_CREDENTIALS.password);
 }
 
 async function apiCreateExpense(request: APIRequestContext, token: string, data: Record<string, unknown> = {}) {
@@ -77,7 +81,8 @@ function pendingCard(page: Page, label: string) {
 
 test.describe('Supervisor Dashboard — expense cards inside the unified "Demandes à valider" list', () => {
   test.beforeAll(async ({ request }) => {
-    const token = await directorToken(request);
+    // Budget editing is SUPERVISOR-only — directorToken would 403 here.
+    const token = await supervisorToken(request);
     await apiSetBudget(request, token, 5_000_000); // generous default
   });
 

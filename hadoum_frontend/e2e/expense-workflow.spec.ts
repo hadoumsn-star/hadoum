@@ -83,7 +83,8 @@ function transactionRow(page: import('@playwright/test').Page, label: string) {
 
 test.describe('Expense workflow (PR 5E)', () => {
   test.beforeAll(async ({ request }) => {
-    const token = await directorToken(request);
+    // Budget editing is SUPERVISOR-only — directorToken would 403 here.
+    const token = await supervisorToken(request);
     await apiSetBudget(request, token, 5_000_000); // generous default for most tests
   });
 
@@ -241,9 +242,11 @@ test.describe('Expense workflow (PR 5E)', () => {
 
   test('insufficient budget is surfaced clearly on approval', async ({ page, request }) => {
     const dToken = await directorToken(request);
+    const sToken = await supervisorToken(request);
     // Isolated category+period so this test's tiny budget never collides
     // with the generous default used by every other test in this file.
-    await apiSetBudget(request, dToken, 5000, 'EQUIPEMENT');
+    // Budget editing is SUPERVISOR-only — dToken would 403 here.
+    await apiSetBudget(request, sToken, 5000, 'EQUIPEMENT');
     const label = unique('Budget insuffisant E2E');
     const created = await apiCreateExpense(request, dToken, {
       label, category: 'EQUIPEMENT', amountXof: 50000,

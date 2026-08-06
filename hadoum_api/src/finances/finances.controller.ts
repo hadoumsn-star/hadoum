@@ -242,6 +242,11 @@ export class FinancesController {
   }
 
   // ─── Budget lines ────────────────────────────────────────────────────────
+  // Budget editing is SUPERVISOR-only — DIRECTOR keeps full read access to
+  // every route above (dashboard, transactions, budget-lines GET) but gets
+  // 403 on all three budget-modification routes below. Same per-method
+  // @Roles-override convention as the expense-workflow block above; every
+  // other route in this controller is untouched.
 
   @Get('budget-lines')
   findBudgetLines(
@@ -256,6 +261,7 @@ export class FinancesController {
   }
 
   @Put('budget-lines')
+  @Roles('SUPERVISOR')
   @Audited({ module: 'FINANCE', entity: 'BudgetLine', action: 'UPSERT' })
   upsertBudgetLine(@Body() dto: UpsertBudgetLineDto) {
     return this.financesService.upsertBudgetLine(dto);
@@ -263,13 +269,16 @@ export class FinancesController {
 
   // PR 6 — idempotent: creates only the default categories missing for the
   // current month, never overwrites an existing row (default or since
-  // edited). Safe to call on every Finance page load.
+  // edited). Safe to call on every Finance page load — for SUPERVISOR only;
+  // DIRECTOR's page load skips this call (see FinancesPage.tsx).
   @Post('budget-lines/ensure-defaults')
+  @Roles('SUPERVISOR')
   ensureDefaultBudgetLines() {
     return this.financesService.ensureDefaultBudgetLines();
   }
 
   @Delete('budget-lines/:id')
+  @Roles('SUPERVISOR')
   @HttpCode(204)
   @Audited({ module: 'FINANCE', entity: 'BudgetLine', action: 'DELETE' })
   deleteBudgetLine(@Param('id') id: string) {

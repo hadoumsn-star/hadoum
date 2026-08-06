@@ -33,7 +33,17 @@ function categoryRow(page: import('@playwright/test').Page, category: string) {
 }
 
 test.describe('Budget categories and consumption UI (PR 6)', () => {
-  test('default categories are seeded on page load, including a zero-budget one (Salaires) handled without NaN/crash', async ({ page }) => {
+  test('default categories are seeded on page load, including a zero-budget one (Salaires) handled without NaN/crash', async ({ page, request }) => {
+    // Budget editing (including the ensure-defaults seed call) is
+    // SUPERVISOR-only now — FinancesPage only fires it for a SUPERVISOR
+    // page load (see FinancesPage.tsx), so seed explicitly as SUPERVISOR
+    // here before reading the result as DIRECTOR, proving DIRECTOR's read
+    // access to the seeded categories is unaffected.
+    const token = await supervisorToken(request);
+    await request.post(`${API_BASE}/finances/budget-lines/ensure-defaults`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
     await loginAsDirector(page);
     await page.goto('/app/finances');
 
@@ -59,7 +69,10 @@ test.describe('Budget categories and consumption UI (PR 6)', () => {
   });
 
   test('reloading the page twice creates no duplicate category rows', async ({ page }) => {
-    await loginAsDirector(page);
+    // SUPERVISOR — only SUPERVISOR's page load fires the ensure-defaults
+    // seed call now, so this is the role that can actually exercise the
+    // backend's idempotency guarantee from a real page reload.
+    await loginAsSupervisor(page);
     await page.goto('/app/finances');
     await expect(categoryRow(page, 'SPORT')).toBeVisible({ timeout: 10_000 });
 
@@ -72,7 +85,8 @@ test.describe('Budget categories and consumption UI (PR 6)', () => {
   });
 
   test('a custom amount already set for a default category is displayed as-is, not reset to the default', async ({ page, request }) => {
-    const token = await directorToken(request);
+    // Budget editing is SUPERVISOR-only — directorToken would 403 here.
+    const token = await supervisorToken(request);
     const now = new Date();
     // ENTRETIEN, not one of the 6 new default categories — deliberately, so
     // this never collides with the "seeded on page load" test's assertions
