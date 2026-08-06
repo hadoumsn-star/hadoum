@@ -148,6 +148,20 @@ export interface CreateStockTransferInput {
   reason?: string;
 }
 
+// PR 12 — physical inventory count. The server computes the variance itself
+// from the item's current quantity; the caller only reports what it counted.
+export interface CreateStockInventoryCountInput {
+  actualQuantity: number;
+  comment?: string;
+}
+
+export interface StockInventoryCountResult {
+  item: ApiStockItem;
+  expectedQuantity: number;
+  actualQuantity: number;
+  difference: number;
+}
+
 // ─── API calls ────────────────────────────────────────────────────────────────
 
 export const stockItemsApi = {
@@ -178,6 +192,8 @@ export const stockItemsApi = {
     api.post<ApiStockItem>(`/stock-items/${id}/adjustments`, data),
   createTransfer: (id: string, data: CreateStockTransferInput) =>
     api.post<ApiStockItem>(`/stock-items/${id}/transfers`, data),
+  createInventoryCount: (id: string, data: CreateStockInventoryCountInput) =>
+    api.post<StockInventoryCountResult>(`/stock-items/${id}/inventory-count`, data),
   movements: (id: string) => api.get<ApiStockMovement[]>(`/stock-items/${id}/movements`),
   approve: (id: string, comment?: string) =>
     api.patch<ApiStockItem>(`/stock-items/${id}/approve`, { comment }),

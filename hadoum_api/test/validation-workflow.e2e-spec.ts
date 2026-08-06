@@ -10,6 +10,23 @@ import {
 } from './utils/test-app';
 import { PrismaService } from '../src/prisma/prisma.service';
 
+interface MaintenanceTicketResponse {
+  id: string;
+  status: string;
+}
+
+interface PendingValidationEntry {
+  resourceId: string;
+}
+
+interface NotificationEntry {
+  type: string;
+}
+
+interface ValidationHistoryEntry {
+  status: string;
+}
+
 describe('Validation workflow (e2e)', () => {
   let app: INestApplication<App>;
   let prisma: PrismaService;
@@ -28,20 +45,24 @@ describe('Validation workflow (e2e)', () => {
     users = await seedTestUsers(prisma);
 
     directorToken = (
-      await request(app.getHttpServer())
+      (await request(app.getHttpServer())
         .post('/api/auth/login')
-        .send({ email: users.director.email, password: TEST_PASSWORD })
+        .send({ email: users.director.email, password: TEST_PASSWORD })) as {
+        body: { token: string };
+      }
     ).body.token;
     supervisorToken = (
-      await request(app.getHttpServer())
+      (await request(app.getHttpServer())
         .post('/api/auth/login')
-        .send({ email: users.supervisor.email, password: TEST_PASSWORD })
+        .send({ email: users.supervisor.email, password: TEST_PASSWORD })) as {
+        body: { token: string };
+      }
     ).body.token;
 
-    const spaceRes = await request(app.getHttpServer())
+    const spaceRes = (await request(app.getHttpServer())
       .post('/api/spaces')
       .set('Authorization', `Bearer ${directorToken}`)
-      .send({ name: 'Cuisine', type: 'CUISINE' });
+      .send({ name: 'Cuisine', type: 'CUISINE' })) as { body: { id: string } };
     spaceId = spaceRes.body.id;
   });
 
@@ -49,18 +70,20 @@ describe('Validation workflow (e2e)', () => {
     await app.close();
   });
 
-  async function createTicket(overrides: Record<string, unknown> = {}) {
-    const res = await request(app.getHttpServer())
+  async function createTicket(
+    overrides: Record<string, unknown> = {},
+  ): Promise<MaintenanceTicketResponse> {
+    const res = (await request(app.getHttpServer())
       .post('/api/maintenance-tickets')
       .set('Authorization', `Bearer ${directorToken}`)
       .send({
-        title: 'Fuite d\'eau',
+        title: "Fuite d'eau",
         spaceId,
         urgency: 'CRITIQUE',
         reportedBy: 'Jean',
         ...overrides,
       })
-      .expect(201);
+      .expect(201)) as { body: MaintenanceTicketResponse };
     return res.body;
   }
 
@@ -81,13 +104,11 @@ describe('Validation workflow (e2e)', () => {
       .expect(201);
 
     // Supervisor sees it in the pending queue.
-    const pending = await request(app.getHttpServer())
+    const pending = (await request(app.getHttpServer())
       .get('/api/validations/pending')
       .set('Authorization', `Bearer ${supervisorToken}`)
-      .expect(200);
-    expect(pending.body.some((v: { resourceId: string }) => v.resourceId === ticket.id)).toBe(
-      true,
-    );
+      .expect(200)) as { body: PendingValidationEntry[] };
+    expect(pending.body.some((v) => v.resourceId === ticket.id)).toBe(true);
 
     // Director got no notification yet; reject and check the director IS
     // notified once the supervisor rejects.
@@ -97,12 +118,12 @@ describe('Validation workflow (e2e)', () => {
       .send({ comment: 'Justificatifs manquants' })
       .expect(200);
 
-    const directorNotifs = await request(app.getHttpServer())
+    const directorNotifs = (await request(app.getHttpServer())
       .get('/api/notifications')
       .set('Authorization', `Bearer ${directorToken}`)
-      .expect(200);
+      .expect(200)) as { body: NotificationEntry[] };
     expect(
-      directorNotifs.body.some((n: { type: string }) => n.type === 'VALIDATION_REJECTED'),
+      directorNotifs.body.some((n) => n.type === 'VALIDATION_REJECTED'),
     ).toBe(true);
 
     // Resubmit after "modifying" (here: just resubmitting again).
@@ -113,20 +134,20 @@ describe('Validation workflow (e2e)', () => {
       .expect(201);
 
     // Approve this time.
-    const approveRes = await request(app.getHttpServer())
+    const approveRes = (await request(app.getHttpServer())
       .patch(`/api/maintenance-tickets/${ticket.id}/approve`)
       .set('Authorization', `Bearer ${supervisorToken}`)
       .send({})
-      .expect(200);
+      .expect(200)) as { body: MaintenanceTicketResponse };
     expect(approveRes.body.status).toBe('FERME');
 
-    const directorNotifsAfterApproval = await request(app.getHttpServer())
+    const directorNotifsAfterApproval = (await request(app.getHttpServer())
       .get('/api/notifications')
       .set('Authorization', `Bearer ${directorToken}`)
-      .expect(200);
+      .expect(200)) as { body: NotificationEntry[] };
     expect(
       directorNotifsAfterApproval.body.some(
-        (n: { type: string }) => n.type === 'VALIDATION_APPROVED',
+        (n) => n.type === 'VALIDATION_APPROVED',
       ),
     ).toBe(true);
   });
@@ -221,10 +242,10 @@ describe('Validation workflow (e2e)', () => {
       .send({})
       .expect(200);
 
-    const history = await request(app.getHttpServer())
+    const history = (await request(app.getHttpServer())
       .get(`/api/maintenance-tickets/${ticket.id}/validation-history`)
       .set('Authorization', `Bearer ${directorToken}`)
-      .expect(200);
+      .expect(200)) as { body: ValidationHistoryEntry[] };
 
     expect(history.body).toHaveLength(1);
     expect(history.body[0].status).toBe('APPROVED');

@@ -20,11 +20,15 @@ export const PROCEDURE_TYPE_OPTIONS: ApiProcedureType[] = [
   'DOCUMENT_JURIDIQUE', 'RENOUVELLEMENT', 'CONVENTION', 'ATTESTATION', 'AUTRE',
 ];
 
+// EN_ATTENTE_REPONSE carries its 🟠 marker right in the label so every
+// place that already renders PROCEDURE_STATUS_LABELS (list, detail modal,
+// the Supervisor unified validation list) shows the badge without needing
+// its own per-status icon logic.
 export const PROCEDURE_STATUS_LABELS: Record<ApiProcedureStatus, string> = {
   A_PREPARER:          'À préparer',
   EN_COURS:            'En cours',
   SOUMIS:              'Soumis',
-  EN_ATTENTE_REPONSE:  'En attente de réponse',
+  EN_ATTENTE_REPONSE:  '🟠 En attente de réponse',
   APPROUVE:            'Approuvé',
   REFUSE:              'Refusé',
   EXPIRE:              'Expiré',
@@ -34,11 +38,21 @@ export const PROCEDURE_STATUS_LABELS: Record<ApiProcedureStatus, string> = {
 export const PROCEDURE_STATUS_OPTIONS: ApiProcedureStatus[] =
   ['A_PREPARER', 'EN_COURS', 'SOUMIS', 'EN_ATTENTE_REPONSE', 'APPROUVE', 'REFUSE', 'EXPIRE', 'ARCHIVE'];
 
+// The subset a DIRECTOR can pick directly from the "Statut de suivi" field
+// on the create/edit form — pure operational tracking, pre-submission.
+// SOUMIS/APPROUVE/REFUSE/EXPIRE/ARCHIVE stay reachable only through the
+// validation workflow (Soumettre / Approuver / Refuser / Archiver
+// actions) and are deliberately excluded here so this field can never be
+// used to bypass that circuit — see AdministrativeProceduresService's
+// MANUALLY_SETTABLE_STATUSES for the matching server-side guard.
+export const PROCEDURE_MANUAL_STATUS_OPTIONS: ApiProcedureStatus[] =
+  ['A_PREPARER', 'EN_COURS', 'EN_ATTENTE_REPONSE'];
+
 export const PROCEDURE_STATUS_STYLE: Record<ApiProcedureStatus, { bg: string; color: string }> = {
   A_PREPARER:         { bg: '#F3F4F6', color: '#374151' },
   EN_COURS:           { bg: '#EEF2F7', color: '#3E5A78' },
   SOUMIS:             { bg: '#FFFBEB', color: '#D97706' },
-  EN_ATTENTE_REPONSE: { bg: '#F5F3FF', color: '#7C3AED' },
+  EN_ATTENTE_REPONSE: { bg: '#FFF1E9', color: '#C2410C' },
   APPROUVE:           { bg: '#ECFDF5', color: '#065F46' },
   REFUSE:             { bg: '#FEF2F2', color: '#B91C1C' },
   EXPIRE:             { bg: '#FEF2F2', color: '#B91C1C' },

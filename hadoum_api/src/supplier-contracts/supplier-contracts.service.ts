@@ -1,9 +1,11 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import {
+  Contact,
   ContractCategory,
   ContractStatus,
   Prisma,
@@ -20,10 +22,7 @@ import { RequestRenewalDto } from './dto/request-renewal.dto';
 import { RequestTerminationDto } from './dto/request-termination.dto';
 import { ReviewValidationDto } from './dto/review-validation.dto';
 import { RejectValidationDto } from './dto/reject-validation.dto';
-import {
-  CONTRACT_EXPIRY_WARNING_DAYS,
-  CONTRACT_VALIDATION_AMOUNT_THRESHOLD_XOF,
-} from './supplier-contracts.constants';
+import { CONTRACT_EXPIRY_WARNING_DAYS } from './supplier-contracts.constants';
 
 interface FindAllFilters {
   category?: ContractCategory;
@@ -42,6 +41,56 @@ export class SupplierContractsService {
     private readonly validationsService: ValidationsService,
     private readonly notificationsService: NotificationsService,
   ) {}
+
+  // ─── Contact assignment helpers (PR 8) ─────────────────────────────────────
+
+  /**
+   * A new assignment must point at a real, currently-active Contact — an
+   * inactive one can still be *read* (see findOne/findAll), it just can't be
+   * newly attached. Mirrors MaintenanceTicketsService.assertContactAssignable.
+   */
+  private async assertContactAssignable(contactId: string): Promise<Contact> {
+    const contact = await this.prisma.contact.findUnique({
+      where: { id: contactId },
+    });
+    if (!contact) {
+      throw new BadRequestException('Contact introuvable.');
+    }
+    if (!contact.active) {
+      throw new BadRequestException(
+        'Ce contact est désactivé et ne peut pas être assigné à un nouveau contrat.',
+      );
+    }
+    return contact;
+  }
+
+  private readonly supplierContactInclude = {
+    supplierContact: { include: { category: true } },
+  };
+
+  // Contact has no separate "company name" vs "person name" fields — just
+  // fullName + optional organization. When organization is set, treat it as
+  // the supplier/company name and fullName as the person to contact there;
+  // when it isn't, the contact itself *is* the supplier (contactPerson stays
+  // null rather than awkwardly duplicating supplierName).
+  private supplierSnapshotFromContact(contact: Contact) {
+    return {
+      supplierName: contact.organization ?? contact.fullName,
+      contactPerson: contact.organization ? contact.fullName : null,
+      phone: contact.phone,
+      email: contact.email,
+      address: contact.address,
+    };
+  }
+
+  // Notification messages prefer the linked Contact's current name over the
+  // (possibly stale) legacy snapshot, falling back to it when unlinked.
+  private supplierDisplayName(contract: {
+    supplierName: string;
+    supplierContact?: { fullName: string } | null;
+  }): string {
+    return contract.supplierContact?.fullName ?? contract.supplierName;
+  }
 
   private effectiveStatus(contract: {
     status: ContractStatus;
@@ -78,6 +127,7 @@ export class SupplierContractsService {
     id: string;
     contractName: string;
     supplierName: string;
+    supplierContact?: { fullName: string } | null;
     status: ContractStatus;
     endDate: Date | null;
   }) {
@@ -95,6 +145,7 @@ export class SupplierContractsService {
     });
     if (alreadyNotified) return;
 
+    const supplierName = this.supplierDisplayName(contract);
     await this.notificationsService.createForRole('DIRECTOR', {
       type,
       resourceType: 'SUPPLIER_CONTRACT',
@@ -105,37 +156,95 @@ export class SupplierContractsService {
           : 'Contrat bientôt expiré',
       message:
         type === 'CONTRACT_EXPIRED'
-          ? `Le contrat "${contract.contractName}" (${contract.supplierName}) a expiré.`
-          : `Le contrat "${contract.contractName}" (${contract.supplierName}) expire bientôt.`,
+          ? `Le contrat "${contract.contractName}" (${supplierName}) a expiré.`
+          : `Le contrat "${contract.contractName}" (${supplierName}) expire bientôt.`,
     });
   }
 
-  async create(dto: CreateSupplierContractDto) {
-    const requiresValidation =
-      dto.amount !== undefined &&
-      dto.amount > CONTRACT_VALIDATION_AMOUNT_THRESHOLD_XOF;
+  // Every new contract now enters the validation workflow automatically —
+  // there is no more amount threshold or "direct to ACTIF" path. Contract
+  // row + ValidationRequest are created in one transaction (`$transaction`
+  // below) so a failure creating either one rolls back both; the SUPERVISOR
+  // notification fires once, after that transaction has actually committed,
+  // so it can never fire for a contract that ended up not existing.
+  async create(dto: CreateSupplierContractDto, userId: string) {
+    // Either a Contact or a legacy free-text supplierName must identify the
+    // supplier — supplierName stays NOT NULL in the DB, so one of the two
+    // sources has to supply it. The frontend's create form only offers the
+    // Contact path (see SupplierContractsPage); the free-text path exists so
+    // any other API client — and existing legacy contracts being edited —
+    // keeps working.
+    let supplierContactId: string | undefined;
+    let snapshot:
+      | ReturnType<typeof this.supplierSnapshotFromContact>
+      | undefined;
 
-    const created = await this.prisma.supplierContract.create({
-      data: {
-        supplierName: dto.supplierName,
-        contractName: dto.contractName,
-        category: dto.category,
-        description: dto.description,
-        contractNumber: dto.contractNumber,
-        startDate: new Date(dto.startDate),
-        endDate: dto.endDate ? new Date(dto.endDate) : undefined,
-        renewalDate: dto.renewalDate ? new Date(dto.renewalDate) : undefined,
-        renewalType: dto.renewalType,
-        noticePeriod: dto.noticePeriod,
-        amount: dto.amount,
-        billingFrequency: dto.billingFrequency,
-        contactPerson: dto.contactPerson,
-        phone: dto.phone,
-        email: dto.email,
-        address: dto.address,
-        notes: dto.notes,
-        status: requiresValidation ? 'BROUILLON' : 'ACTIF',
-      },
+    if (dto.supplierContactId) {
+      const contact = await this.assertContactAssignable(dto.supplierContactId);
+      supplierContactId = contact.id;
+      snapshot = this.supplierSnapshotFromContact(contact);
+    } else if (!dto.supplierName || !dto.supplierName.trim()) {
+      throw new BadRequestException(
+        'Un fournisseur est requis : sélectionnez un contact ou renseignez un nom.',
+      );
+    }
+
+    const created = await this.prisma.$transaction(async (tx) => {
+      const contract = await tx.supplierContract.create({
+        data: {
+          supplierName: snapshot?.supplierName ?? (dto.supplierName as string),
+          contractName: dto.contractName,
+          category: dto.category,
+          description: dto.description,
+          contractNumber: dto.contractNumber,
+          startDate: new Date(dto.startDate),
+          endDate: dto.endDate ? new Date(dto.endDate) : undefined,
+          renewalDate: dto.renewalDate ? new Date(dto.renewalDate) : undefined,
+          renewalType: dto.renewalType,
+          noticePeriod: dto.noticePeriod,
+          amount: dto.amount,
+          billingFrequency: dto.billingFrequency,
+          contactPerson: snapshot ? snapshot.contactPerson : dto.contactPerson,
+          phone: snapshot ? snapshot.phone : dto.phone,
+          email: snapshot ? snapshot.email : dto.email,
+          address: snapshot ? snapshot.address : dto.address,
+          notes: dto.notes,
+          // The same end-state `submitValidation()` already reaches in two
+          // steps (create as BROUILLON, then submit) — collapsed into one
+          // atomic step here so a DIRECTOR never has to click a separate
+          // "Soumettre pour validation" action for a brand-new contract.
+          status: 'BROUILLON',
+          validationStatus: 'PENDING_VALIDATION',
+          pendingValidationAction: 'CREATION',
+          supplierContactId,
+        },
+        include: this.supplierContactInclude,
+      });
+
+      // Can never find an existing pending request for this resourceId —
+      // the contract (and therefore this id) didn't exist a moment ago —
+      // but reuses the same guarded, generic engine call as every other
+      // resource type rather than inserting a bespoke ValidationRequest row
+      // by hand.
+      await this.validationsService.create(
+        {
+          resourceType: 'SUPPLIER_CONTRACT',
+          resourceId: contract.id,
+          submittedById: userId,
+          previousStatus: null,
+        },
+        tx,
+      );
+
+      return contract;
+    });
+
+    await this.notificationsService.createForRole('SUPERVISOR', {
+      type: 'VALIDATION_SUBMITTED',
+      resourceType: 'SUPPLIER_CONTRACT',
+      resourceId: created.id,
+      title: 'Nouveau contrat fournisseur à valider',
+      message: `Le contrat "${created.contractName}" (${this.supplierDisplayName(created)}) nécessite une validation.`,
     });
 
     return this.withEffectiveStatus(created);
@@ -170,6 +279,7 @@ export class SupplierContractsService {
 
     const contracts = await this.prisma.supplierContract.findMany({
       where,
+      include: this.supplierContactInclude,
       orderBy: { createdAt: 'desc' },
     });
 
@@ -185,9 +295,15 @@ export class SupplierContractsService {
   }
 
   async findOne(id: string) {
+    // No `active` filter on the included Contact — deliberately: a contract
+    // referencing a since-deactivated supplier must stay fully readable
+    // (same rule MaintenanceTicketsService.findOne already applies).
     const contract = await this.prisma.supplierContract.findUnique({
       where: { id },
-      include: { documents: { orderBy: { createdAt: 'desc' } } },
+      include: {
+        documents: { orderBy: { createdAt: 'desc' } },
+        ...this.supplierContactInclude,
+      },
     });
     if (!contract) throw new NotFoundException('Contract not found');
     return this.withEffectiveStatus(contract);
@@ -196,6 +312,7 @@ export class SupplierContractsService {
   private async findRaw(id: string) {
     const contract = await this.prisma.supplierContract.findUnique({
       where: { id },
+      include: this.supplierContactInclude,
     });
     if (!contract) throw new NotFoundException('Contract not found');
     return contract;
@@ -204,10 +321,41 @@ export class SupplierContractsService {
   async update(id: string, dto: UpdateSupplierContractDto) {
     await this.findRaw(id);
 
+    // Three distinct states for supplierContactId, per the dual-write
+    // contract: omitted (key absent) leaves the existing relation and legacy
+    // snapshot untouched; an id validates and refreshes the snapshot from
+    // the Contact; explicit `null` disconnects the contact WITHOUT clearing
+    // the snapshot fields — unlike MaintenanceTicket.assignedTo,
+    // supplierName is NOT NULL, so disconnecting just freezes the
+    // last-known values as plain editable legacy text instead of destroying
+    // required data.
+    let contactUpdate: {
+      supplierContactId?: string | null;
+      supplierName?: string;
+      contactPerson?: string | null;
+      phone?: string | null;
+      email?: string | null;
+      address?: string | null;
+    } = {};
+    if (dto.supplierContactId !== undefined) {
+      if (dto.supplierContactId === null) {
+        contactUpdate = { supplierContactId: null };
+      } else {
+        const contact = await this.assertContactAssignable(
+          dto.supplierContactId,
+        );
+        contactUpdate = {
+          supplierContactId: contact.id,
+          ...this.supplierSnapshotFromContact(contact),
+        };
+      }
+    }
+
     const updated = await this.prisma.supplierContract.update({
       where: { id },
       data: {
-        ...(dto.supplierName !== undefined
+        ...(dto.supplierName !== undefined &&
+        dto.supplierContactId === undefined
           ? { supplierName: dto.supplierName }
           : {}),
         ...(dto.contractName !== undefined
@@ -239,14 +387,23 @@ export class SupplierContractsService {
         ...(dto.billingFrequency !== undefined
           ? { billingFrequency: dto.billingFrequency }
           : {}),
-        ...(dto.contactPerson !== undefined
+        ...(dto.contactPerson !== undefined &&
+        dto.supplierContactId === undefined
           ? { contactPerson: dto.contactPerson }
           : {}),
-        ...(dto.phone !== undefined ? { phone: dto.phone } : {}),
-        ...(dto.email !== undefined ? { email: dto.email } : {}),
-        ...(dto.address !== undefined ? { address: dto.address } : {}),
+        ...(dto.phone !== undefined && dto.supplierContactId === undefined
+          ? { phone: dto.phone }
+          : {}),
+        ...(dto.email !== undefined && dto.supplierContactId === undefined
+          ? { email: dto.email }
+          : {}),
+        ...(dto.address !== undefined && dto.supplierContactId === undefined
+          ? { address: dto.address }
+          : {}),
         ...(dto.notes !== undefined ? { notes: dto.notes } : {}),
+        ...contactUpdate,
       },
+      include: this.supplierContactInclude,
     });
 
     return this.withEffectiveStatus(updated);
@@ -257,6 +414,7 @@ export class SupplierContractsService {
     const updated = await this.prisma.supplierContract.update({
       where: { id },
       data: { status: 'ARCHIVE' },
+      include: this.supplierContactInclude,
     });
     return this.withEffectiveStatus(updated);
   }
@@ -294,6 +452,7 @@ export class SupplierContractsService {
         validationStatus: 'PENDING_VALIDATION',
         pendingValidationAction: 'CREATION',
       },
+      include: this.supplierContactInclude,
     });
 
     await this.notificationsService.createForRole('SUPERVISOR', {
@@ -301,7 +460,7 @@ export class SupplierContractsService {
       resourceType: 'SUPPLIER_CONTRACT',
       resourceId: id,
       title: 'Validation requise',
-      message: `Le contrat "${contract.contractName}" (${contract.supplierName}) nécessite une validation.`,
+      message: `Le contrat "${contract.contractName}" (${this.supplierDisplayName(contract)}) nécessite une validation.`,
     });
 
     return this.withEffectiveStatus(updated);
@@ -330,6 +489,7 @@ export class SupplierContractsService {
         validationStatus: 'PENDING_VALIDATION',
         pendingValidationAction: 'RENEWAL',
       },
+      include: this.supplierContactInclude,
     });
 
     await this.notificationsService.createForRole('SUPERVISOR', {
@@ -337,7 +497,7 @@ export class SupplierContractsService {
       resourceType: 'SUPPLIER_CONTRACT',
       resourceId: id,
       title: 'Demande de renouvellement',
-      message: `Renouvellement demandé pour le contrat "${contract.contractName}" (${contract.supplierName}).`,
+      message: `Renouvellement demandé pour le contrat "${contract.contractName}" (${this.supplierDisplayName(contract)}).`,
     });
 
     return this.withEffectiveStatus(updated);
@@ -368,6 +528,7 @@ export class SupplierContractsService {
         validationStatus: 'PENDING_VALIDATION',
         pendingValidationAction: 'TERMINATION',
       },
+      include: this.supplierContactInclude,
     });
 
     await this.notificationsService.createForRole('SUPERVISOR', {
@@ -375,7 +536,7 @@ export class SupplierContractsService {
       resourceType: 'SUPPLIER_CONTRACT',
       resourceId: id,
       title: 'Demande de résiliation',
-      message: `Résiliation demandée pour le contrat "${contract.contractName}" (${contract.supplierName}).`,
+      message: `Résiliation demandée pour le contrat "${contract.contractName}" (${this.supplierDisplayName(contract)}).`,
     });
 
     return this.withEffectiveStatus(updated);
@@ -415,6 +576,7 @@ export class SupplierContractsService {
     const updated = await this.prisma.supplierContract.update({
       where: { id },
       data,
+      include: this.supplierContactInclude,
     });
 
     await this.notificationsService.create({
@@ -422,8 +584,8 @@ export class SupplierContractsService {
       type: 'VALIDATION_APPROVED',
       resourceType: 'SUPPLIER_CONTRACT',
       resourceId: id,
-      title: 'Validation approuvée',
-      message: `La demande pour le contrat "${contract.contractName}" (${contract.supplierName}) a été approuvée.`,
+      title: 'Contrat fournisseur approuvé',
+      message: `La demande pour le contrat "${contract.contractName}" (${this.supplierDisplayName(contract)}) a été approuvée.`,
     });
 
     return this.withEffectiveStatus(updated);
@@ -442,6 +604,7 @@ export class SupplierContractsService {
     const updated = await this.prisma.supplierContract.update({
       where: { id },
       data: { validationStatus: 'REJECTED' },
+      include: this.supplierContactInclude,
     });
 
     await this.notificationsService.create({
@@ -449,8 +612,10 @@ export class SupplierContractsService {
       type: 'VALIDATION_REJECTED',
       resourceType: 'SUPPLIER_CONTRACT',
       resourceId: id,
-      title: 'Validation refusée',
-      message: `La demande pour le contrat "${contract.contractName}" (${contract.supplierName}) a été refusée.`,
+      title: 'Contrat fournisseur refusé',
+      // Includes the rejection comment itself, not just a pointer to go
+      // look it up — `dto.comment` is mandatory (RejectValidationDto).
+      message: `Le contrat "${contract.contractName}" (${this.supplierDisplayName(contract)}) a été refusé : ${dto.comment}`,
     });
 
     return this.withEffectiveStatus(updated);
@@ -469,6 +634,7 @@ export class SupplierContractsService {
     const updated = await this.prisma.supplierContract.update({
       where: { id },
       data: { validationStatus: 'CHANGES_REQUESTED' },
+      include: this.supplierContactInclude,
     });
 
     await this.notificationsService.create({
@@ -477,7 +643,7 @@ export class SupplierContractsService {
       resourceType: 'SUPPLIER_CONTRACT',
       resourceId: id,
       title: 'Modifications demandées',
-      message: `Des modifications ont été demandées pour le contrat "${contract.contractName}" (${contract.supplierName}).`,
+      message: `Des modifications ont été demandées pour le contrat "${contract.contractName}" (${this.supplierDisplayName(contract)}).`,
     });
 
     return this.withEffectiveStatus(updated);

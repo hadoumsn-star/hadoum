@@ -18,6 +18,13 @@ build/
 # Local/dev/prod database dumps
 backups/
 
+# Excel workbooks (e.g. one-off data-import source files such as
+# hadoum_api/src/contacts/Fiche de contact BESOIN.xlsx) — real contact/data
+# exports never belong in git; the import scripts that consume them take a
+# --file path and are run manually against a local copy.
+*.xlsx
+*.xls
+
 # Ad hoc schema/migration diff scratch output
 audit/
 

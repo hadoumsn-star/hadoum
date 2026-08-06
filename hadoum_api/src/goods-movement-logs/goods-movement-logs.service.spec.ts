@@ -1,10 +1,15 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  NotFoundException,
+} from '@nestjs/common';
 import { GoodsMovementLogsService } from './goods-movement-logs.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { UploadService } from '../upload/upload.service';
 import { ValidationsService } from '../validations/validations.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { matching } from '../test-utils/jest-matchers';
 
 function createMockPrisma() {
   return {
@@ -30,9 +35,18 @@ function createMockPrisma() {
 describe('GoodsMovementLogsService', () => {
   let service: GoodsMovementLogsService;
   let prisma: ReturnType<typeof createMockPrisma>;
-  let validations: { create: jest.Mock; approve: jest.Mock; reject: jest.Mock; requestChanges: jest.Mock };
+  let validations: {
+    create: jest.Mock;
+    approve: jest.Mock;
+    reject: jest.Mock;
+    requestChanges: jest.Mock;
+  };
   let notifications: { create: jest.Mock; createForRole: jest.Mock };
-  let upload: { upload: jest.Mock; getPresignedUrl: jest.Mock; deleteFile: jest.Mock };
+  let upload: {
+    upload: jest.Mock;
+    getPresignedUrl: jest.Mock;
+    deleteFile: jest.Mock;
+  };
 
   const baseMovement = {
     id: 'movement-1',
@@ -77,7 +91,11 @@ describe('GoodsMovementLogsService', () => {
       requestChanges: jest.fn(),
     };
     notifications = { create: jest.fn(), createForRole: jest.fn() };
-    upload = { upload: jest.fn(), getPresignedUrl: jest.fn(), deleteFile: jest.fn() };
+    upload = {
+      upload: jest.fn(),
+      getPresignedUrl: jest.fn(),
+      deleteFile: jest.fn(),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -93,7 +111,10 @@ describe('GoodsMovementLogsService', () => {
 
   describe('create', () => {
     it('registers a routine movement directly', async () => {
-      prisma.goodsMovementLog.create.mockResolvedValue({ ...baseMovement, status: 'ENREGISTRE' });
+      prisma.goodsMovementLog.create.mockResolvedValue({
+        ...baseMovement,
+        status: 'ENREGISTRE',
+      });
 
       const result = await service.create(
         { movementType: 'LIVRAISON', description: 'x' } as any,
@@ -106,7 +127,10 @@ describe('GoodsMovementLogsService', () => {
 
     it('requires an expected return date for checkout-type movements', async () => {
       await expect(
-        service.create({ movementType: 'PRET_EQUIPEMENT', description: 'x' } as any, 'director-1'),
+        service.create(
+          { movementType: 'PRET_EQUIPEMENT', description: 'x' } as any,
+          'director-1',
+        ),
       ).rejects.toBeInstanceOf(BadRequestException);
     });
 
@@ -132,7 +156,10 @@ describe('GoodsMovementLogsService', () => {
     });
 
     it('routes checkout of a high-value asset through HIGH_VALUE_ASSET_EXIT', async () => {
-      prisma.inventoryAsset.findUnique.mockResolvedValue({ id: 'a1', acquisitionCost: 300_000 });
+      prisma.inventoryAsset.findUnique.mockResolvedValue({
+        id: 'a1',
+        acquisitionCost: 300_000,
+      });
       prisma.goodsMovementLog.create.mockResolvedValue({
         ...baseMovement,
         movementType: 'PRET_EQUIPEMENT',
@@ -153,7 +180,10 @@ describe('GoodsMovementLogsService', () => {
     });
 
     it('refuses to check out an asset that already has an open (unreturned) exit', async () => {
-      prisma.goodsMovementLog.findFirst.mockResolvedValue({ id: 'existing', status: 'SORTI' });
+      prisma.goodsMovementLog.findFirst.mockResolvedValue({
+        id: 'existing',
+        status: 'SORTI',
+      });
 
       await expect(
         service.create(
@@ -176,7 +206,11 @@ describe('GoodsMovementLogsService', () => {
       });
 
       const result = await service.create(
-        { movementType: 'SORTIE_MARCHANDISE', description: 'x', quantity: 80 } as any,
+        {
+          movementType: 'SORTIE_MARCHANDISE',
+          description: 'x',
+          quantity: 80,
+        } as any,
         'director-1',
       );
 
@@ -184,7 +218,10 @@ describe('GoodsMovementLogsService', () => {
     });
 
     it('routes a high-value controlled exit (small quantity, high unit cost) through validation', async () => {
-      prisma.stockItem.findUnique.mockResolvedValue({ id: 's1', unitCost: 20_000 });
+      prisma.stockItem.findUnique.mockResolvedValue({
+        id: 's1',
+        unitCost: 20_000,
+      });
       prisma.goodsMovementLog.create.mockResolvedValue({
         ...baseMovement,
         movementType: 'SORTIE_MARCHANDISE',
@@ -212,24 +249,33 @@ describe('GoodsMovementLogsService', () => {
         status: 'SORTI',
         movementDateTime: new Date('2026-01-01T10:00:00'),
       });
-      prisma.goodsMovementLog.update.mockResolvedValue({ ...baseMovement, status: 'RETOURNE' });
+      prisma.goodsMovementLog.update.mockResolvedValue({
+        ...baseMovement,
+        status: 'RETOURNE',
+      });
 
       const result = await service.recordReturn('movement-1', {
         actualReturnDate: '2026-01-05T10:00:00',
-      } as any);
+      });
 
       expect(result.status).toBe('RETOURNE');
     });
 
     it('rejects recording a return that already happened', async () => {
-      prisma.goodsMovementLog.findUnique.mockResolvedValue({ ...baseMovement, status: 'RETOURNE' });
+      prisma.goodsMovementLog.findUnique.mockResolvedValue({
+        ...baseMovement,
+        status: 'RETOURNE',
+      });
       await expect(
         service.recordReturn('movement-1', {} as any),
       ).rejects.toBeInstanceOf(ConflictException);
     });
 
     it('rejects recording a return for a movement not currently out', async () => {
-      prisma.goodsMovementLog.findUnique.mockResolvedValue({ ...baseMovement, status: 'ENREGISTRE' });
+      prisma.goodsMovementLog.findUnique.mockResolvedValue({
+        ...baseMovement,
+        status: 'ENREGISTRE',
+      });
       await expect(
         service.recordReturn('movement-1', {} as any),
       ).rejects.toBeInstanceOf(ConflictException);
@@ -242,14 +288,19 @@ describe('GoodsMovementLogsService', () => {
         movementDateTime: new Date('2026-01-10T10:00:00'),
       });
       await expect(
-        service.recordReturn('movement-1', { actualReturnDate: '2026-01-01T10:00:00' } as any),
+        service.recordReturn('movement-1', {
+          actualReturnDate: '2026-01-01T10:00:00',
+        } as any),
       ).rejects.toBeInstanceOf(BadRequestException);
     });
   });
 
   describe('archive (smart gating)', () => {
     it('archives directly from a terminal state (ENREGISTRE)', async () => {
-      prisma.goodsMovementLog.findUnique.mockResolvedValue({ ...baseMovement, status: 'ENREGISTRE' });
+      prisma.goodsMovementLog.findUnique.mockResolvedValue({
+        ...baseMovement,
+        status: 'ENREGISTRE',
+      });
       prisma.goodsMovementLog.update.mockResolvedValue({
         ...baseMovement,
         status: 'ARCHIVE',
@@ -263,7 +314,10 @@ describe('GoodsMovementLogsService', () => {
     });
 
     it('routes archiving a non-terminal record (SORTI) through validation', async () => {
-      prisma.goodsMovementLog.findUnique.mockResolvedValue({ ...baseMovement, status: 'SORTI' });
+      prisma.goodsMovementLog.findUnique.mockResolvedValue({
+        ...baseMovement,
+        status: 'SORTI',
+      });
       prisma.goodsMovementLog.update.mockResolvedValue({
         ...baseMovement,
         pendingValidationAction: 'RECORD_ARCHIVE',
@@ -285,9 +339,12 @@ describe('GoodsMovementLogsService', () => {
       };
       prisma.goodsMovementLog.findUnique.mockResolvedValue(pending);
       validations.approve.mockResolvedValue({ submittedById: 'director-1' });
-      prisma.goodsMovementLog.update.mockResolvedValue({ ...pending, status: 'SORTI' });
+      prisma.goodsMovementLog.update.mockResolvedValue({
+        ...pending,
+        status: 'SORTI',
+      });
 
-      const result = await service.approve('movement-1', 'supervisor-1', {} as any);
+      const result = await service.approve('movement-1', 'supervisor-1', {});
 
       expect(result.status).toBe('SORTI');
     });
@@ -300,9 +357,12 @@ describe('GoodsMovementLogsService', () => {
       };
       prisma.goodsMovementLog.findUnique.mockResolvedValue(pending);
       validations.approve.mockResolvedValue({ submittedById: 'director-1' });
-      prisma.goodsMovementLog.update.mockResolvedValue({ ...pending, status: 'ENREGISTRE' });
+      prisma.goodsMovementLog.update.mockResolvedValue({
+        ...pending,
+        status: 'ENREGISTRE',
+      });
 
-      const result = await service.approve('movement-1', 'supervisor-1', {} as any);
+      const result = await service.approve('movement-1', 'supervisor-1', {});
 
       expect(result.status).toBe('ENREGISTRE');
     });
@@ -332,11 +392,13 @@ describe('GoodsMovementLogsService', () => {
         validationStatus: 'REJECTED',
       });
 
-      const result = await service.reject('movement-1', 'supervisor-1', { comment: 'No' } as any);
+      const result = await service.reject('movement-1', 'supervisor-1', {
+        comment: 'No',
+      });
 
       expect(prisma.goodsMovementLog.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({
+        matching({
+          data: matching({
             status: 'ANNULE',
             pendingValidationAction: null,
             validationStatus: 'REJECTED',
@@ -359,10 +421,14 @@ describe('GoodsMovementLogsService', () => {
         validationStatus: 'REJECTED',
       });
 
-      await service.reject('movement-1', 'supervisor-1', { comment: 'No' } as any);
+      await service.reject('movement-1', 'supervisor-1', {
+        comment: 'No',
+      });
 
       expect(prisma.goodsMovementLog.update).toHaveBeenCalledWith(
-        expect.objectContaining({ data: expect.objectContaining({ status: 'SORTI' }) }),
+        matching({
+          data: matching({ status: 'SORTI' }),
+        }),
       );
     });
   });
@@ -375,7 +441,11 @@ describe('GoodsMovementLogsService', () => {
         status: 'SORTI',
         expectedReturnDate: new Date('2020-01-01'),
       };
-      const routine = { ...baseMovement, id: 'm-routine', status: 'ENREGISTRE' };
+      const routine = {
+        ...baseMovement,
+        id: 'm-routine',
+        status: 'ENREGISTRE',
+      };
       prisma.goodsMovementLog.findMany.mockResolvedValue([routine, overdue]);
 
       const result = await service.findAll({
@@ -385,8 +455,8 @@ describe('GoodsMovementLogsService', () => {
       } as any);
 
       expect(prisma.goodsMovementLog.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: expect.objectContaining({ status: 'ENREGISTRE' }),
+        matching({
+          where: matching({ status: 'ENREGISTRE' }),
         }),
       );
       // overdue movement sorts first regardless of insertion order
@@ -403,7 +473,7 @@ describe('GoodsMovementLogsService', () => {
       const routine = { ...baseMovement, id: 'm-routine' };
       prisma.goodsMovementLog.findMany.mockResolvedValue([routine, overdue]);
 
-      const result = await service.findAll({ overdueReturn: true } as any);
+      const result = await service.findAll({ overdueReturn: true });
 
       expect(result).toHaveLength(1);
       expect(result[0].id).toBe('m-overdue');
@@ -423,7 +493,7 @@ describe('GoodsMovementLogsService', () => {
 
       expect(notifications.createForRole).toHaveBeenCalledWith(
         'DIRECTOR',
-        expect.objectContaining({ type: 'GOODS_RETURN_OVERDUE' }),
+        matching({ type: 'GOODS_RETURN_OVERDUE' }),
       );
     });
 
@@ -453,7 +523,7 @@ describe('GoodsMovementLogsService', () => {
 
       const result = await service.update('movement-1', {
         destination: 'Nouvel entrepôt',
-      } as any);
+      });
 
       expect(result.destination).toBe('Nouvel entrepôt');
     });
@@ -472,23 +542,39 @@ describe('GoodsMovementLogsService', () => {
   describe('documents (upload/list)', () => {
     it('uploads a document under the movement folder and records the uploader', async () => {
       prisma.goodsMovementLog.findUnique.mockResolvedValue(baseMovement);
-      upload.upload.mockResolvedValue('goods-movement-logs/movement-1/file.pdf');
+      upload.upload.mockResolvedValue(
+        'goods-movement-logs/movement-1/file.pdf',
+      );
       prisma.goodsMovementDocument.create.mockResolvedValue({ id: 'doc-1' });
 
-      const file = { mimetype: 'application/pdf' } as any;
-      await service.uploadDocument('movement-1', 'director-1', file, 'BON_LIVRAISON', 'Bon');
+      const file = { mimetype: 'application/pdf' } as Express.Multer.File;
+      await service.uploadDocument(
+        'movement-1',
+        'director-1',
+        file,
+        'BON_LIVRAISON',
+        'Bon',
+      );
 
-      expect(upload.upload).toHaveBeenCalledWith(file, 'goods-movement-logs/movement-1');
+      expect(upload.upload).toHaveBeenCalledWith(
+        file,
+        'goods-movement-logs/movement-1',
+      );
       expect(prisma.goodsMovementDocument.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ movementId: 'movement-1', uploadedById: 'director-1' }),
+        matching({
+          data: matching({
+            movementId: 'movement-1',
+            uploadedById: 'director-1',
+          }),
         }),
       );
     });
 
     it('lists documents for an existing movement', async () => {
       prisma.goodsMovementLog.findUnique.mockResolvedValue(baseMovement);
-      prisma.goodsMovementDocument.findMany.mockResolvedValue([{ id: 'doc-1' }]);
+      prisma.goodsMovementDocument.findMany.mockResolvedValue([
+        { id: 'doc-1' },
+      ]);
 
       const result = await service.listDocuments('movement-1');
 
@@ -497,7 +583,9 @@ describe('GoodsMovementLogsService', () => {
 
     it('throws NotFoundException when listing documents for a missing movement', async () => {
       prisma.goodsMovementLog.findUnique.mockResolvedValue(null);
-      await expect(service.listDocuments('missing')).rejects.toBeInstanceOf(NotFoundException);
+      await expect(service.listDocuments('missing')).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
     });
   });
 
@@ -508,9 +596,9 @@ describe('GoodsMovementLogsService', () => {
         movementId: 'some-other-movement',
         fileKey: 'x',
       });
-      await expect(service.getDocumentUrl('movement-1', 'doc-1')).rejects.toBeInstanceOf(
-        NotFoundException,
-      );
+      await expect(
+        service.getDocumentUrl('movement-1', 'doc-1'),
+      ).rejects.toBeInstanceOf(NotFoundException);
     });
 
     it('allows fetching a document that belongs to the given movement', async () => {

@@ -14,13 +14,28 @@ import {
 } from 'class-validator';
 
 export class CreateSupplierContractDto {
+  // PR 8 (Contact directory integration): optional now — required only when
+  // supplierContactId isn't provided (enforced in the service, since
+  // SupplierContract.supplierName stays NOT NULL and either source must
+  // supply it). @MinLength(1) still applies whenever a value is sent.
   @IsString()
   @MinLength(1)
-  supplierName: string;
+  @IsOptional()
+  supplierName?: string;
 
   @IsString()
   @MinLength(1)
   contractName: string;
+
+  // Source of truth for the relation once set — see
+  // SupplierContractsService for the dual-write rule with the legacy
+  // supplierName/contactPerson/phone/email/address fields above/below. Not
+  // @IsUUID(): no DTO in this repo validates ids as UUIDs specifically,
+  // only as non-empty strings (matches CreateMaintenanceTicketDto's
+  // assignedContactId convention).
+  @IsString()
+  @IsOptional()
+  supplierContactId?: string | null;
 
   @IsEnum(ContractCategory)
   category: ContractCategory;

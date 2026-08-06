@@ -4,23 +4,37 @@ import { useAuth } from '../context/AuthContext';
 import {
   administrativeProceduresApi,
   type ApiAdministrativeProcedure, type ApiAdministrativeProcedureDetail,
-  type ApiProcedureType, type ApiProcedurePriority, type ApiProcedureDocumentType,
+  type ApiProcedureType, type ApiProcedureStatus, type ApiProcedurePriority, type ApiProcedureDocumentType,
   type CreateAdministrativeProcedureInput,
 } from '../services/administrativeProcedures.api';
 import type { ApiValidationRequest } from '../services/maintenanceTickets.api';
 import {
   PROCEDURE_TYPE_LABELS, PROCEDURE_TYPE_OPTIONS,
   PROCEDURE_STATUS_LABELS, PROCEDURE_STATUS_STYLE,
+  PROCEDURE_MANUAL_STATUS_OPTIONS,
   PROCEDURE_PRIORITY_LABELS, PROCEDURE_PRIORITY_OPTIONS, PROCEDURE_PRIORITY_STYLE,
   PROCEDURE_DOCUMENT_TYPE_LABELS, PROCEDURE_DOCUMENT_TYPE_OPTIONS,
   PENDING_PROCEDURE_ACTION_LABELS,
 } from '../config/administrativeProcedures.config';
 import { VALIDATION_STATUS_LABELS, VALIDATION_STATUS_STYLE } from '../config/validations.config';
+import { ContactAutocomplete } from '../components/contacts/ContactAutocomplete';
+import { categoryBadgeStyle } from '../components/contacts/contacts.utils';
+import type { ApiContactLike } from '../types/contacts.types';
 import {
   Plus, X, Search, Eye, Pencil, Landmark, Archive, CheckCircle2,
   Upload, Paperclip, Trash2, Send, ShieldCheck, ShieldAlert, MessageSquareWarning,
   RefreshCw, Clock, AlertTriangle, ShieldQuestion,
 } from 'lucide-react';
+
+// Categories relevant to a procedure's Responsable — resolved by key
+// through ContactAutocomplete's own categoryKeys prop, same convention as
+// TICKET_PROVIDER_CATEGORY_KEYS / SUPPLIER_CATEGORY_KEYS elsewhere.
+const PROCEDURE_RESPONSIBLE_CATEGORY_KEYS = ['ADMINISTRATION', 'PRESTATAIRE', 'SOCIAL'];
+
+// PR 9 priority: linked Contact's name > legacy free-text snapshot.
+function procedureResponsibleLabel(procedure: ApiAdministrativeProcedure): string | null {
+  return procedure.assignedContact?.fullName || procedure.assignedTo || null;
+}
 
 const INPUT: React.CSSProperties = {
   width: '100%', padding: '8px 12px', borderRadius: 8,
@@ -59,6 +73,7 @@ function ProcedureModal({ initial, onSave, onClose }: {
     title: initial?.title ?? '',
     procedureType: initial?.procedureType ?? ('AUTRE' as ApiProcedureType),
     authority: initial?.authority ?? '',
+    status: initial?.status ?? ('A_PREPARER' as ApiProcedureStatus),
     description: initial?.description ?? '',
     referenceNumber: initial?.referenceNumber ?? '',
     submissionDate: initial?.submissionDate?.slice(0, 10) ?? '',
@@ -66,11 +81,38 @@ function ProcedureModal({ initial, onSave, onClose }: {
     expirationDate: initial?.expirationDate?.slice(0, 10) ?? '',
     renewalDate: initial?.renewalDate?.slice(0, 10) ?? '',
     priority: initial?.priority ?? ('NORMALE' as ApiProcedurePriority),
-    assignedTo: initial?.assignedTo ?? '',
     notes: initial?.notes ?? '',
+    pendingResponseOrganization: initial?.pendingResponseOrganization ?? '',
   });
   const [saving, setSaving] = useState(false);
   const set = (k: string, v: string) => setForm(p => ({ ...p, [k]: v }));
+
+  // "Statut de suivi" is only a free dropdown while the procedure is still
+  // in a pre-submission, operational-tracking state (A_PREPARER / EN_COURS
+  // / EN_ATTENTE_REPONSE — a new procedure always starts there). Once it's
+  // gone through the validation workflow (SOUMIS, APPROUVE, REFUSE, EXPIRE,
+  // ARCHIVE) the status is read-only here and only changes via the
+  // Soumettre/Approuver/Refuser/Archiver actions in the detail view — the
+  // same rule the backend enforces (see MANUALLY_SETTABLE_STATUSES).
+  const statusIsManuallyEditable =
+    !isEdit || PROCEDURE_MANUAL_STATUS_OPTIONS.includes(initial!.status);
+  const showPendingResponseOrganization = form.status === 'EN_ATTENTE_REPONSE';
+
+  // Separate from `form` because ContactAutocomplete is controlled by an id
+  // + the full contact object together. `undefined` = untouched this
+  // session (omitted from the payload, existing relation left alone);
+  // `null` = explicitly cleared; a string = assigned/replaced.
+  const [assignedContactId, setAssignedContactId] = useState<string | null | undefined>(
+    initial?.assignedContactId ?? undefined,
+  );
+  const [assignedContact, setAssignedContact] = useState<ApiContactLike | null>(
+    initial?.assignedContact ?? null,
+  );
+  // A pre-PR-9 procedure can have free-text assignedTo with no linked
+  // Contact. Selecting any contact in this session — even before saving —
+  // resolves that state, so the notice disappears immediately.
+  const showLegacyResponsibleNotice =
+    isEdit && !!initial?.assignedTo && !initial?.assignedContactId && !assignedContact;
 
   const dateError =
     form.submissionDate && form.expectedResponseDate && form.expectedResponseDate < form.submissionDate
@@ -82,7 +124,8 @@ function ProcedureModal({ initial, onSave, onClose }: {
           : null;
 
   const canSave =
-    form.title.trim().length > 0 && form.authority.trim().length > 0 && !dateError && !saving;
+    form.title.trim().length > 0 && form.authority.trim().length > 0 && !dateError && !saving &&
+    (!showPendingResponseOrganization || form.pendingResponseOrganization.trim().length > 0);
 
   const handleSave = () => {
     if (!canSave) return;
@@ -91,6 +134,10 @@ function ProcedureModal({ initial, onSave, onClose }: {
       title: form.title.trim(),
       procedureType: form.procedureType,
       authority: form.authority.trim(),
+      // Omitted entirely (not even sent as unchanged) once the status has
+      // left manual-tracking territory — the backend would reject it, and
+      // there's nothing to change here anyway (see statusIsManuallyEditable).
+      ...(statusIsManuallyEditable ? { status: form.status } : {}),
       description: form.description.trim() || undefined,
       referenceNumber: form.referenceNumber.trim() || undefined,
       submissionDate: form.submissionDate || undefined,
@@ -98,13 +145,20 @@ function ProcedureModal({ initial, onSave, onClose }: {
       expirationDate: form.expirationDate || undefined,
       renewalDate: form.renewalDate || undefined,
       priority: form.priority,
-      assignedTo: form.assignedTo.trim() || undefined,
+      assignedContactId,
       notes: form.notes.trim() || undefined,
+      // Only sent while "En attente de réponse" is selected — left
+      // untouched otherwise (a prior value from an earlier "en attente"
+      // episode is harmless to keep, and clearing it isn't the point here).
+      ...(showPendingResponseOrganization
+        ? { pendingResponseOrganization: form.pendingResponseOrganization.trim() }
+        : {}),
     });
   };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      data-testid="procedure-modal"
       style={{ background: 'rgba(0,0,0,0.45)' }}
       onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="w-full max-w-lg rounded-2xl overflow-hidden shadow-xl flex flex-col" style={{ background: '#FFFFFF', maxHeight: '92vh' }}>
@@ -131,6 +185,27 @@ function ProcedureModal({ initial, onSave, onClose }: {
               </select>
             </div>
           </div>
+          <div>
+            <label style={{ color: '#374151', fontSize: 12, fontWeight: 500, display: 'block', marginBottom: 5 }}>Statut de suivi</label>
+            {statusIsManuallyEditable ? (
+              <select value={form.status} onChange={e => set('status', e.target.value)} style={{ ...INPUT, cursor: 'pointer' }}
+                data-testid="procedure-status-select">
+                {PROCEDURE_MANUAL_STATUS_OPTIONS.map(s => <option key={s} value={s}>{PROCEDURE_STATUS_LABELS[s]}</option>)}
+              </select>
+            ) : (
+              <p style={{ color: '#6B7280', fontSize: 13, padding: '8px 12px', background: '#F9F7F3', borderRadius: 8 }}>
+                {PROCEDURE_STATUS_LABELS[form.status]} — géré par le circuit de validation (voir la fiche détaillée).
+              </p>
+            )}
+          </div>
+          {showPendingResponseOrganization && (
+            <div>
+              <label style={{ color: '#374151', fontSize: 12, fontWeight: 500, display: 'block', marginBottom: 5 }}>Organisme concerné *</label>
+              <input value={form.pendingResponseOrganization} onChange={e => set('pendingResponseOrganization', e.target.value)}
+                placeholder="Ex : Mairie, Préfecture, CAF, Tribunal, Police, Ambassade, Assurance, Banque, Autre…"
+                style={INPUT} data-testid="procedure-pending-response-organization" />
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label style={{ color: '#374151', fontSize: 12, fontWeight: 500, display: 'block', marginBottom: 5 }}>Autorité *</label>
@@ -148,7 +223,7 @@ function ProcedureModal({ initial, onSave, onClose }: {
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label style={{ color: '#374151', fontSize: 12, fontWeight: 500, display: 'block', marginBottom: 5 }}>Date de soumission</label>
+              <label style={{ color: '#374151', fontSize: 12, fontWeight: 500, display: 'block', marginBottom: 5 }}>Date de soumission (date de dépôt)</label>
               <input type="date" value={form.submissionDate} onChange={e => set('submissionDate', e.target.value)} style={INPUT} />
             </div>
             <div>
@@ -168,8 +243,24 @@ function ProcedureModal({ initial, onSave, onClose }: {
           </div>
           {dateError && <p style={ERROR_TEXT}>{dateError}</p>}
           <div>
-            <label style={{ color: '#374151', fontSize: 12, fontWeight: 500, display: 'block', marginBottom: 5 }}>Responsable</label>
-            <input value={form.assignedTo} onChange={e => set('assignedTo', e.target.value)} placeholder="Personne en charge du dossier" style={INPUT} />
+            <ContactAutocomplete
+              label="Responsable de la démarche"
+              placeholder="Rechercher un responsable"
+              value={assignedContactId ?? null}
+              selectedContact={assignedContact}
+              onChange={contact => {
+                setAssignedContact(contact);
+                setAssignedContactId(contact?.id ?? null);
+              }}
+              allowCreate
+              includeInactiveSelected
+              categoryKeys={PROCEDURE_RESPONSIBLE_CATEGORY_KEYS}
+            />
+            {showLegacyResponsibleNotice && (
+              <p style={{ color: '#D97706', fontSize: 11, marginTop: 5 }}>
+                Responsable actuel : {initial?.assignedTo} — non lié au répertoire
+              </p>
+            )}
           </div>
           <div>
             <label style={{ color: '#374151', fontSize: 12, fontWeight: 500, display: 'block', marginBottom: 5 }}>Notes</label>
@@ -221,6 +312,7 @@ function ValidationDecisionModal({ action, onConfirm, onClose }: {
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-4"
+      data-testid="validation-decision-modal"
       style={{ background: 'rgba(0,0,0,0.45)' }}
       onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="w-full max-w-sm rounded-2xl overflow-hidden shadow-xl" style={{ background: '#FFFFFF' }}>
@@ -426,6 +518,7 @@ function ProcedureDetailModal({ procedureId, isDirector, isSupervisor, onClose, 
   return (
     <>
       <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
+        data-testid="procedure-detail-modal"
         style={{ background: 'rgba(0,0,0,0.45)' }}
         onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
         <div className="w-full max-w-lg rounded-2xl overflow-hidden shadow-xl flex flex-col" style={{ background: '#FFFFFF', maxHeight: '90vh' }}>
@@ -464,7 +557,27 @@ function ProcedureDetailModal({ procedureId, isDirector, isSupervisor, onClose, 
               <p style={{ color: '#9CA3AF', fontSize: 11, fontWeight: 600, letterSpacing: '0.05em', marginBottom: 6 }}>INFORMATIONS GÉNÉRALES</p>
               <p style={{ color: '#374151', fontSize: 13, lineHeight: 1.6 }}>{detail.description || '—'}</p>
               {detail.referenceNumber && <p style={{ color: '#6B7280', fontSize: 12, marginTop: 4 }}>N° référence : {detail.referenceNumber}</p>}
-              {detail.assignedTo && <p style={{ color: '#6B7280', fontSize: 12, marginTop: 2 }}>Responsable : {detail.assignedTo}</p>}
+              {(detail.assignedContact || detail.assignedTo) && (
+                <div style={{ marginTop: 2 }}>
+                  <p style={{ color: '#6B7280', fontSize: 12 }}>
+                    Responsable : {procedureResponsibleLabel(detail)}
+                    {detail.assignedContact && !detail.assignedContact.active && (
+                      <span className="ml-1.5 px-1.5 py-0.5 rounded-full" style={{ background: '#FEF2F2', color: '#B91C1C', fontSize: 9, fontWeight: 700 }}>
+                        INACTIF
+                      </span>
+                    )}
+                  </p>
+                  {detail.assignedContact?.organization && (
+                    <p style={{ color: '#9CA3AF', fontSize: 11, marginTop: 1 }}>{detail.assignedContact.organization}</p>
+                  )}
+                  {detail.assignedContact?.category && (
+                    <span className="inline-block mt-1 px-1.5 py-0.5 rounded-full"
+                      style={{ ...categoryBadgeStyle(detail.assignedContact.category.color), fontSize: 9, fontWeight: 700 }}>
+                      {detail.assignedContact.category.label.toUpperCase()}
+                    </span>
+                  )}
+                </div>
+              )}
               {detail.createdBy && <p style={{ color: '#6B7280', fontSize: 12, marginTop: 2 }}>Créée par {detail.createdBy.name}</p>}
               {detail.notes && <p style={{ color: '#6B7280', fontSize: 12, marginTop: 4 }}>{detail.notes}</p>}
             </div>
@@ -483,7 +596,10 @@ function ProcedureDetailModal({ procedureId, isDirector, isSupervisor, onClose, 
                 </div>
               )}
               <div className="space-y-1">
-                {detail.submissionDate && <p style={{ color: '#6B7280', fontSize: 12 }}>Soumission : {new Date(detail.submissionDate).toLocaleDateString('fr-FR')}</p>}
+                {detail.status === 'EN_ATTENTE_REPONSE' && detail.pendingResponseOrganization && (
+                  <p style={{ color: '#C2410C', fontSize: 12, fontWeight: 600 }}>Organisme concerné : {detail.pendingResponseOrganization}</p>
+                )}
+                {detail.submissionDate && <p style={{ color: '#6B7280', fontSize: 12 }}>Soumission (date de dépôt) : {new Date(detail.submissionDate).toLocaleDateString('fr-FR')}</p>}
                 {detail.expectedResponseDate && <p style={{ color: '#6B7280', fontSize: 12 }}>Réponse attendue : {new Date(detail.expectedResponseDate).toLocaleDateString('fr-FR')}</p>}
                 {detail.expirationDate && <p style={{ color: '#6B7280', fontSize: 12 }}>Expiration : {new Date(detail.expirationDate).toLocaleDateString('fr-FR')}</p>}
                 {detail.renewalDate && <p style={{ color: '#6B7280', fontSize: 12 }}>Renouvellement : {new Date(detail.renewalDate).toLocaleDateString('fr-FR')}</p>}
@@ -870,7 +986,10 @@ export function DemarchesAdministrativesPage() {
                   <p style={{ color: '#9CA3AF', fontSize: 12, marginTop: 2 }}>
                     {procedure.authority}
                     {procedure.referenceNumber && ` · Réf. ${procedure.referenceNumber}`}
-                    {procedure.assignedTo && ` · ${procedure.assignedTo}`}
+                    {procedureResponsibleLabel(procedure) && ` · ${procedureResponsibleLabel(procedure)}`}
+                    {procedure.assignedContact && !procedure.assignedContact.active && ' (inactif)'}
+                    {procedure.status === 'EN_ATTENTE_REPONSE' && procedure.pendingResponseOrganization &&
+                      ` · Organisme : ${procedure.pendingResponseOrganization}`}
                     {procedure.expirationDate && ` · Expiration : ${new Date(procedure.expirationDate).toLocaleDateString('fr-FR')}`}
                   </p>
                 </div>

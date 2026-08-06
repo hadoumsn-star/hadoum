@@ -14,11 +14,34 @@ import {
   BILLING_FREQUENCY_LABELS, BILLING_FREQUENCY_OPTIONS,
 } from '../config/supplierContracts.config';
 import { VALIDATION_STATUS_LABELS, VALIDATION_STATUS_STYLE } from '../config/validations.config';
+import { ContactAutocomplete } from '../components/contacts/ContactAutocomplete';
+import { categoryBadgeStyle } from '../components/contacts/contacts.utils';
+import type { ApiContactLike } from '../types/contacts.types';
 import {
   Plus, X, Search, Eye, Pencil, FileSignature, Archive, CheckCircle2,
   Upload, Paperclip, Trash2, Send, ShieldCheck, ShieldAlert, MessageSquareWarning,
-  RefreshCw, Ban, Clock, AlertTriangle,
+  RefreshCw, Ban, AlertTriangle,
 } from 'lucide-react';
+
+// Categories relevant to a contract supplier — resolved by key through
+// ContactAutocomplete's own categoryKeys prop, same set FinancesPage scopes
+// its own supplier picker to (SUPPLIER_CATEGORY_KEYS there).
+const SUPPLIER_CATEGORY_KEYS = ['FOURNISSEUR', 'PRESTATAIRE', 'COMMERCE', 'ARTISAN'];
+
+// PR 8 priority: linked Contact's name > legacy free-text snapshot.
+function contractSupplierLabel(contract: ApiSupplierContract): string {
+  return contract.supplierContact?.fullName || contract.supplierName;
+}
+
+// UX simplification: EXPIRE_BIENTOT is still computed backend-side exactly as
+// before (effectiveStatus) — it just no longer gets its own status badge/tab.
+// A contract that's expiring soon is still an active contract, so it shows
+// the normal "ACTIF" badge plus an extra orange "EXPIRE BIENTÔT" flag.
+function contractDisplayStatus(effectiveStatus: ApiContractStatus): { status: ApiContractStatus; expiringSoon: boolean } {
+  return effectiveStatus === 'EXPIRE_BIENTOT'
+    ? { status: 'ACTIF', expiringSoon: true }
+    : { status: effectiveStatus, expiringSoon: false };
+}
 
 const INPUT: React.CSSProperties = {
   width: '100%', padding: '8px 12px', borderRadius: 8,
@@ -35,7 +58,6 @@ function ContractModal({ initial, onSave, onClose }: {
 }) {
   const isEdit = !!initial;
   const [form, setForm] = useState({
-    supplierName: initial?.supplierName ?? '',
     contractName: initial?.contractName ?? '',
     category: initial?.category ?? ('AUTRE' as ApiContractCategory),
     description: initial?.description ?? '',
@@ -47,20 +69,40 @@ function ContractModal({ initial, onSave, onClose }: {
     noticePeriod: initial?.noticePeriod != null ? String(initial.noticePeriod) : '',
     amount: initial?.amount != null ? String(initial.amount) : '',
     billingFrequency: initial?.billingFrequency ?? '',
-    contactPerson: initial?.contactPerson ?? '',
-    phone: initial?.phone ?? '',
-    email: initial?.email ?? '',
-    address: initial?.address ?? '',
     notes: initial?.notes ?? '',
   });
   const set = (k: string, v: string) => setForm(p => ({ ...p, [k]: v }));
 
-  const canSave = form.supplierName.trim().length > 0 && form.contractName.trim().length > 0 && form.startDate.length > 0;
+  // Separate from `form` because ContactAutocomplete is controlled by an id
+  // + the full contact object together. `undefined` = untouched this
+  // session (omitted from the payload, existing relation left alone);
+  // `null` = explicitly cleared; a string = assigned/replaced.
+  const [supplierContactId, setSupplierContactId] = useState<string | null | undefined>(
+    initial?.supplierContactId ?? undefined,
+  );
+  const [supplierContact, setSupplierContact] = useState<ApiContactLike | null>(
+    initial?.supplierContact ?? null,
+  );
+  // A pre-PR-8 contract can have free-text supplier fields with no linked
+  // Contact. Selecting any contact in this session — even before saving —
+  // resolves that state, so the notice disappears immediately.
+  const showLegacySupplierNotice =
+    isEdit && !!initial?.supplierName && !initial?.supplierContactId && !supplierContact;
+
+  // A contract must always identify a supplier. New contracts only offer
+  // the Contact path (the free-text fields were removed from this form —
+  // see ContactAutocomplete below); an existing legacy contract can be
+  // saved untouched (supplierContactId left at its initial `undefined`) but
+  // saving is blocked once its contact link is explicitly cleared, since
+  // there is no free-text fallback left to type into.
+  const hasSupplier =
+    !!supplierContactId || (isEdit && !!initial?.supplierName && supplierContactId !== null);
+  const canSave = hasSupplier && form.contractName.trim().length > 0 && form.startDate.length > 0;
 
   const handleSave = () => {
     if (!canSave) return;
     onSave({
-      supplierName: form.supplierName.trim(),
+      supplierContactId,
       contractName: form.contractName.trim(),
       category: form.category,
       description: form.description.trim() || undefined,
@@ -72,16 +114,13 @@ function ContractModal({ initial, onSave, onClose }: {
       noticePeriod: form.noticePeriod ? parseInt(form.noticePeriod, 10) : undefined,
       amount: form.amount ? parseInt(form.amount, 10) : undefined,
       billingFrequency: form.billingFrequency ? (form.billingFrequency as CreateSupplierContractInput['billingFrequency']) : undefined,
-      contactPerson: form.contactPerson.trim() || undefined,
-      phone: form.phone.trim() || undefined,
-      email: form.email.trim() || undefined,
-      address: form.address.trim() || undefined,
       notes: form.notes.trim() || undefined,
     });
   };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      data-testid="contract-modal"
       style={{ background: 'rgba(0,0,0,0.45)' }}
       onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="w-full max-w-lg rounded-2xl overflow-hidden shadow-xl flex flex-col" style={{ background: '#FFFFFF', maxHeight: '92vh' }}>
@@ -90,15 +129,31 @@ function ContractModal({ initial, onSave, onClose }: {
           <button onClick={onClose}><X size={18} style={{ color: '#9CA3AF' }} /></button>
         </div>
         <div className="overflow-y-auto flex-1 px-6 py-5 space-y-4">
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label style={{ color: '#374151', fontSize: 12, fontWeight: 500, display: 'block', marginBottom: 5 }}>Fournisseur *</label>
-              <input value={form.supplierName} onChange={e => set('supplierName', e.target.value)} placeholder="Ex : Sénégal Gaz" style={INPUT} autoFocus />
-            </div>
-            <div>
-              <label style={{ color: '#374151', fontSize: 12, fontWeight: 500, display: 'block', marginBottom: 5 }}>Nom du contrat *</label>
-              <input value={form.contractName} onChange={e => set('contractName', e.target.value)} placeholder="Ex : Fourniture de gaz" style={INPUT} />
-            </div>
+          <div>
+            <label style={{ color: '#374151', fontSize: 12, fontWeight: 500, display: 'block', marginBottom: 5 }}>Nom du contrat *</label>
+            <input value={form.contractName} onChange={e => set('contractName', e.target.value)} placeholder="Ex : Fourniture de gaz" style={INPUT} autoFocus />
+          </div>
+          <div>
+            <ContactAutocomplete
+              label="Fournisseur *"
+              placeholder="Rechercher un fournisseur"
+              value={supplierContactId ?? null}
+              selectedContact={supplierContact}
+              onChange={contact => {
+                setSupplierContact(contact);
+                setSupplierContactId(contact?.id ?? null);
+              }}
+              allowCreate
+              includeInactiveSelected={isEdit}
+              categoryKeys={SUPPLIER_CATEGORY_KEYS}
+              required
+            />
+            {showLegacySupplierNotice && (
+              <p style={{ color: '#D97706', fontSize: 11, marginTop: 5 }}>
+                Fournisseur actuel : {initial?.supplierName}
+                {initial?.contactPerson ? ` — ${initial.contactPerson}` : ''} — non lié au répertoire
+              </p>
+            )}
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -155,26 +210,6 @@ function ContractModal({ initial, onSave, onClose }: {
             <label style={{ color: '#374151', fontSize: 12, fontWeight: 500, display: 'block', marginBottom: 5 }}>Montant (FCFA)</label>
             <input type="number" min={0} value={form.amount} onChange={e => set('amount', e.target.value)} placeholder="0" style={INPUT} />
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label style={{ color: '#374151', fontSize: 12, fontWeight: 500, display: 'block', marginBottom: 5 }}>Contact</label>
-              <input value={form.contactPerson} onChange={e => set('contactPerson', e.target.value)} placeholder="Nom du contact" style={INPUT} />
-            </div>
-            <div>
-              <label style={{ color: '#374151', fontSize: 12, fontWeight: 500, display: 'block', marginBottom: 5 }}>Téléphone</label>
-              <input value={form.phone} onChange={e => set('phone', e.target.value)} placeholder="+221 …" style={INPUT} />
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label style={{ color: '#374151', fontSize: 12, fontWeight: 500, display: 'block', marginBottom: 5 }}>Email</label>
-              <input type="email" value={form.email} onChange={e => set('email', e.target.value)} placeholder="contact@fournisseur.com" style={INPUT} />
-            </div>
-            <div>
-              <label style={{ color: '#374151', fontSize: 12, fontWeight: 500, display: 'block', marginBottom: 5 }}>Adresse</label>
-              <input value={form.address} onChange={e => set('address', e.target.value)} placeholder="Adresse du fournisseur" style={INPUT} />
-            </div>
-          </div>
           <div>
             <label style={{ color: '#374151', fontSize: 12, fontWeight: 500, display: 'block', marginBottom: 5 }}>Notes</label>
             <textarea value={form.notes} onChange={e => set('notes', e.target.value)}
@@ -225,6 +260,7 @@ function ValidationDecisionModal({ action, onConfirm, onClose }: {
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-4"
+      data-testid="validation-decision-modal"
       style={{ background: 'rgba(0,0,0,0.45)' }}
       onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="w-full max-w-sm rounded-2xl overflow-hidden shadow-xl" style={{ background: '#FFFFFF' }}>
@@ -428,13 +464,16 @@ function ContractDetailModal({ contractId, isDirector, isSupervisor, onClose, on
     );
   }
 
-  const statusStyle = CONTRACT_STATUS_STYLE[detail.effectiveStatus];
+  const { status: displayStatus, expiringSoon } = contractDisplayStatus(detail.effectiveStatus);
+  const statusStyle = CONTRACT_STATUS_STYLE[displayStatus];
+  const expiringSoonStyle = CONTRACT_STATUS_STYLE.EXPIRE_BIENTOT;
   const isPendingValidation = detail.validationStatus === 'PENDING_VALIDATION';
   const canRequestActions = isDirector && !isPendingValidation && detail.status !== 'ARCHIVE' && detail.status !== 'RESILIE';
 
   return (
     <>
       <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
+        data-testid="contract-detail-modal"
         style={{ background: 'rgba(0,0,0,0.45)' }}
         onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
         <div className="w-full max-w-lg rounded-2xl overflow-hidden shadow-xl flex flex-col" style={{ background: '#FFFFFF', maxHeight: '90vh' }}>
@@ -446,8 +485,13 @@ function ContractDetailModal({ contractId, isDirector, isSupervisor, onClose, on
                   {CONTRACT_CATEGORY_LABELS[detail.category].toUpperCase()}
                 </span>
                 <span className="px-2 py-0.5 rounded-full" style={{ background: statusStyle.bg, color: statusStyle.color, fontSize: 10, fontWeight: 700 }}>
-                  {CONTRACT_STATUS_LABELS[detail.effectiveStatus].toUpperCase()}
+                  {CONTRACT_STATUS_LABELS[displayStatus].toUpperCase()}
                 </span>
+                {expiringSoon && (
+                  <span className="px-2 py-0.5 rounded-full" style={{ background: expiringSoonStyle.bg, color: expiringSoonStyle.color, fontSize: 10, fontWeight: 700 }}>
+                    {CONTRACT_STATUS_LABELS.EXPIRE_BIENTOT.toUpperCase()}
+                  </span>
+                )}
                 {detail.validationStatus && (
                   <span className="px-2 py-0.5 rounded-full"
                     style={{ background: VALIDATION_STATUS_STYLE[detail.validationStatus].bg, color: VALIDATION_STATUS_STYLE[detail.validationStatus].color, fontSize: 10, fontWeight: 700 }}>
@@ -456,7 +500,7 @@ function ContractDetailModal({ contractId, isDirector, isSupervisor, onClose, on
                 )}
               </div>
               <h3 style={{ color: '#1A1A1A', fontSize: 16, fontWeight: 700 }}>{detail.contractName}</h3>
-              <p style={{ color: '#9CA3AF', fontSize: 12, marginTop: 2 }}>{detail.supplierName}</p>
+              <p style={{ color: '#9CA3AF', fontSize: 12, marginTop: 2 }}>{contractSupplierLabel(detail)}</p>
             </div>
             <button onClick={onClose} className="p-1 rounded-md hover:bg-gray-100 flex-shrink-0">
               <X size={18} style={{ color: '#9CA3AF' }} />
@@ -474,10 +518,32 @@ function ContractDetailModal({ contractId, isDirector, isSupervisor, onClose, on
                 {detail.endDate && ` · Fin : ${new Date(detail.endDate).toLocaleDateString('fr-FR')}`}
               </p>
               {detail.amount != null && <p style={{ color: '#6B7280', fontSize: 12, marginTop: 2 }}>Montant : {detail.amount.toLocaleString('fr-FR')} FCFA</p>}
-              {(detail.contactPerson || detail.phone || detail.email) && (
-                <p style={{ color: '#6B7280', fontSize: 12, marginTop: 2 }}>
-                  {[detail.contactPerson, detail.phone, detail.email].filter(Boolean).join(' · ')}
-                </p>
+              {(detail.supplierContact || detail.supplierName) && (
+                <div style={{ marginTop: 6 }}>
+                  <p style={{ color: '#6B7280', fontSize: 12 }}>
+                    Fournisseur : {contractSupplierLabel(detail)}
+                    {detail.supplierContact && !detail.supplierContact.active && (
+                      <span className="ml-1.5 px-1.5 py-0.5 rounded-full" style={{ background: '#FEF2F2', color: '#B91C1C', fontSize: 9, fontWeight: 700 }}>
+                        INACTIF
+                      </span>
+                    )}
+                  </p>
+                  {detail.supplierContact?.organization && (
+                    <p style={{ color: '#9CA3AF', fontSize: 11, marginTop: 1 }}>{detail.supplierContact.organization}</p>
+                  )}
+                  {detail.supplierContact?.category && (
+                    <span className="inline-block mt-1 px-1.5 py-0.5 rounded-full"
+                      style={{ ...categoryBadgeStyle(detail.supplierContact.category.color), fontSize: 9, fontWeight: 700 }}>
+                      {detail.supplierContact.category.label.toUpperCase()}
+                    </span>
+                  )}
+                  {(detail.supplierContact?.phone ?? detail.phone) && (
+                    <p style={{ color: '#9CA3AF', fontSize: 11, marginTop: 1 }}>Tél : {detail.supplierContact?.phone ?? detail.phone}</p>
+                  )}
+                  {(detail.supplierContact?.email ?? detail.email) && (
+                    <p style={{ color: '#9CA3AF', fontSize: 11, marginTop: 1 }}>Email : {detail.supplierContact?.email ?? detail.email}</p>
+                  )}
+                </div>
               )}
               {detail.notes && <p style={{ color: '#6B7280', fontSize: 12, marginTop: 4 }}>{detail.notes}</p>}
             </div>
@@ -634,7 +700,7 @@ function ContractDetailModal({ contractId, isDirector, isSupervisor, onClose, on
 
 // ─── Main Page ─────────────────────────────────────────────────────────────────
 
-type StatusTab = 'active' | 'expiring_soon' | 'expired' | 'pending_validation' | 'all';
+type StatusTab = 'active' | 'expired' | 'pending_validation' | 'all';
 
 export function SupplierContractsPage() {
   const { user } = useAuth();
@@ -657,21 +723,23 @@ export function SupplierContractsPage() {
   }, []);
 
   const visible = contracts.filter(c => {
-    if (statusTab === 'active' && c.effectiveStatus !== 'ACTIF') return false;
-    if (statusTab === 'expiring_soon' && c.effectiveStatus !== 'EXPIRE_BIENTOT') return false;
+    // "Expirant bientôt" is no longer a separate bucket — those contracts are
+    // still ACTIF (effectiveStatus computation is unchanged) and simply carry
+    // an extra badge (see contractDisplayStatus), so the Actifs tab already
+    // includes them.
+    if (statusTab === 'active' && c.effectiveStatus !== 'ACTIF' && c.effectiveStatus !== 'EXPIRE_BIENTOT') return false;
     if (statusTab === 'expired' && c.effectiveStatus !== 'EXPIRE') return false;
     if (statusTab === 'pending_validation' && c.validationStatus !== 'PENDING_VALIDATION') return false;
     if (categoryFilter !== 'all' && c.category !== categoryFilter) return false;
     if (search.trim()) {
       const q = search.trim().toLowerCase();
-      if (!c.supplierName.toLowerCase().includes(q) && !c.contractName.toLowerCase().includes(q)) return false;
+      if (!contractSupplierLabel(c).toLowerCase().includes(q) && !c.contractName.toLowerCase().includes(q)) return false;
     }
     return true;
   });
 
   const counts = {
-    active: contracts.filter(c => c.effectiveStatus === 'ACTIF').length,
-    expiring_soon: contracts.filter(c => c.effectiveStatus === 'EXPIRE_BIENTOT').length,
+    active: contracts.filter(c => c.effectiveStatus === 'ACTIF' || c.effectiveStatus === 'EXPIRE_BIENTOT').length,
     expired: contracts.filter(c => c.effectiveStatus === 'EXPIRE').length,
     pending_validation: contracts.filter(c => c.validationStatus === 'PENDING_VALIDATION').length,
     all: contracts.length,
@@ -682,11 +750,13 @@ export function SupplierContractsPage() {
       const created = await supplierContractsApi.create(data);
       setContracts(prev => [created, ...prev]);
       setShowCreate(false);
-      toast.success(
-        created.status === 'BROUILLON'
-          ? 'Contrat créé en brouillon — montant élevé, validation requise avant activation.'
-          : 'Contrat créé.',
-      );
+      // Every new contract now enters the validation workflow automatically
+      // (backend: SupplierContractsService#create) — no more "low amount ->
+      // straight to ACTIF" branch, so this message is no longer conditional.
+      toast.success('Contrat créé et envoyé pour validation.');
+      // Switches straight to the tab showing it — "the new contract appears
+      // directly under 'En attente de validation'" without an extra click.
+      setStatusTab('pending_validation');
     } catch {
       toast.error('Erreur lors de la création du contrat.');
     }
@@ -706,7 +776,6 @@ export function SupplierContractsPage() {
 
   const STATUS_TABS: { key: StatusTab; label: string; icon: React.ElementType }[] = [
     { key: 'active',              label: 'Actifs',                    icon: CheckCircle2 },
-    { key: 'expiring_soon',       label: 'Expirant bientôt',          icon: Clock },
     { key: 'expired',              label: 'Expirés',                   icon: AlertTriangle },
     { key: 'pending_validation',  label: 'En attente de validation',  icon: Send },
     { key: 'all',                  label: 'Tous',                       icon: FileSignature },
@@ -731,11 +800,12 @@ export function SupplierContractsPage() {
         )}
       </div>
 
-      {/* KPI widgets */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      {/* KPI widgets — "Expirant bientôt" removed as its own card; those
+          contracts stay counted under Actifs and get an orange badge instead
+          (see contractDisplayStatus). */}
+      <div className="grid grid-cols-3 gap-3">
         {[
           { label: 'Actifs',                 value: counts.active,             color: '#065F46', bg: '#ECFDF5', icon: CheckCircle2 },
-          { label: 'Expirant bientôt',       value: counts.expiring_soon,      color: '#D97706', bg: '#FFFBEB', icon: Clock },
           { label: 'Expirés',                 value: counts.expired,            color: '#B91C1C', bg: '#FEF2F2', icon: AlertTriangle },
           { label: 'En attente de validation', value: counts.pending_validation, color: '#7C3AED', bg: '#F5F3FF', icon: Send },
         ].map(kpi => (
@@ -794,7 +864,9 @@ export function SupplierContractsPage() {
             <p style={{ color: '#374151', fontSize: 14, fontWeight: 500 }}>Aucun contrat dans cette catégorie</p>
           </div>
         ) : visible.map(contract => {
-          const statusStyle = CONTRACT_STATUS_STYLE[contract.effectiveStatus];
+          const { status: displayStatus, expiringSoon } = contractDisplayStatus(contract.effectiveStatus);
+          const statusStyle = CONTRACT_STATUS_STYLE[displayStatus];
+          const expiringSoonStyle = CONTRACT_STATUS_STYLE.EXPIRE_BIENTOT;
           return (
             <div key={contract.id} className="rounded-xl p-5 cursor-pointer hover:shadow-md transition-shadow"
               style={{ background: '#FFFFFF', border: `1px solid ${contract.effectiveStatus === 'EXPIRE' ? '#FECACA' : '#E5E7EB'}` }}
@@ -806,8 +878,13 @@ export function SupplierContractsPage() {
                       {CONTRACT_CATEGORY_LABELS[contract.category].toUpperCase()}
                     </span>
                     <span className="px-2 py-0.5 rounded-full" style={{ background: statusStyle.bg, color: statusStyle.color, fontSize: 10, fontWeight: 700 }}>
-                      {CONTRACT_STATUS_LABELS[contract.effectiveStatus].toUpperCase()}
+                      {CONTRACT_STATUS_LABELS[displayStatus].toUpperCase()}
                     </span>
+                    {expiringSoon && (
+                      <span className="px-2 py-0.5 rounded-full" style={{ background: expiringSoonStyle.bg, color: expiringSoonStyle.color, fontSize: 10, fontWeight: 700 }}>
+                        {CONTRACT_STATUS_LABELS.EXPIRE_BIENTOT.toUpperCase()}
+                      </span>
+                    )}
                     {contract.validationStatus && (
                       <span className="px-2 py-0.5 rounded-full"
                         style={{ background: VALIDATION_STATUS_STYLE[contract.validationStatus].bg, color: VALIDATION_STATUS_STYLE[contract.validationStatus].color, fontSize: 10, fontWeight: 700 }}>
@@ -817,9 +894,21 @@ export function SupplierContractsPage() {
                   </div>
                   <p style={{ color: '#1A1A1A', fontSize: 14, fontWeight: 600 }}>{contract.contractName}</p>
                   <p style={{ color: '#9CA3AF', fontSize: 12, marginTop: 2 }}>
-                    {contract.supplierName}
+                    {contractSupplierLabel(contract)}
+                    {contract.supplierContact && !contract.supplierContact.active && ' (inactif)'}
                     {contract.endDate && ` · Fin : ${new Date(contract.endDate).toLocaleDateString('fr-FR')}`}
                   </p>
+                  {/* Pending-validation contracts get a triage-ready summary
+                      line — start date and amount — without opening "Voir".
+                      Submitter/submission date live in the validation
+                      history there (same as every other resource type's
+                      pattern in this app). */}
+                  {contract.validationStatus === 'PENDING_VALIDATION' && (
+                    <p style={{ color: '#9CA3AF', fontSize: 12, marginTop: 2 }}>
+                      Début : {new Date(contract.startDate).toLocaleDateString('fr-FR')}
+                      {contract.amount != null && ` · Montant : ${contract.amount.toLocaleString('fr-FR')} FCFA`}
+                    </p>
+                  )}
                 </div>
                 <button
                   onClick={e => { e.stopPropagation(); setDetailId(contract.id); }}

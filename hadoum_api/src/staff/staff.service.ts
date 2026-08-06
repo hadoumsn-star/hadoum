@@ -1,7 +1,11 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { UploadService } from '../upload/upload.service';
-import { StaffStatus, CandidateStatus } from '@prisma/client';
+import {
+  StaffStatus,
+  CandidateStatus,
+  StaffPresenceStatus,
+} from '@prisma/client';
 
 @Injectable()
 export class StaffService {
@@ -269,6 +273,105 @@ export class StaffService {
       this.prisma.staffMember.delete({ where: { id } }),
     ]);
     return former;
+  }
+
+  // ─── Daily presence confirmation (PR 10) ───────────────────────────────────
+  // Distinct from the StaffAttendance (Congé/Retard/Absence) leave records
+  // above: this is a same-day "did this person show up" confirmation, made
+  // by the DIRECTOR. A row only exists once confirmed — see the
+  // StaffPresenceConfirmation model's own comment for why "non confirmée"
+  // is never itself stored.
+
+  private dayBounds(dateStr: string): { start: Date; end: Date } {
+    const start = new Date(dateStr);
+    const end = new Date(start);
+    end.setHours(23, 59, 59, 999);
+    return { start, end };
+  }
+
+  async listDailyPresence(dateStr: string) {
+    const { start, end } = this.dayBounds(dateStr);
+
+    const [staff, confirmations, onLeave] = await Promise.all([
+      this.prisma.staffMember.findMany({
+        orderBy: [{ firstName: 'asc' }, { lastName: 'asc' }],
+      }),
+      this.prisma.staffPresenceConfirmation.findMany({
+        where: { date: start },
+        include: { confirmedBy: { select: { id: true, name: true } } },
+      }),
+      this.prisma.staffAttendance.findMany({
+        where: {
+          type: { in: ['absence', 'conge'] },
+          dateDebut: { lte: end },
+          OR: [{ dateFin: null }, { dateFin: { gte: start } }],
+        },
+      }),
+    ]);
+
+    const confirmationByStaff = new Map(
+      confirmations.map((c) => [c.staffId, c]),
+    );
+    const onLeaveByStaff = new Map(onLeave.map((a) => [a.staffId, a.type]));
+
+    const entries = staff.map((m) => {
+      const confirmation = confirmationByStaff.get(m.id);
+      return {
+        staffId: m.id,
+        firstName: m.firstName,
+        lastName: m.lastName,
+        role: m.role,
+        onLeave: onLeaveByStaff.get(m.id) ?? null,
+        status: confirmation?.status ?? ('NON_CONFIRMED' as const),
+        confirmedBy: confirmation?.confirmedBy ?? null,
+        confirmedAt: confirmation?.updatedAt ?? null,
+      };
+    });
+
+    return {
+      date: dateStr,
+      entries,
+      // A staff member currently on Congé/Absence (`onLeave` set — see
+      // above) is not eligible for daily presence confirmation at all: they
+      // are not expected to show up, so an absent confirmation would be
+      // meaningless and leaving them counted here inflated "non confirmées"
+      // with people who were never actually pending a decision. Excluded
+      // from this count the same way `entries` itself never excludes them
+      // (the row still shows, flagged via `onLeave`, in the UI) — only the
+      // *count* changes.
+      nonConfirmedCount: entries.filter(
+        (e) => e.status === 'NON_CONFIRMED' && !e.onLeave,
+      ).length,
+    };
+  }
+
+  async confirmPresence(
+    staffId: string,
+    dateStr: string,
+    status: StaffPresenceStatus,
+    confirmedById: string,
+  ) {
+    await this.prisma.staffMember.findUniqueOrThrow({ where: { id: staffId } });
+    const { start: date } = this.dayBounds(dateStr);
+    return this.prisma.staffPresenceConfirmation.upsert({
+      where: { staffId_date: { staffId, date } },
+      create: {
+        staffId,
+        date,
+        status,
+        confirmed: status === 'PRESENT',
+        confirmedById,
+      },
+      update: { status, confirmed: status === 'PRESENT', confirmedById },
+      include: { confirmedBy: { select: { id: true, name: true } } },
+    });
+  }
+
+  async resetPresence(staffId: string, dateStr: string): Promise<void> {
+    const { start: date } = this.dayBounds(dateStr);
+    await this.prisma.staffPresenceConfirmation.deleteMany({
+      where: { staffId, date },
+    });
   }
 
   // ─── Candidates ────────────────────────────────────────────────────────────

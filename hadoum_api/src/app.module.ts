@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto';
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { LoggerModule } from 'nestjs-pino';
 import { AppController } from './app.controller';
@@ -26,6 +26,11 @@ import { StockItemsModule } from './stock-items/stock-items.module';
 import { InventoryAssetsModule } from './inventory-assets/inventory-assets.module';
 import { EntryLogsModule } from './entry-logs/entry-logs.module';
 import { GoodsMovementLogsModule } from './goods-movement-logs/goods-movement-logs.module';
+import { ActivitiesModule } from './activities/activities.module';
+import { FundRequestsModule } from './fund-requests/fund-requests.module';
+import { ContactsModule } from './contacts/contacts.module';
+import { AuditLogsModule } from './audit-logs/audit-logs.module';
+import { AuditLogInterceptor } from './audit-logs/interceptors/audit-log.interceptor';
 
 @Module({
   imports: [
@@ -85,8 +90,19 @@ import { GoodsMovementLogsModule } from './goods-movement-logs/goods-movement-lo
     InventoryAssetsModule,
     EntryLogsModule,
     GoodsMovementLogsModule,
+    ActivitiesModule,
+    FundRequestsModule,
+    ContactsModule,
+    AuditLogsModule,
   ],
   controllers: [AppController],
-  providers: [AppService, { provide: APP_GUARD, useClass: ThrottlerGuard }],
+  providers: [
+    AppService,
+    { provide: APP_GUARD, useClass: ThrottlerGuard },
+    // PR 13: generic audit trail. Global so every @Audited(...) route across
+    // every module is covered from one registration; routes without the
+    // decorator are completely unaffected (see AuditLogInterceptor).
+    { provide: APP_INTERCEPTOR, useClass: AuditLogInterceptor },
+  ],
 })
 export class AppModule {}

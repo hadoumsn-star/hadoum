@@ -1,36 +1,40 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  NotFoundException,
+} from '@nestjs/common';
 import { StockItemsService } from './stock-items.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { UploadService } from '../upload/upload.service';
 import { ValidationsService } from '../validations/validations.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { StockMovementsService } from '../stock-movements/stock-movements.service';
+import { withMockTransaction } from '../test-utils/mock-prisma';
+import {
+  matching,
+  stringContaining,
+  matchAnything,
+} from '../test-utils/jest-matchers';
 
 function createMockPrisma() {
-  const stockItem = {
-    create: jest.fn(),
-    update: jest.fn(),
-    updateMany: jest.fn(),
-    findMany: jest.fn(),
-    findUnique: jest.fn(),
-    findUniqueOrThrow: jest.fn(),
-  };
-  const stockItemDocument = {
-    create: jest.fn(),
-    findMany: jest.fn(),
-    findUnique: jest.fn(),
-    delete: jest.fn(),
-  };
-  const notification = { findFirst: jest.fn() };
-
-  const prisma: any = {
-    stockItem,
-    stockItemDocument,
-    notification,
-    $transaction: jest.fn((cb: (tx: unknown) => unknown) => cb(prisma)),
-  };
-  return prisma;
+  return withMockTransaction({
+    stockItem: {
+      create: jest.fn(),
+      update: jest.fn(),
+      updateMany: jest.fn(),
+      findMany: jest.fn(),
+      findUnique: jest.fn(),
+      findUniqueOrThrow: jest.fn(),
+    },
+    stockItemDocument: {
+      create: jest.fn(),
+      findMany: jest.fn(),
+      findUnique: jest.fn(),
+      delete: jest.fn(),
+    },
+    notification: { findFirst: jest.fn() },
+  });
 }
 
 describe('StockItemsService', () => {
@@ -45,7 +49,11 @@ describe('StockItemsService', () => {
   };
   let notifications: { create: jest.Mock; createForRole: jest.Mock };
   let movements: { record: jest.Mock; findAll: jest.Mock };
-  let upload: { upload: jest.Mock; getPresignedUrl: jest.Mock; deleteFile: jest.Mock };
+  let upload: {
+    upload: jest.Mock;
+    getPresignedUrl: jest.Mock;
+    deleteFile: jest.Mock;
+  };
 
   const baseItem = {
     id: 'item-1',
@@ -87,7 +95,11 @@ describe('StockItemsService', () => {
     };
     notifications = { create: jest.fn(), createForRole: jest.fn() };
     movements = { record: jest.fn(), findAll: jest.fn() };
-    upload = { upload: jest.fn(), getPresignedUrl: jest.fn(), deleteFile: jest.fn() };
+    upload = {
+      upload: jest.fn(),
+      getPresignedUrl: jest.fn(),
+      deleteFile: jest.fn(),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -104,7 +116,10 @@ describe('StockItemsService', () => {
 
   describe('create', () => {
     it('creates a stock item without an initial quantity movement', async () => {
-      prisma.stockItem.create.mockResolvedValue({ ...baseItem, currentQuantity: 0 });
+      prisma.stockItem.create.mockResolvedValue({
+        ...baseItem,
+        currentQuantity: 0,
+      });
 
       const result = await service.create(
         { name: 'x', category: 'ALIMENTAIRE', unit: 'SAC' } as any,
@@ -116,17 +131,32 @@ describe('StockItemsService', () => {
     });
 
     it('records an ENTREE movement when an initial quantity is given', async () => {
-      prisma.stockItem.create.mockResolvedValue({ ...baseItem, currentQuantity: 0 });
-      prisma.stockItem.update.mockResolvedValue({ ...baseItem, currentQuantity: 100 });
+      prisma.stockItem.create.mockResolvedValue({
+        ...baseItem,
+        currentQuantity: 0,
+      });
+      prisma.stockItem.update.mockResolvedValue({
+        ...baseItem,
+        currentQuantity: 100,
+      });
 
       await service.create(
-        { name: 'x', category: 'ALIMENTAIRE', unit: 'SAC', initialQuantity: 100 } as any,
+        {
+          name: 'x',
+          category: 'ALIMENTAIRE',
+          unit: 'SAC',
+          initialQuantity: 100,
+        } as any,
         'director-1',
       );
 
       expect(movements.record).toHaveBeenCalledWith(
         prisma,
-        expect.objectContaining({ type: 'ENTREE', quantity: 100, quantityBefore: 0 }),
+        matching({
+          type: 'ENTREE',
+          quantity: 100,
+          quantityBefore: 0,
+        }),
       );
     });
   });
@@ -134,11 +164,16 @@ describe('StockItemsService', () => {
   describe('findOne', () => {
     it('throws NotFoundException for a missing item', async () => {
       prisma.stockItem.findUnique.mockResolvedValue(null);
-      await expect(service.findOne('missing')).rejects.toBeInstanceOf(NotFoundException);
+      await expect(service.findOne('missing')).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
     });
 
     it('computes derived fields on the happy path', async () => {
-      prisma.stockItem.findUnique.mockResolvedValue({ ...baseItem, currentQuantity: 5 });
+      prisma.stockItem.findUnique.mockResolvedValue({
+        ...baseItem,
+        currentQuantity: 5,
+      });
       const result = await service.findOne('item-1');
       // currentQuantity(5) <= minimumQuantity(10) -> low stock
       expect(result.isLowStock).toBe(true);
@@ -148,7 +183,10 @@ describe('StockItemsService', () => {
 
   describe('archive (smart gating)', () => {
     it('archives directly when stock is already empty', async () => {
-      prisma.stockItem.findUnique.mockResolvedValue({ ...baseItem, currentQuantity: 0 });
+      prisma.stockItem.findUnique.mockResolvedValue({
+        ...baseItem,
+        currentQuantity: 0,
+      });
       prisma.stockItem.update.mockResolvedValue({
         ...baseItem,
         currentQuantity: 0,
@@ -163,7 +201,10 @@ describe('StockItemsService', () => {
     });
 
     it('routes through validation when stock remains', async () => {
-      prisma.stockItem.findUnique.mockResolvedValue({ ...baseItem, currentQuantity: 40 });
+      prisma.stockItem.findUnique.mockResolvedValue({
+        ...baseItem,
+        currentQuantity: 40,
+      });
       prisma.stockItem.update.mockResolvedValue({
         ...baseItem,
         currentQuantity: 40,
@@ -174,20 +215,26 @@ describe('StockItemsService', () => {
       const result = await service.archive('item-1', 'director-1');
 
       expect(validations.create).toHaveBeenCalledWith(
-        expect.objectContaining({ resourceType: 'STOCK_ITEM', resourceId: 'item-1' }),
+        matching({
+          resourceType: 'STOCK_ITEM',
+          resourceId: 'item-1',
+        }),
       );
       expect(notifications.createForRole).toHaveBeenCalledWith(
         'SUPERVISOR',
-        expect.objectContaining({ type: 'VALIDATION_SUBMITTED' }),
+        matching({ type: 'VALIDATION_SUBMITTED' }),
       );
       expect(result.pendingValidationAction).toBe('STOCK_ITEM_ARCHIVE');
     });
 
     it('refuses to re-archive an already archived item', async () => {
-      prisma.stockItem.findUnique.mockResolvedValue({ ...baseItem, isActive: false });
-      await expect(service.archive('item-1', 'director-1')).rejects.toBeInstanceOf(
-        ConflictException,
-      );
+      prisma.stockItem.findUnique.mockResolvedValue({
+        ...baseItem,
+        isActive: false,
+      });
+      await expect(
+        service.archive('item-1', 'director-1'),
+      ).rejects.toBeInstanceOf(ConflictException);
     });
 
     it('refuses to archive while a validation is already pending', async () => {
@@ -195,9 +242,9 @@ describe('StockItemsService', () => {
         ...baseItem,
         validationStatus: 'PENDING_VALIDATION',
       });
-      await expect(service.archive('item-1', 'director-1')).rejects.toBeInstanceOf(
-        ConflictException,
-      );
+      await expect(
+        service.archive('item-1', 'director-1'),
+      ).rejects.toBeInstanceOf(ConflictException);
     });
   });
 
@@ -209,23 +256,29 @@ describe('StockItemsService', () => {
         unitCost: null, // avoid the value-based sensitivity threshold
       });
       prisma.stockItem.updateMany.mockResolvedValue({ count: 1 });
-      prisma.stockItem.findUniqueOrThrow.mockResolvedValue({ ...baseItem, currentQuantity: 90 });
+      prisma.stockItem.findUniqueOrThrow.mockResolvedValue({
+        ...baseItem,
+        currentQuantity: 90,
+      });
 
       const result = await service.createExit('item-1', 'director-1', {
         quantity: 10,
         destination: 'Cuisine',
-      } as any);
+      });
 
       expect(result.currentQuantity).toBe(90);
       expect(validations.create).not.toHaveBeenCalled();
       expect(movements.record).toHaveBeenCalledWith(
         prisma,
-        expect.objectContaining({ type: 'SORTIE', quantity: 10 }),
+        matching({ type: 'SORTIE', quantity: 10 }),
       );
     });
 
     it('rejects an exit larger than the available quantity', async () => {
-      prisma.stockItem.findUnique.mockResolvedValue({ ...baseItem, currentQuantity: 5 });
+      prisma.stockItem.findUnique.mockResolvedValue({
+        ...baseItem,
+        currentQuantity: 5,
+      });
       await expect(
         service.createExit('item-1', 'director-1', { quantity: 10 } as any),
       ).rejects.toBeInstanceOf(ConflictException);
@@ -233,7 +286,10 @@ describe('StockItemsService', () => {
     });
 
     it('routes a large-quantity exit through validation instead of applying it directly', async () => {
-      prisma.stockItem.findUnique.mockResolvedValue({ ...baseItem, currentQuantity: 200 });
+      prisma.stockItem.findUnique.mockResolvedValue({
+        ...baseItem,
+        currentQuantity: 200,
+      });
       prisma.stockItem.update.mockResolvedValue({
         ...baseItem,
         currentQuantity: 200,
@@ -243,7 +299,7 @@ describe('StockItemsService', () => {
 
       const result = await service.createExit('item-1', 'director-1', {
         quantity: 80, // > STOCK_EXIT_LARGE_QUANTITY_THRESHOLD (50)
-      } as any);
+      });
 
       expect(prisma.stockItem.updateMany).not.toHaveBeenCalled();
       expect(validations.create).toHaveBeenCalled();
@@ -262,7 +318,7 @@ describe('StockItemsService', () => {
         pendingValidationAction: 'LARGE_STOCK_EXIT',
       });
 
-      await service.createExit('item-1', 'director-1', { quantity: 10 } as any);
+      await service.createExit('item-1', 'director-1', { quantity: 10 });
 
       expect(validations.create).toHaveBeenCalled();
     });
@@ -293,7 +349,10 @@ describe('StockItemsService', () => {
     });
 
     it('refuses movement on an archived item', async () => {
-      prisma.stockItem.findUnique.mockResolvedValue({ ...baseItem, isActive: false });
+      prisma.stockItem.findUnique.mockResolvedValue({
+        ...baseItem,
+        isActive: false,
+      });
       await expect(
         service.createExit('item-1', 'director-1', { quantity: 1 } as any),
       ).rejects.toBeInstanceOf(ConflictException);
@@ -304,7 +363,9 @@ describe('StockItemsService', () => {
     it('rejects a zero-quantity adjustment', async () => {
       prisma.stockItem.findUnique.mockResolvedValue({ ...baseItem });
       await expect(
-        service.createAdjustment('item-1', 'director-1', { quantityDelta: 0 } as any),
+        service.createAdjustment('item-1', 'director-1', {
+          quantityDelta: 0,
+        } as any),
       ).rejects.toBeInstanceOf(BadRequestException);
     });
 
@@ -319,25 +380,41 @@ describe('StockItemsService', () => {
     });
 
     it('rejects an adjustment that would push stock below zero', async () => {
-      prisma.stockItem.findUnique.mockResolvedValue({ ...baseItem, currentQuantity: 5 });
+      prisma.stockItem.findUnique.mockResolvedValue({
+        ...baseItem,
+        currentQuantity: 5,
+      });
       await expect(
-        service.createAdjustment('item-1', 'director-1', { quantityDelta: -10 } as any),
+        service.createAdjustment('item-1', 'director-1', {
+          quantityDelta: -10,
+        } as any),
       ).rejects.toBeInstanceOf(ConflictException);
     });
 
     it('applies a small negative adjustment directly (below the sensitive percentage)', async () => {
-      prisma.stockItem.findUnique.mockResolvedValue({ ...baseItem, currentQuantity: 100 });
+      prisma.stockItem.findUnique.mockResolvedValue({
+        ...baseItem,
+        currentQuantity: 100,
+      });
       prisma.stockItem.updateMany.mockResolvedValue({ count: 1 });
-      prisma.stockItem.findUniqueOrThrow.mockResolvedValue({ ...baseItem, currentQuantity: 95 });
+      prisma.stockItem.findUniqueOrThrow.mockResolvedValue({
+        ...baseItem,
+        currentQuantity: 95,
+      });
 
-      await service.createAdjustment('item-1', 'director-1', { quantityDelta: -5 } as any);
+      await service.createAdjustment('item-1', 'director-1', {
+        quantityDelta: -5,
+      } as any);
 
       expect(validations.create).not.toHaveBeenCalled();
       expect(prisma.stockItem.updateMany).toHaveBeenCalled();
     });
 
     it('routes a large negative adjustment (>20%) through validation', async () => {
-      prisma.stockItem.findUnique.mockResolvedValue({ ...baseItem, currentQuantity: 100 });
+      prisma.stockItem.findUnique.mockResolvedValue({
+        ...baseItem,
+        currentQuantity: 100,
+      });
       prisma.stockItem.update.mockResolvedValue({
         ...baseItem,
         validationStatus: 'PENDING_VALIDATION',
@@ -370,16 +447,19 @@ describe('StockItemsService', () => {
         currentQuantity: 20,
       });
 
-      const result = await service.approve('item-1', 'supervisor-1', {} as any);
+      const result = await service.approve('item-1', 'supervisor-1', {});
 
       expect(prisma.stockItem.updateMany).toHaveBeenCalledWith(
-        expect.objectContaining({
+        matching({
           where: { id: 'item-1', currentQuantity: { gte: 80 } },
         }),
       );
       expect(movements.record).toHaveBeenCalled();
       expect(notifications.create).toHaveBeenCalledWith(
-        expect.objectContaining({ type: 'VALIDATION_APPROVED', recipientId: 'director-1' }),
+        matching({
+          type: 'VALIDATION_APPROVED',
+          recipientId: 'director-1',
+        }),
       );
       expect(result.currentQuantity).toBe(20);
     });
@@ -389,13 +469,19 @@ describe('StockItemsService', () => {
         ...baseItem,
         validationStatus: 'PENDING_VALIDATION',
         pendingValidationAction: 'STOCK_ITEM_ARCHIVE',
-        pendingValidationPayload: { quantity: 0, movementType: 'AJUSTEMENT_POSITIF' },
+        pendingValidationPayload: {
+          quantity: 0,
+          movementType: 'AJUSTEMENT_POSITIF',
+        },
       };
       prisma.stockItem.findUnique.mockResolvedValue(pendingItem);
       validations.approve.mockResolvedValue({ submittedById: 'director-1' });
-      prisma.stockItem.update.mockResolvedValue({ ...pendingItem, isActive: false });
+      prisma.stockItem.update.mockResolvedValue({
+        ...pendingItem,
+        isActive: false,
+      });
 
-      const result = await service.approve('item-1', 'supervisor-1', {} as any);
+      const result = await service.approve('item-1', 'supervisor-1', {});
 
       expect(result.isActive).toBe(false);
       expect(movements.record).not.toHaveBeenCalled();
@@ -419,7 +505,10 @@ describe('StockItemsService', () => {
     });
 
     it('throws a conflict when there is no pending action to approve', async () => {
-      prisma.stockItem.findUnique.mockResolvedValue({ ...baseItem, pendingValidationAction: null });
+      prisma.stockItem.findUnique.mockResolvedValue({
+        ...baseItem,
+        pendingValidationAction: null,
+      });
       await expect(
         service.approve('item-1', 'supervisor-1', {} as any),
       ).rejects.toBeInstanceOf(ConflictException);
@@ -430,29 +519,34 @@ describe('StockItemsService', () => {
     it('rejects a pending validation and notifies the submitter', async () => {
       prisma.stockItem.findUnique.mockResolvedValue(baseItem);
       validations.reject.mockResolvedValue({ submittedById: 'director-1' });
-      prisma.stockItem.update.mockResolvedValue({ ...baseItem, validationStatus: 'REJECTED' });
+      prisma.stockItem.update.mockResolvedValue({
+        ...baseItem,
+        validationStatus: 'REJECTED',
+      });
 
-      const result = await service.reject('item-1', 'supervisor-1', { comment: 'No' } as any);
+      const result = await service.reject('item-1', 'supervisor-1', {
+        comment: 'No',
+      });
 
       expect(result.validationStatus).toBe('REJECTED');
       expect(notifications.create).toHaveBeenCalledWith(
-        expect.objectContaining({ type: 'VALIDATION_REJECTED' }),
+        matching({ type: 'VALIDATION_REJECTED' }),
       );
     });
 
     it('requests changes and notifies the submitter', async () => {
       prisma.stockItem.findUnique.mockResolvedValue(baseItem);
-      validations.requestChanges.mockResolvedValue({ submittedById: 'director-1' });
+      validations.requestChanges.mockResolvedValue({
+        submittedById: 'director-1',
+      });
       prisma.stockItem.update.mockResolvedValue({
         ...baseItem,
         validationStatus: 'CHANGES_REQUESTED',
       });
 
-      const result = await service.requestChanges(
-        'item-1',
-        'supervisor-1',
-        { comment: 'clarify' } as any,
-      );
+      const result = await service.requestChanges('item-1', 'supervisor-1', {
+        comment: 'clarify',
+      });
 
       expect(result.validationStatus).toBe('CHANGES_REQUESTED');
     });
@@ -464,41 +558,53 @@ describe('StockItemsService', () => {
       const healthy = { ...baseItem, id: 'i-ok', currentQuantity: 100 };
       prisma.stockItem.findMany.mockResolvedValue([healthy, outOfStock]);
 
-      const result = await service.findAll({ search: 'riz', category: 'ALIMENTAIRE' } as any);
+      const result = await service.findAll({
+        search: 'riz',
+        category: 'ALIMENTAIRE',
+      } as any);
 
       expect(prisma.stockItem.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: expect.objectContaining({ category: 'ALIMENTAIRE' }),
+        matching({
+          where: matching({ category: 'ALIMENTAIRE' }),
         }),
       );
       expect(result[0].id).toBe('i-out');
     });
 
     it('filters to only low-stock items when requested', async () => {
-      const low = { ...baseItem, id: 'i-low', currentQuantity: 5, minimumQuantity: 10 };
+      const low = {
+        ...baseItem,
+        id: 'i-low',
+        currentQuantity: 5,
+        minimumQuantity: 10,
+      };
       const healthy = { ...baseItem, id: 'i-ok', currentQuantity: 100 };
       prisma.stockItem.findMany.mockResolvedValue([healthy, low]);
 
-      const result = await service.findAll({ lowStock: true } as any);
+      const result = await service.findAll({ lowStock: true });
 
       expect(result).toHaveLength(1);
       expect(result[0].id).toBe('i-low');
     });
 
     it('sends exactly one stock-out notification per item (dedup guard)', async () => {
-      prisma.stockItem.findMany.mockResolvedValue([{ ...baseItem, currentQuantity: 0 }]);
+      prisma.stockItem.findMany.mockResolvedValue([
+        { ...baseItem, currentQuantity: 0 },
+      ]);
       prisma.notification.findFirst.mockResolvedValue(null);
 
       await service.findAll({});
 
       expect(notifications.createForRole).toHaveBeenCalledWith(
         'DIRECTOR',
-        expect.objectContaining({ type: 'STOCK_OUT' }),
+        matching({ type: 'STOCK_OUT' }),
       );
     });
 
     it('does not re-notify a stock-out already notified', async () => {
-      prisma.stockItem.findMany.mockResolvedValue([{ ...baseItem, currentQuantity: 0 }]);
+      prisma.stockItem.findMany.mockResolvedValue([
+        { ...baseItem, currentQuantity: 0 },
+      ]);
       prisma.notification.findFirst.mockResolvedValue({ id: 'already-sent' });
 
       await service.findAll({});
@@ -509,7 +615,10 @@ describe('StockItemsService', () => {
 
   describe('createTransfer', () => {
     it('moves a routine (non-empty) item to a new location without a quantity change', async () => {
-      prisma.stockItem.findUnique.mockResolvedValue({ ...baseItem, currentQuantity: 100 });
+      prisma.stockItem.findUnique.mockResolvedValue({
+        ...baseItem,
+        currentQuantity: 100,
+      });
       prisma.stockItem.update.mockResolvedValue({
         ...baseItem,
         storageLocation: 'Nouvel entrepôt',
@@ -517,19 +626,24 @@ describe('StockItemsService', () => {
 
       const result = await service.createTransfer('item-1', 'director-1', {
         destination: 'Nouvel entrepôt',
-      } as any);
+      });
 
       expect(movements.record).toHaveBeenCalledWith(
         prisma,
-        expect.objectContaining({ type: 'TRANSFERT' }),
+        matching({ type: 'TRANSFERT' }),
       );
       expect(result.storageLocation).toBe('Nouvel entrepôt');
     });
 
     it('refuses to transfer an archived item', async () => {
-      prisma.stockItem.findUnique.mockResolvedValue({ ...baseItem, isActive: false });
+      prisma.stockItem.findUnique.mockResolvedValue({
+        ...baseItem,
+        isActive: false,
+      });
       await expect(
-        service.createTransfer('item-1', 'director-1', { destination: 'x' } as any),
+        service.createTransfer('item-1', 'director-1', {
+          destination: 'x',
+        } as any),
       ).rejects.toBeInstanceOf(ConflictException);
     });
   });
@@ -540,12 +654,21 @@ describe('StockItemsService', () => {
       upload.upload.mockResolvedValue('stock-items/item-1/file.pdf');
       prisma.stockItemDocument.create.mockResolvedValue({ id: 'doc-1' });
 
-      const file = { mimetype: 'application/pdf' } as any;
-      await service.uploadDocument('item-1', 'director-1', file, 'FACTURE', 'Facture');
+      const file = { mimetype: 'application/pdf' } as Express.Multer.File;
+      await service.uploadDocument(
+        'item-1',
+        'director-1',
+        file,
+        'FACTURE',
+        'Facture',
+      );
 
       expect(prisma.stockItemDocument.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ stockItemId: 'item-1', uploadedById: 'director-1' }),
+        matching({
+          data: matching({
+            stockItemId: 'item-1',
+            uploadedById: 'director-1',
+          }),
         }),
       );
     });
@@ -562,7 +685,10 @@ describe('StockItemsService', () => {
     it('delegates history to ValidationsService with the correct resource type', () => {
       validations.findHistory.mockReturnValue([{ id: 'v1' }]);
       const result = service.history('item-1');
-      expect(validations.findHistory).toHaveBeenCalledWith('STOCK_ITEM', 'item-1');
+      expect(validations.findHistory).toHaveBeenCalledWith(
+        'STOCK_ITEM',
+        'item-1',
+      );
       expect(result).toEqual([{ id: 'v1' }]);
     });
 
@@ -595,17 +721,290 @@ describe('StockItemsService', () => {
         fileKey: 'x',
       });
 
-      await expect(service.getDocumentUrl('item-1', 'doc-1')).rejects.toBeInstanceOf(
-        NotFoundException,
-      );
+      await expect(
+        service.getDocumentUrl('item-1', 'doc-1'),
+      ).rejects.toBeInstanceOf(NotFoundException);
     });
 
     it('throws NotFoundException on delete when the document does not exist at all', async () => {
       prisma.stockItemDocument.findUnique.mockResolvedValue(null);
-      await expect(service.deleteDocument('item-1', 'doc-1')).rejects.toBeInstanceOf(
-        NotFoundException,
-      );
+      await expect(
+        service.deleteDocument('item-1', 'doc-1'),
+      ).rejects.toBeInstanceOf(NotFoundException);
       expect(prisma.stockItemDocument.delete).not.toHaveBeenCalled();
+    });
+  });
+
+  // PR 12: Stock & Inventory improvements — physical inventory count. Reuses
+  // createAdjustment's existing INVENTAIRE_CORRECTION path entirely (same
+  // sensitivity threshold, same validation gating) rather than duplicating
+  // any stock-mutation logic.
+  describe('createInventoryCount', () => {
+    it('returns expected/actual/difference with no movement when the count matches exactly', async () => {
+      prisma.stockItem.findUnique.mockResolvedValue({
+        ...baseItem,
+        currentQuantity: 100,
+      });
+
+      const result = await service.createInventoryCount(
+        'item-1',
+        'director-1',
+        {
+          actualQuantity: 100,
+        },
+      );
+
+      expect(result).toEqual(
+        matching({
+          expectedQuantity: 100,
+          actualQuantity: 100,
+          difference: 0,
+        }),
+      );
+      expect(movements.record).not.toHaveBeenCalled();
+      expect(prisma.stockItem.updateMany).not.toHaveBeenCalled();
+      expect(prisma.stockItem.update).not.toHaveBeenCalled();
+    });
+
+    it('applies a small positive variance directly as an INVENTAIRE_CORRECTION movement', async () => {
+      prisma.stockItem.findUnique.mockResolvedValue({
+        ...baseItem,
+        currentQuantity: 100,
+      });
+      prisma.stockItem.update.mockResolvedValue({
+        ...baseItem,
+        currentQuantity: 105,
+      });
+
+      const result = await service.createInventoryCount(
+        'item-1',
+        'director-1',
+        {
+          actualQuantity: 105,
+        },
+      );
+
+      expect(result.expectedQuantity).toBe(100);
+      expect(result.actualQuantity).toBe(105);
+      expect(result.difference).toBe(5);
+      expect(movements.record).toHaveBeenCalledWith(
+        matchAnything(),
+        matching({ type: 'INVENTAIRE_CORRECTION' }),
+      );
+      expect(result.item.currentQuantity).toBe(105);
+    });
+
+    it('applies a small negative variance directly as an INVENTAIRE_CORRECTION movement', async () => {
+      prisma.stockItem.findUnique.mockResolvedValue({
+        ...baseItem,
+        currentQuantity: 100,
+      });
+      prisma.stockItem.updateMany.mockResolvedValue({ count: 1 });
+      prisma.stockItem.findUniqueOrThrow.mockResolvedValue({
+        ...baseItem,
+        currentQuantity: 95,
+      });
+
+      const result = await service.createInventoryCount(
+        'item-1',
+        'director-1',
+        {
+          actualQuantity: 95,
+          comment: 'Comptage mensuel',
+        },
+      );
+
+      expect(result.difference).toBe(-5);
+      expect(movements.record).toHaveBeenCalledWith(
+        matchAnything(),
+        matching({
+          type: 'INVENTAIRE_CORRECTION',
+          reason: 'Comptage mensuel',
+        }),
+      );
+    });
+
+    it('defaults the movement reason when no comment is given', async () => {
+      prisma.stockItem.findUnique.mockResolvedValue({
+        ...baseItem,
+        currentQuantity: 100,
+      });
+      prisma.stockItem.update.mockResolvedValue({
+        ...baseItem,
+        currentQuantity: 110,
+      });
+
+      await service.createInventoryCount('item-1', 'director-1', {
+        actualQuantity: 110,
+      });
+
+      expect(movements.record).toHaveBeenCalledWith(
+        matchAnything(),
+        matching({
+          reason: stringContaining('inventaire physique'),
+        }),
+      );
+    });
+
+    it('routes a large positive variance (>20%) through validation instead of applying it', async () => {
+      prisma.stockItem.findUnique.mockResolvedValue({
+        ...baseItem,
+        currentQuantity: 100,
+      });
+      prisma.stockItem.update.mockResolvedValue({
+        ...baseItem,
+        currentQuantity: 100,
+        validationStatus: 'PENDING_VALIDATION',
+        pendingValidationAction: 'INVENTORY_CORRECTION',
+      });
+
+      const result = await service.createInventoryCount(
+        'item-1',
+        'director-1',
+        {
+          actualQuantity: 140, // +40%
+        },
+      );
+
+      expect(prisma.stockItem.updateMany).not.toHaveBeenCalled();
+      expect(validations.create).toHaveBeenCalled();
+      expect(result.item.pendingValidationAction).toBe('INVENTORY_CORRECTION');
+      expect(result.difference).toBe(40);
+    });
+
+    it('routes a large negative variance (>20%) through validation instead of applying it', async () => {
+      prisma.stockItem.findUnique.mockResolvedValue({
+        ...baseItem,
+        currentQuantity: 100,
+      });
+      prisma.stockItem.update.mockResolvedValue({
+        ...baseItem,
+        currentQuantity: 100,
+        validationStatus: 'PENDING_VALIDATION',
+        pendingValidationAction: 'INVENTORY_CORRECTION',
+      });
+
+      const result = await service.createInventoryCount(
+        'item-1',
+        'director-1',
+        {
+          actualQuantity: 50, // -50%
+        },
+      );
+
+      expect(prisma.stockItem.updateMany).not.toHaveBeenCalled();
+      expect(result.item.pendingValidationAction).toBe('INVENTORY_CORRECTION');
+      expect(result.difference).toBe(-50);
+    });
+
+    it('rejects a count on an archived item', async () => {
+      prisma.stockItem.findUnique.mockResolvedValue({
+        ...baseItem,
+        isActive: false,
+      });
+      await expect(
+        service.createInventoryCount('item-1', 'director-1', {
+          actualQuantity: 10,
+        } as any),
+      ).rejects.toBeInstanceOf(ConflictException);
+    });
+  });
+
+  // PR 12 regression coverage: approve() used to always decrement on a
+  // pending INVENTORY_CORRECTION, silently corrupting stock whenever a
+  // physical count found *more* than expected and the surplus was large
+  // enough to require validation. See StockActionPayload.positive.
+  describe('approve (INVENTORY_CORRECTION sign fix — PR 12)', () => {
+    it('increments stock when approving a positive pending inventory correction', async () => {
+      const pendingItem = {
+        ...baseItem,
+        currentQuantity: 100,
+        validationStatus: 'PENDING_VALIDATION',
+        pendingValidationAction: 'INVENTORY_CORRECTION',
+        pendingValidationPayload: {
+          quantity: 40,
+          movementType: 'INVENTAIRE_CORRECTION',
+          positive: true,
+        },
+      };
+      prisma.stockItem.findUnique.mockResolvedValue(pendingItem);
+      validations.approve.mockResolvedValue({ submittedById: 'director-1' });
+      prisma.stockItem.updateMany.mockResolvedValue({ count: 1 });
+      prisma.stockItem.findUniqueOrThrow.mockResolvedValue({
+        ...pendingItem,
+        currentQuantity: 140,
+      });
+
+      const result = await service.approve('item-1', 'supervisor-1', {});
+
+      expect(prisma.stockItem.updateMany).toHaveBeenCalledWith(
+        matching({
+          where: { id: 'item-1' },
+          data: matching({ currentQuantity: { increment: 40 } }),
+        }),
+      );
+      expect(result.currentQuantity).toBe(140);
+      expect(movements.record).toHaveBeenCalledWith(
+        matchAnything(),
+        matching({ quantityBefore: 100, quantityAfter: 140 }),
+      );
+    });
+
+    it('still decrements stock when approving a negative pending inventory correction', async () => {
+      const pendingItem = {
+        ...baseItem,
+        currentQuantity: 100,
+        validationStatus: 'PENDING_VALIDATION',
+        pendingValidationAction: 'INVENTORY_CORRECTION',
+        pendingValidationPayload: {
+          quantity: 50,
+          movementType: 'INVENTAIRE_CORRECTION',
+          positive: false,
+        },
+      };
+      prisma.stockItem.findUnique.mockResolvedValue(pendingItem);
+      validations.approve.mockResolvedValue({ submittedById: 'director-1' });
+      prisma.stockItem.updateMany.mockResolvedValue({ count: 1 });
+      prisma.stockItem.findUniqueOrThrow.mockResolvedValue({
+        ...pendingItem,
+        currentQuantity: 50,
+      });
+
+      const result = await service.approve('item-1', 'supervisor-1', {});
+
+      expect(prisma.stockItem.updateMany).toHaveBeenCalledWith(
+        matching({
+          where: { id: 'item-1', currentQuantity: { gte: 50 } },
+          data: matching({ currentQuantity: { decrement: 50 } }),
+        }),
+      );
+      expect(result.currentQuantity).toBe(50);
+    });
+
+    it('still decrements a pending LARGE_STOCK_EXIT exactly as before (payload.positive absent)', async () => {
+      const pendingItem = {
+        ...baseItem,
+        currentQuantity: 100,
+        validationStatus: 'PENDING_VALIDATION',
+        pendingValidationAction: 'LARGE_STOCK_EXIT',
+        pendingValidationPayload: { quantity: 80, movementType: 'SORTIE' },
+      };
+      prisma.stockItem.findUnique.mockResolvedValue(pendingItem);
+      validations.approve.mockResolvedValue({ submittedById: 'director-1' });
+      prisma.stockItem.updateMany.mockResolvedValue({ count: 1 });
+      prisma.stockItem.findUniqueOrThrow.mockResolvedValue({
+        ...pendingItem,
+        currentQuantity: 20,
+      });
+
+      await service.approve('item-1', 'supervisor-1', {});
+
+      expect(prisma.stockItem.updateMany).toHaveBeenCalledWith(
+        matching({
+          where: { id: 'item-1', currentQuantity: { gte: 80 } },
+          data: matching({ currentQuantity: { decrement: 80 } }),
+        }),
+      );
     });
   });
 });

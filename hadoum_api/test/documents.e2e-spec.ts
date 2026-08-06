@@ -27,14 +27,18 @@ describe('Document upload / signed URL / cross-resource IDOR (e2e)', () => {
     users = await seedTestUsers(prisma);
 
     directorToken = (
-      await request(app.getHttpServer())
+      (await request(app.getHttpServer())
         .post('/api/auth/login')
-        .send({ email: users.director.email, password: TEST_PASSWORD })
+        .send({ email: users.director.email, password: TEST_PASSWORD })) as {
+        body: { token: string };
+      }
     ).body.token;
     supervisorToken = (
-      await request(app.getHttpServer())
+      (await request(app.getHttpServer())
         .post('/api/auth/login')
-        .send({ email: users.supervisor.email, password: TEST_PASSWORD })
+        .send({ email: users.supervisor.email, password: TEST_PASSWORD })) as {
+        body: { token: string };
+      }
     ).body.token;
   });
 
@@ -42,25 +46,25 @@ describe('Document upload / signed URL / cross-resource IDOR (e2e)', () => {
     await app.close();
   });
 
-  async function createSpace(name: string) {
-    const res = await request(app.getHttpServer())
+  async function createSpace(name: string): Promise<string> {
+    const res = (await request(app.getHttpServer())
       .post('/api/spaces')
       .set('Authorization', `Bearer ${directorToken}`)
       .send({ name, type: 'BUREAU' })
-      .expect(201);
-    return res.body.id as string;
+      .expect(201)) as { body: { id: string } };
+    return res.body.id;
   }
 
   it('uploads a document, lists it, fetches a signed URL, then deletes it', async () => {
     const spaceId = await createSpace('Bureau A');
 
-    const uploadRes = await request(app.getHttpServer())
+    const uploadRes = (await request(app.getHttpServer())
       .post(`/api/spaces/${spaceId}/documents`)
       .set('Authorization', `Bearer ${directorToken}`)
       .field('label', 'Plan')
       .attach('file', Buffer.from('fake pdf content'), 'plan.pdf')
-      .expect(201);
-    const docId = uploadRes.body.id as string;
+      .expect(201)) as { body: { id: string } };
+    const docId = uploadRes.body.id;
 
     const listRes = await request(app.getHttpServer())
       .get(`/api/spaces/${spaceId}/documents`)
@@ -68,10 +72,10 @@ describe('Document upload / signed URL / cross-resource IDOR (e2e)', () => {
       .expect(200);
     expect(listRes.body).toHaveLength(1);
 
-    const urlRes = await request(app.getHttpServer())
+    const urlRes = (await request(app.getHttpServer())
       .get(`/api/spaces/${spaceId}/documents/${docId}/url`)
       .set('Authorization', `Bearer ${directorToken}`)
-      .expect(200);
+      .expect(200)) as { body: { url: string } };
     expect(urlRes.body.url).toContain('fake-signed-url.test');
 
     await request(app.getHttpServer())
@@ -90,12 +94,12 @@ describe('Document upload / signed URL / cross-resource IDOR (e2e)', () => {
     const spaceA = await createSpace('Espace A');
     const spaceB = await createSpace('Espace B');
 
-    const uploadRes = await request(app.getHttpServer())
+    const uploadRes = (await request(app.getHttpServer())
       .post(`/api/spaces/${spaceA}/documents`)
       .set('Authorization', `Bearer ${directorToken}`)
       .attach('file', Buffer.from('fake pdf content'), 'doc.pdf')
-      .expect(201);
-    const docId = uploadRes.body.id as string;
+      .expect(201)) as { body: { id: string } };
+    const docId = uploadRes.body.id;
 
     await request(app.getHttpServer())
       .get(`/api/spaces/${spaceB}/documents/${docId}/url`)
@@ -110,12 +114,12 @@ describe('Document upload / signed URL / cross-resource IDOR (e2e)', () => {
 
   it('SUPERVISOR can read documents but cannot upload or delete them (read-only)', async () => {
     const spaceId = await createSpace('Bureau B');
-    const uploadRes = await request(app.getHttpServer())
+    const uploadRes = (await request(app.getHttpServer())
       .post(`/api/spaces/${spaceId}/documents`)
       .set('Authorization', `Bearer ${directorToken}`)
       .attach('file', Buffer.from('x'), 'x.pdf')
-      .expect(201);
-    const docId = uploadRes.body.id as string;
+      .expect(201)) as { body: { id: string } };
+    const docId = uploadRes.body.id;
 
     await request(app.getHttpServer())
       .get(`/api/spaces/${spaceId}/documents`)

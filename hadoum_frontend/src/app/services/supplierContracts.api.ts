@@ -1,5 +1,6 @@
 import { api } from './api';
 import type { ApiValidationRequest, ApiValidationStatus } from './maintenanceTickets.api';
+import type { ApiContact } from '../types/contacts.types';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -24,6 +25,12 @@ export interface ApiContractDocument {
 export interface ApiSupplierContract {
   id: string;
   supplierName: string;
+  // PR 8 (Contact directory integration): nullable — null on legacy
+  // contracts that predate this PR and were never linked. supplierName/
+  // contactPerson/phone/email/address stay as the legacy free-text
+  // snapshot fields for back-compat (see supplierContracts.api.ts).
+  supplierContactId: string | null;
+  supplierContact: ApiContact | null;
   contractName: string;
   category: ApiContractCategory;
   description: string | null;
@@ -53,7 +60,13 @@ export interface ApiSupplierContractDetail extends ApiSupplierContract {
 }
 
 export interface CreateSupplierContractInput {
-  supplierName: string;
+  // Optional now — required only when supplierContactId isn't provided
+  // (enforced server-side). string: assign/replace. null: explicitly clear
+  // an existing assignment (legacy snapshot fields are preserved, not
+  // cleared — supplierName stays NOT NULL). undefined/omitted: leave the
+  // current relation untouched.
+  supplierName?: string;
+  supplierContactId?: string | null;
   contractName: string;
   category: ApiContractCategory;
   description?: string;

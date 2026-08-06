@@ -24,6 +24,7 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { AuthUser } from '../auth/types/request-with-user';
+import { Audited } from '../audit-logs/decorators/audited.decorator';
 import { AdministrativeProceduresService } from './administrative-procedures.service';
 import { CreateAdministrativeProcedureDto } from './dto/create-administrative-procedure.dto';
 import { UpdateAdministrativeProcedureDto } from './dto/update-administrative-procedure.dto';
@@ -42,6 +43,11 @@ export class AdministrativeProceduresController {
 
   @Post()
   @Roles('DIRECTOR')
+  @Audited({
+    module: 'ADMINISTRATIVE_PROCEDURES',
+    entity: 'AdministrativeProcedure',
+    action: 'CREATE',
+  })
   create(
     @Body() dto: CreateAdministrativeProcedureDto,
     @CurrentUser() user: AuthUser,
@@ -91,6 +97,11 @@ export class AdministrativeProceduresController {
 
   @Patch(':id')
   @Roles('DIRECTOR')
+  @Audited({
+    module: 'ADMINISTRATIVE_PROCEDURES',
+    entity: 'AdministrativeProcedure',
+    action: 'UPDATE',
+  })
   update(
     @Param('id') id: string,
     @Body() dto: UpdateAdministrativeProcedureDto,
@@ -100,12 +111,22 @@ export class AdministrativeProceduresController {
 
   @Patch(':id/archive')
   @Roles('DIRECTOR')
+  @Audited({
+    module: 'ADMINISTRATIVE_PROCEDURES',
+    entity: 'AdministrativeProcedure',
+    action: 'ARCHIVE',
+  })
   archive(@Param('id') id: string) {
     return this.proceduresService.archive(id);
   }
 
   @Post(':id/submit-validation')
   @Roles('DIRECTOR')
+  @Audited({
+    module: 'ADMINISTRATIVE_PROCEDURES',
+    entity: 'AdministrativeProcedure',
+    action: 'SUBMIT_VALIDATION',
+  })
   submitValidation(
     @Param('id') id: string,
     @CurrentUser() user: AuthUser,
@@ -116,6 +137,11 @@ export class AdministrativeProceduresController {
 
   @Post(':id/request-renewal')
   @Roles('DIRECTOR')
+  @Audited({
+    module: 'ADMINISTRATIVE_PROCEDURES',
+    entity: 'AdministrativeProcedure',
+    action: 'REQUEST_RENEWAL',
+  })
   requestRenewal(
     @Param('id') id: string,
     @CurrentUser() user: AuthUser,
@@ -126,6 +152,11 @@ export class AdministrativeProceduresController {
 
   @Post(':id/request-archive')
   @Roles('DIRECTOR')
+  @Audited({
+    module: 'ADMINISTRATIVE_PROCEDURES',
+    entity: 'AdministrativeProcedure',
+    action: 'REQUEST_ARCHIVE',
+  })
   requestArchive(
     @Param('id') id: string,
     @CurrentUser() user: AuthUser,
@@ -136,6 +167,11 @@ export class AdministrativeProceduresController {
 
   @Patch(':id/approve')
   @Roles('SUPERVISOR')
+  @Audited({
+    module: 'ADMINISTRATIVE_PROCEDURES',
+    entity: 'AdministrativeProcedure',
+    action: 'APPROVE',
+  })
   approve(
     @Param('id') id: string,
     @CurrentUser() user: AuthUser,
@@ -146,6 +182,11 @@ export class AdministrativeProceduresController {
 
   @Patch(':id/reject')
   @Roles('SUPERVISOR')
+  @Audited({
+    module: 'ADMINISTRATIVE_PROCEDURES',
+    entity: 'AdministrativeProcedure',
+    action: 'REJECT',
+  })
   reject(
     @Param('id') id: string,
     @CurrentUser() user: AuthUser,
@@ -156,6 +197,11 @@ export class AdministrativeProceduresController {
 
   @Patch(':id/request-changes')
   @Roles('SUPERVISOR')
+  @Audited({
+    module: 'ADMINISTRATIVE_PROCEDURES',
+    entity: 'AdministrativeProcedure',
+    action: 'REQUEST_CHANGES',
+  })
   requestChanges(
     @Param('id') id: string,
     @CurrentUser() user: AuthUser,

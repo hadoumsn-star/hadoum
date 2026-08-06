@@ -22,10 +22,15 @@ import {
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import type { AuthUser } from '../auth/types/request-with-user';
+import { Audited } from '../audit-logs/decorators/audited.decorator';
 import { FinancesService } from './finances.service';
 import { CreateTransactionDto } from './dto/create-transaction.dto';
 import { UpdateTransactionDto } from './dto/update-transaction.dto';
 import { UpsertBudgetLineDto } from './dto/upsert-budget-line.dto';
+import { ExpenseCommentDto } from './dto/expense-comment.dto';
+import { RejectExpenseDto } from './dto/reject-expense.dto';
 
 @Controller('finances')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -36,6 +41,7 @@ export class FinancesController {
   // ─── Transactions ────────────────────────────────────────────────────────
 
   @Post('transactions')
+  @Audited({ module: 'FINANCE', entity: 'Transaction', action: 'CREATE' })
   createTransaction(@Body() dto: CreateTransactionDto) {
     return this.financesService.createTransaction(dto);
   }
@@ -72,6 +78,7 @@ export class FinancesController {
   }
 
   @Patch('transactions/:id')
+  @Audited({ module: 'FINANCE', entity: 'Transaction', action: 'UPDATE' })
   updateTransaction(
     @Param('id') id: string,
     @Body() dto: UpdateTransactionDto,
@@ -95,10 +102,143 @@ export class FinancesController {
     return this.financesService.getJustificatifUrl(id);
   }
 
+  // ─── Dedicated expense documents (PR 4) ──────────────────────────────────
+  // Additive alongside the justificatif endpoints above, which are
+  // unchanged. DEPENSE-only — see FinancesService.assertExpenseTransaction.
+
+  @Post('transactions/:id/purchase-order')
+  @UseInterceptors(
+    FileInterceptor('file', { limits: { fileSize: 10 * 1024 * 1024 } }),
+  )
+  uploadPurchaseOrder(
+    @Param('id') id: string,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    return this.financesService.uploadPurchaseOrder(id, file);
+  }
+
+  @Get('transactions/:id/purchase-order-url')
+  getPurchaseOrderUrl(@Param('id') id: string) {
+    return this.financesService.getPurchaseOrderUrl(id);
+  }
+
+  @Delete('transactions/:id/purchase-order')
+  deletePurchaseOrder(@Param('id') id: string) {
+    return this.financesService.deletePurchaseOrder(id);
+  }
+
+  @Post('transactions/:id/invoice')
+  @UseInterceptors(
+    FileInterceptor('file', { limits: { fileSize: 10 * 1024 * 1024 } }),
+  )
+  uploadInvoice(
+    @Param('id') id: string,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    return this.financesService.uploadInvoice(id, file);
+  }
+
+  @Get('transactions/:id/invoice-url')
+  getInvoiceUrl(@Param('id') id: string) {
+    return this.financesService.getInvoiceUrl(id);
+  }
+
+  @Delete('transactions/:id/invoice')
+  deleteInvoice(@Param('id') id: string) {
+    return this.financesService.deleteInvoice(id);
+  }
+
+  @Post('transactions/:id/delivery-note')
+  @UseInterceptors(
+    FileInterceptor('file', { limits: { fileSize: 10 * 1024 * 1024 } }),
+  )
+  uploadDeliveryNote(
+    @Param('id') id: string,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    return this.financesService.uploadDeliveryNote(id, file);
+  }
+
+  @Get('transactions/:id/delivery-note-url')
+  getDeliveryNoteUrl(@Param('id') id: string) {
+    return this.financesService.getDeliveryNoteUrl(id);
+  }
+
+  @Delete('transactions/:id/delivery-note')
+  deleteDeliveryNote(@Param('id') id: string) {
+    return this.financesService.deleteDeliveryNote(id);
+  }
+
   @Delete('transactions/:id')
   @HttpCode(204)
+  @Audited({ module: 'FINANCE', entity: 'Transaction', action: 'DELETE' })
   deleteTransaction(@Param('id') id: string) {
     return this.financesService.deleteTransaction(id);
+  }
+
+  // ─── Expense approval workflow (PR 5A/5B) ────────────────────────────────
+  //
+  // Transitions + ValidationRequest integration — no notifications, no
+  // budget reservation (see ExpenseWorkflowService). Per-method @Roles
+  // overrides the class-level DIRECTOR+SUPERVISOR gate above for these six
+  // routes specifically; every other route in this controller is untouched.
+
+  @Post('transactions/:id/submit')
+  @Roles('DIRECTOR')
+  @Audited({ module: 'FINANCE', entity: 'Transaction', action: 'SUBMIT' })
+  submitExpense(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthUser,
+    @Body() dto: ExpenseCommentDto,
+  ) {
+    return this.financesService.submitExpense(id, user.id, dto.comment);
+  }
+
+  @Post('transactions/:id/approve')
+  @Roles('SUPERVISOR')
+  @Audited({ module: 'FINANCE', entity: 'Transaction', action: 'APPROVE' })
+  approveExpense(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthUser,
+    @Body() dto: ExpenseCommentDto,
+  ) {
+    return this.financesService.approveExpense(id, user.id, dto.comment);
+  }
+
+  @Post('transactions/:id/reject')
+  @Roles('SUPERVISOR')
+  @Audited({ module: 'FINANCE', entity: 'Transaction', action: 'REJECT' })
+  rejectExpense(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthUser,
+    @Body() dto: RejectExpenseDto,
+  ) {
+    return this.financesService.rejectExpense(id, user.id, dto.comment);
+  }
+
+  @Post('transactions/:id/resubmit')
+  @Roles('DIRECTOR')
+  @Audited({ module: 'FINANCE', entity: 'Transaction', action: 'RESUBMIT' })
+  resubmitExpense(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthUser,
+    @Body() dto: ExpenseCommentDto,
+  ) {
+    return this.financesService.resubmitExpense(id, user.id, dto.comment);
+  }
+
+  @Post('transactions/:id/complete')
+  @Roles('DIRECTOR')
+  @Audited({ module: 'FINANCE', entity: 'Transaction', action: 'COMPLETE' })
+  completeExpense(@Param('id') id: string) {
+    return this.financesService.completeExpense(id);
+  }
+
+  @Post('transactions/:id/cancel')
+  @Roles('DIRECTOR')
+  @Audited({ module: 'FINANCE', entity: 'Transaction', action: 'CANCEL' })
+  cancelExpense(@Param('id') id: string) {
+    return this.financesService.cancelExpense(id);
   }
 
   // ─── Budget lines ────────────────────────────────────────────────────────
@@ -116,12 +256,22 @@ export class FinancesController {
   }
 
   @Put('budget-lines')
+  @Audited({ module: 'FINANCE', entity: 'BudgetLine', action: 'UPSERT' })
   upsertBudgetLine(@Body() dto: UpsertBudgetLineDto) {
     return this.financesService.upsertBudgetLine(dto);
   }
 
+  // PR 6 — idempotent: creates only the default categories missing for the
+  // current month, never overwrites an existing row (default or since
+  // edited). Safe to call on every Finance page load.
+  @Post('budget-lines/ensure-defaults')
+  ensureDefaultBudgetLines() {
+    return this.financesService.ensureDefaultBudgetLines();
+  }
+
   @Delete('budget-lines/:id')
   @HttpCode(204)
+  @Audited({ module: 'FINANCE', entity: 'BudgetLine', action: 'DELETE' })
   deleteBudgetLine(@Param('id') id: string) {
     return this.financesService.deleteBudgetLine(id);
   }

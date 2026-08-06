@@ -22,6 +22,7 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { AuthUser } from '../auth/types/request-with-user';
+import { Audited } from '../audit-logs/decorators/audited.decorator';
 import { SupplierContractsService } from './supplier-contracts.service';
 import { CreateSupplierContractDto } from './dto/create-supplier-contract.dto';
 import { UpdateSupplierContractDto } from './dto/update-supplier-contract.dto';
@@ -38,8 +39,16 @@ export class SupplierContractsController {
 
   @Post()
   @Roles('DIRECTOR')
-  create(@Body() dto: CreateSupplierContractDto) {
-    return this.contractsService.create(dto);
+  @Audited({
+    module: 'SUPPLIER_CONTRACTS',
+    entity: 'SupplierContract',
+    action: 'CREATE',
+  })
+  create(
+    @Body() dto: CreateSupplierContractDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.contractsService.create(dto, user.id);
   }
 
   @Get()
@@ -70,18 +79,33 @@ export class SupplierContractsController {
 
   @Patch(':id')
   @Roles('DIRECTOR')
+  @Audited({
+    module: 'SUPPLIER_CONTRACTS',
+    entity: 'SupplierContract',
+    action: 'UPDATE',
+  })
   update(@Param('id') id: string, @Body() dto: UpdateSupplierContractDto) {
     return this.contractsService.update(id, dto);
   }
 
   @Patch(':id/archive')
   @Roles('DIRECTOR')
+  @Audited({
+    module: 'SUPPLIER_CONTRACTS',
+    entity: 'SupplierContract',
+    action: 'ARCHIVE',
+  })
   archive(@Param('id') id: string) {
     return this.contractsService.archive(id);
   }
 
   @Post(':id/submit-validation')
   @Roles('DIRECTOR')
+  @Audited({
+    module: 'SUPPLIER_CONTRACTS',
+    entity: 'SupplierContract',
+    action: 'SUBMIT_VALIDATION',
+  })
   submitValidation(
     @Param('id') id: string,
     @CurrentUser() user: AuthUser,
@@ -92,6 +116,11 @@ export class SupplierContractsController {
 
   @Post(':id/request-renewal')
   @Roles('DIRECTOR')
+  @Audited({
+    module: 'SUPPLIER_CONTRACTS',
+    entity: 'SupplierContract',
+    action: 'REQUEST_RENEWAL',
+  })
   requestRenewal(
     @Param('id') id: string,
     @CurrentUser() user: AuthUser,
@@ -102,6 +131,11 @@ export class SupplierContractsController {
 
   @Post(':id/request-termination')
   @Roles('DIRECTOR')
+  @Audited({
+    module: 'SUPPLIER_CONTRACTS',
+    entity: 'SupplierContract',
+    action: 'REQUEST_TERMINATION',
+  })
   requestTermination(
     @Param('id') id: string,
     @CurrentUser() user: AuthUser,
@@ -112,6 +146,11 @@ export class SupplierContractsController {
 
   @Patch(':id/approve')
   @Roles('SUPERVISOR')
+  @Audited({
+    module: 'SUPPLIER_CONTRACTS',
+    entity: 'SupplierContract',
+    action: 'APPROVE',
+  })
   approve(
     @Param('id') id: string,
     @CurrentUser() user: AuthUser,
@@ -122,6 +161,11 @@ export class SupplierContractsController {
 
   @Patch(':id/reject')
   @Roles('SUPERVISOR')
+  @Audited({
+    module: 'SUPPLIER_CONTRACTS',
+    entity: 'SupplierContract',
+    action: 'REJECT',
+  })
   reject(
     @Param('id') id: string,
     @CurrentUser() user: AuthUser,
@@ -132,6 +176,11 @@ export class SupplierContractsController {
 
   @Patch(':id/request-changes')
   @Roles('SUPERVISOR')
+  @Audited({
+    module: 'SUPPLIER_CONTRACTS',
+    entity: 'SupplierContract',
+    action: 'REQUEST_CHANGES',
+  })
   requestChanges(
     @Param('id') id: string,
     @CurrentUser() user: AuthUser,

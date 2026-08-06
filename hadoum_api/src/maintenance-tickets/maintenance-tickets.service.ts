@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   NotFoundException,
@@ -37,7 +38,48 @@ export class MaintenanceTicketsService {
     private readonly notificationsService: NotificationsService,
   ) {}
 
-  create(dto: CreateMaintenanceTicketDto) {
+  // ─── Contact assignment helpers ────────────────────────────────────────────
+
+  /**
+   * A new assignment must point at a real, currently-active Contact — an
+   * inactive one can still be *read* (see findOne/findAll), it just can't be
+   * newly attached. Kept private/internal: this is not a general Contact
+   * lookup, it's specifically "is this id usable for a fresh assignment".
+   */
+  private async assertContactAssignable(contactId: string) {
+    const contact = await this.prisma.contact.findUnique({
+      where: { id: contactId },
+    });
+    if (!contact) {
+      throw new BadRequestException('Contact introuvable.');
+    }
+    if (!contact.active) {
+      throw new BadRequestException(
+        'Ce contact est désactivé et ne peut pas être assigné à un nouveau ticket.',
+      );
+    }
+    return contact;
+  }
+
+  private readonly assignedContactInclude = {
+    assignedContact: { include: { category: true } },
+  };
+
+  async create(dto: CreateMaintenanceTicketDto) {
+    // assignedContactId is create/update's source of truth for the relation;
+    // assignedTo is derived from it as a readable snapshot so existing
+    // reads/exports of the flat string field keep working unchanged. If no
+    // contact is selected, assignedTo falls back to whatever free text the
+    // caller sent — the pre-PR-3 legacy path, untouched.
+    let assignedTo = dto.assignedTo;
+    let assignedContactId: string | undefined;
+
+    if (dto.assignedContactId) {
+      const contact = await this.assertContactAssignable(dto.assignedContactId);
+      assignedContactId = contact.id;
+      assignedTo = contact.fullName;
+    }
+
     return this.prisma.maintenanceTicket.create({
       data: {
         title: dto.title,
@@ -46,11 +88,15 @@ export class MaintenanceTicketsService {
         problemType: dto.problemType,
         urgency: dto.urgency,
         reportedBy: dto.reportedBy,
-        assignedTo: dto.assignedTo,
+        assignedTo,
+        assignedContactId,
         plannedDate: dto.plannedDate ? new Date(dto.plannedDate) : undefined,
         estimatedCost: dto.estimatedCost,
       },
-      include: { space: { select: { id: true, name: true } } },
+      include: {
+        space: { select: { id: true, name: true } },
+        ...this.assignedContactInclude,
+      },
     });
   }
 
@@ -74,17 +120,24 @@ export class MaintenanceTicketsService {
 
     return this.prisma.maintenanceTicket.findMany({
       where,
-      include: { space: { select: { id: true, name: true } } },
+      include: {
+        space: { select: { id: true, name: true } },
+        ...this.assignedContactInclude,
+      },
       orderBy: { createdAt: 'desc' },
     });
   }
 
   async findOne(id: string) {
+    // No `active` filter on the included Contact — deliberately: a ticket
+    // referencing a since-deactivated contact must stay fully readable (same
+    // rule ContactsService.findOne already applies to Contact itself).
     const ticket = await this.prisma.maintenanceTicket.findUnique({
       where: { id },
       include: {
         space: { select: { id: true, name: true } },
         attachments: { orderBy: { createdAt: 'desc' } },
+        ...this.assignedContactInclude,
       },
     });
     if (!ticket) throw new NotFoundException('Ticket not found');
@@ -119,6 +172,33 @@ export class MaintenanceTicketsService {
       }
     }
 
+    // Three distinct states for assignedContactId, per the dual-write
+    // contract: omitted (key absent from the request body) leaves the
+    // existing relation and assignedTo snapshot untouched; an id validates
+    // and refreshes both; explicit `null` (present, JSON null — distinct
+    // from "absent" since class-validator's @IsOptional lets null through
+    // too) disconnects the contact and clears assignedTo with it. The
+    // legacy `dto.assignedTo` passthrough only applies when the caller isn't
+    // touching the relation at all, so it can never race with the snapshot
+    // this derives.
+    let contactUpdate: {
+      assignedContactId?: string | null;
+      assignedTo?: string | null;
+    } = {};
+    if (dto.assignedContactId !== undefined) {
+      if (dto.assignedContactId === null) {
+        contactUpdate = { assignedContactId: null, assignedTo: null };
+      } else {
+        const contact = await this.assertContactAssignable(
+          dto.assignedContactId,
+        );
+        contactUpdate = {
+          assignedContactId: contact.id,
+          assignedTo: contact.fullName,
+        };
+      }
+    }
+
     return this.prisma.maintenanceTicket.update({
       where: { id },
       data: {
@@ -131,7 +211,10 @@ export class MaintenanceTicketsService {
           ? { problemType: dto.problemType }
           : {}),
         ...(dto.urgency !== undefined ? { urgency: dto.urgency } : {}),
-        ...(dto.assignedTo !== undefined ? { assignedTo: dto.assignedTo } : {}),
+        ...(dto.assignedTo !== undefined && dto.assignedContactId === undefined
+          ? { assignedTo: dto.assignedTo }
+          : {}),
+        ...contactUpdate,
         ...(dto.plannedDate !== undefined
           ? { plannedDate: new Date(dto.plannedDate) }
           : {}),
@@ -144,7 +227,10 @@ export class MaintenanceTicketsService {
           : {}),
         ...(dto.actualCost !== undefined ? { actualCost: dto.actualCost } : {}),
       },
-      include: { space: { select: { id: true, name: true } } },
+      include: {
+        space: { select: { id: true, name: true } },
+        ...this.assignedContactInclude,
+      },
     });
   }
 

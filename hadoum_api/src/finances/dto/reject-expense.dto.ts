@@ -1,10 +1,7 @@
 import { IsString, MinLength } from 'class-validator';
 
-export class AddNoteDto {
+export class RejectExpenseDto {
   @IsString()
   @MinLength(1)
-  text: string;
-
-  @IsString()
-  author: string;
+  comment: string;
 }

@@ -9,6 +9,7 @@ import {
   TEST_PASSWORD,
 } from './utils/test-app';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { anyInstanceOf } from '../src/test-utils/jest-matchers';
 
 describe('Auth & authorization (e2e)', () => {
   let app: INestApplication<App>;
@@ -31,12 +32,12 @@ describe('Auth & authorization (e2e)', () => {
 
   describe('POST /api/auth/login', () => {
     it('logs in with valid credentials and returns a usable token', async () => {
-      const res = await request(app.getHttpServer())
+      const res = (await request(app.getHttpServer())
         .post('/api/auth/login')
         .send({ email: users.director.email, password: TEST_PASSWORD })
-        .expect(201);
+        .expect(201)) as { body: { token: string; user: { role: string } } };
 
-      expect(res.body.token).toEqual(expect.any(String));
+      expect(res.body.token).toEqual(anyInstanceOf(String));
       expect(res.body.user.role).toBe('director');
     });
 
@@ -83,7 +84,9 @@ describe('Auth & authorization (e2e)', () => {
 
     it('formerly-unauthenticated legacy routes now require a token too', async () => {
       await request(app.getHttpServer()).get('/api/children').expect(401);
-      await request(app.getHttpServer()).get('/api/finances/transactions').expect(401);
+      await request(app.getHttpServer())
+        .get('/api/finances/transactions')
+        .expect(401);
       await request(app.getHttpServer()).get('/api/incidents').expect(401);
       await request(app.getHttpServer()).get('/api/staff').expect(401);
       await request(app.getHttpServer()).get('/api/reports').expect(401);
@@ -92,10 +95,12 @@ describe('Auth & authorization (e2e)', () => {
 
   describe('role-based authorization', () => {
     async function tokenFor(email: string) {
-      const res = await request(app.getHttpServer())
+      const res = (await request(app.getHttpServer())
         .post('/api/auth/login')
-        .send({ email, password: TEST_PASSWORD });
-      return res.body.token as string;
+        .send({ email, password: TEST_PASSWORD })) as {
+        body: { token: string };
+      };
+      return res.body.token;
     }
 
     it('SUPERVISOR cannot perform an operational write (create a space)', async () => {
@@ -109,20 +114,25 @@ describe('Auth & authorization (e2e)', () => {
 
     it('DIRECTOR can perform an operational write (create a space)', async () => {
       const token = await tokenFor(users.director.email);
-      const res = await request(app.getHttpServer())
+      const res = (await request(app.getHttpServer())
         .post('/api/spaces')
         .set('Authorization', `Bearer ${token}`)
         .send({ name: 'Salle A', type: 'BUREAU' })
-        .expect(201);
+        .expect(201)) as { body: { name: string } };
       expect(res.body.name).toBe('Salle A');
     });
 
-    it('DIRECTOR cannot access the pending-validations queue (SUPERVISOR-only)', async () => {
+    // Stale expectation fixed: ValidationsController.findPending() is
+    // @Roles('DIRECTOR', 'SUPERVISOR') — DIRECTOR has read-only access to
+    // the pending-validations queue (only the per-resource approve/reject
+    // routes stay SUPERVISOR-only, exercised elsewhere, e.g.
+    // validation-workflow.e2e-spec.ts's "blocks self-approval structurally").
+    it('DIRECTOR can read the pending-validations queue (read-only; approve/reject stays SUPERVISOR-only)', async () => {
       const token = await tokenFor(users.director.email);
       await request(app.getHttpServer())
         .get('/api/validations/pending')
         .set('Authorization', `Bearer ${token}`)
-        .expect(403);
+        .expect(200);
     });
 
     it('SUPERVISOR can access the pending-validations queue', async () => {

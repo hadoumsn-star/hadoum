@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import {
   AdministrativeProcedure,
+  Contact,
   Prisma,
   ProcedurePriority,
   ProcedureStatus,
@@ -30,6 +31,19 @@ import {
 } from './administrative-procedures.constants';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+// Statuses a DIRECTOR can set directly (create, or update's generic PATCH)
+// without going through the validation workflow — pure operational
+// tracking, pre-submission. EN_ATTENTE_REPONSE joins A_PREPARER/EN_COURS
+// here specifically so a procedure can be marked as waiting on an external
+// authority's response without that being a validation event. Every other
+// status (SOUMIS, APPROUVE, REFUSE, EXPIRE, ARCHIVE) stays reachable only
+// through submitValidation/approve/reject/archive — untouched by this list.
+const MANUALLY_SETTABLE_STATUSES: ProcedureStatus[] = [
+  'A_PREPARER',
+  'EN_COURS',
+  'EN_ATTENTE_REPONSE',
+];
 
 interface FindAllFilters {
   search?: string;
@@ -66,6 +80,32 @@ export class AdministrativeProceduresService {
     private readonly validationsService: ValidationsService,
     private readonly notificationsService: NotificationsService,
   ) {}
+
+  // ─── Contact assignment helpers (PR 9) ─────────────────────────────────────
+
+  /**
+   * A new assignment must point at a real, currently-active Contact — an
+   * inactive one can still be *read* (see findOne/findAll), it just can't be
+   * newly attached. Mirrors MaintenanceTicketsService.assertContactAssignable.
+   */
+  private async assertContactAssignable(contactId: string): Promise<Contact> {
+    const contact = await this.prisma.contact.findUnique({
+      where: { id: contactId },
+    });
+    if (!contact) {
+      throw new BadRequestException('Contact introuvable.');
+    }
+    if (!contact.active) {
+      throw new BadRequestException(
+        'Ce contact est désactivé et ne peut pas être assigné à une nouvelle démarche.',
+      );
+    }
+    return contact;
+  }
+
+  private readonly assignedContactInclude = {
+    assignedContact: { include: { category: true } },
+  };
 
   // ─── Derived / computed fields ────────────────────────────────────────────
 
@@ -246,6 +286,30 @@ export class AdministrativeProceduresService {
   async create(dto: CreateAdministrativeProcedureDto, userId: string) {
     this.validateDateCoherence(dto);
 
+    if (
+      dto.status !== undefined &&
+      !MANUALLY_SETTABLE_STATUSES.includes(dto.status)
+    ) {
+      throw new ConflictException(
+        'Ce statut ne peut pas être défini directement ; il est géré par le circuit de validation.',
+      );
+    }
+
+    // assignedContactId is create/update's source of truth for the
+    // relation; assignedTo is derived from it as a readable snapshot so
+    // existing reads/exports of the flat string field keep working
+    // unchanged. If no contact is selected, assignedTo falls back to
+    // whatever free text the caller sent — the pre-PR-9 legacy path,
+    // untouched.
+    let assignedTo = dto.assignedTo;
+    let assignedContactId: string | undefined;
+
+    if (dto.assignedContactId) {
+      const contact = await this.assertContactAssignable(dto.assignedContactId);
+      assignedContactId = contact.id;
+      assignedTo = contact.fullName;
+    }
+
     const created = await this.prisma.administrativeProcedure.create({
       data: {
         title: dto.title,
@@ -263,11 +327,15 @@ export class AdministrativeProceduresService {
           ? new Date(dto.expirationDate)
           : undefined,
         renewalDate: dto.renewalDate ? new Date(dto.renewalDate) : undefined,
+        status: dto.status,
         priority: dto.priority,
-        assignedTo: dto.assignedTo,
+        assignedTo,
+        assignedContactId,
         notes: dto.notes,
+        pendingResponseOrganization: dto.pendingResponseOrganization,
         createdById: userId,
       },
+      include: this.assignedContactInclude,
     });
 
     return this.withComputedFields(created);
@@ -347,6 +415,7 @@ export class AdministrativeProceduresService {
 
     const procedures = await this.prisma.administrativeProcedure.findMany({
       where,
+      include: this.assignedContactInclude,
       orderBy: { createdAt: 'desc' },
     });
 
@@ -372,6 +441,9 @@ export class AdministrativeProceduresService {
   }
 
   async findOne(id: string) {
+    // No `active` filter on the included Contact — deliberately: a
+    // procedure referencing a since-deactivated contact must stay fully
+    // readable (same rule MaintenanceTicketsService.findOne already applies).
     const procedure = await this.prisma.administrativeProcedure.findUnique({
       where: { id },
       include: {
@@ -379,6 +451,7 @@ export class AdministrativeProceduresService {
         createdBy: {
           select: { id: true, name: true, initials: true, roleLabel: true },
         },
+        ...this.assignedContactInclude,
       },
     });
     if (!procedure) throw new NotFoundException('Procedure not found');
@@ -407,14 +480,40 @@ export class AdministrativeProceduresService {
     });
 
     if (dto.status !== undefined) {
-      const routineStates: ProcedureStatus[] = ['A_PREPARER', 'EN_COURS'];
       if (
-        !routineStates.includes(existing.status) ||
-        !routineStates.includes(dto.status)
+        !MANUALLY_SETTABLE_STATUSES.includes(existing.status) ||
+        !MANUALLY_SETTABLE_STATUSES.includes(dto.status)
       ) {
         throw new ConflictException(
           'Ce changement de statut doit passer par le circuit de validation approprié (soumission, renouvellement ou archivage).',
         );
+      }
+    }
+
+    // Three distinct states for assignedContactId, per the dual-write
+    // contract: omitted (key absent from the request body) leaves the
+    // existing relation and assignedTo snapshot untouched; an id validates
+    // and refreshes both; explicit `null` (present, JSON null — distinct
+    // from "absent" since class-validator's @IsOptional lets null through
+    // too) disconnects the contact and clears assignedTo with it. The
+    // legacy `dto.assignedTo` passthrough only applies when the caller isn't
+    // touching the relation at all, so it can never race with the snapshot
+    // this derives.
+    let contactUpdate: {
+      assignedContactId?: string | null;
+      assignedTo?: string | null;
+    } = {};
+    if (dto.assignedContactId !== undefined) {
+      if (dto.assignedContactId === null) {
+        contactUpdate = { assignedContactId: null, assignedTo: null };
+      } else {
+        const contact = await this.assertContactAssignable(
+          dto.assignedContactId,
+        );
+        contactUpdate = {
+          assignedContactId: contact.id,
+          assignedTo: contact.fullName,
+        };
       }
     }
 
@@ -445,10 +544,17 @@ export class AdministrativeProceduresService {
           ? { renewalDate: new Date(dto.renewalDate) }
           : {}),
         ...(dto.priority !== undefined ? { priority: dto.priority } : {}),
-        ...(dto.assignedTo !== undefined ? { assignedTo: dto.assignedTo } : {}),
+        ...(dto.assignedTo !== undefined && dto.assignedContactId === undefined
+          ? { assignedTo: dto.assignedTo }
+          : {}),
         ...(dto.notes !== undefined ? { notes: dto.notes } : {}),
         ...(dto.status !== undefined ? { status: dto.status } : {}),
+        ...(dto.pendingResponseOrganization !== undefined
+          ? { pendingResponseOrganization: dto.pendingResponseOrganization }
+          : {}),
+        ...contactUpdate,
       },
+      include: this.assignedContactInclude,
     });
 
     return this.withComputedFields(updated);
@@ -464,6 +570,7 @@ export class AdministrativeProceduresService {
     const updated = await this.prisma.administrativeProcedure.update({
       where: { id },
       data: { status: 'ARCHIVE', archivedAt: new Date() },
+      include: this.assignedContactInclude,
     });
     return this.withComputedFields(updated);
   }
@@ -503,6 +610,7 @@ export class AdministrativeProceduresService {
         validationStatus: 'PENDING_VALIDATION',
         pendingValidationAction: action,
       },
+      include: this.assignedContactInclude,
     });
 
     await this.notificationsService.createForRole('SUPERVISOR', {
@@ -539,6 +647,7 @@ export class AdministrativeProceduresService {
         validationStatus: 'PENDING_VALIDATION',
         pendingValidationAction: 'RENEWAL',
       },
+      include: this.assignedContactInclude,
     });
 
     await this.notificationsService.createForRole('SUPERVISOR', {
@@ -573,6 +682,7 @@ export class AdministrativeProceduresService {
         validationStatus: 'PENDING_VALIDATION',
         pendingValidationAction: 'ARCHIVE',
       },
+      include: this.assignedContactInclude,
     });
 
     await this.notificationsService.createForRole('SUPERVISOR', {
@@ -632,6 +742,7 @@ export class AdministrativeProceduresService {
     const updated = await this.prisma.administrativeProcedure.update({
       where: { id },
       data,
+      include: this.assignedContactInclude,
     });
 
     await this.notificationsService.create({
@@ -659,6 +770,7 @@ export class AdministrativeProceduresService {
     const updated = await this.prisma.administrativeProcedure.update({
       where: { id },
       data: { validationStatus: 'REJECTED' },
+      include: this.assignedContactInclude,
     });
 
     await this.notificationsService.create({
@@ -686,6 +798,7 @@ export class AdministrativeProceduresService {
     const updated = await this.prisma.administrativeProcedure.update({
       where: { id },
       data: { validationStatus: 'CHANGES_REQUESTED' },
+      include: this.assignedContactInclude,
     });
 
     await this.notificationsService.create({

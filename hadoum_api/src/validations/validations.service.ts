@@ -3,8 +3,20 @@ import {
   ForbiddenException,
   Injectable,
 } from '@nestjs/common';
-import { ValidationResourceType, ValidationStatus } from '@prisma/client';
+import {
+  Prisma,
+  ValidationResourceType,
+  ValidationStatus,
+} from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+
+// Every method below optionally accepts a Prisma transaction client so a
+// caller (e.g. ExpenseWorkflowService, PR 5B) can atomically persist a
+// ValidationRequest alongside its own resource's status change in one
+// database transaction. Omitting it (every pre-existing caller) is
+// identical to today's behavior — it just falls back to the injected
+// PrismaService.
+type Db = Prisma.TransactionClient;
 
 interface CreateValidationInput {
   resourceType: ValidationResourceType;
@@ -25,10 +37,12 @@ interface ReviewValidationInput {
 export class ValidationsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async create(input: CreateValidationInput) {
+  async create(input: CreateValidationInput, tx?: Db) {
+    const db = tx ?? this.prisma;
     const existingPending = await this.findPendingFor(
       input.resourceType,
       input.resourceId,
+      db,
     );
     if (existingPending) {
       throw new ConflictException(
@@ -36,7 +50,7 @@ export class ValidationsService {
       );
     }
 
-    return this.prisma.validationRequest.create({
+    return db.validationRequest.create({
       data: {
         resourceType: input.resourceType,
         resourceId: input.resourceId,
@@ -51,8 +65,10 @@ export class ValidationsService {
   private findPendingFor(
     resourceType: ValidationResourceType,
     resourceId: string,
+    tx?: Db,
   ) {
-    return this.prisma.validationRequest.findFirst({
+    const db = tx ?? this.prisma;
+    return db.validationRequest.findFirst({
       where: { resourceType, resourceId, status: 'PENDING_VALIDATION' },
       orderBy: { submittedAt: 'desc' },
     });
@@ -61,10 +77,13 @@ export class ValidationsService {
   private async reviewPending(
     input: ReviewValidationInput,
     resultingStatus: ValidationStatus,
+    tx?: Db,
   ) {
+    const db = tx ?? this.prisma;
     const pending = await this.findPendingFor(
       input.resourceType,
       input.resourceId,
+      db,
     );
     if (!pending) {
       throw new ConflictException(
@@ -77,7 +96,7 @@ export class ValidationsService {
       );
     }
 
-    return this.prisma.validationRequest.update({
+    return db.validationRequest.update({
       where: { id: pending.id },
       data: {
         status: resultingStatus,
@@ -89,16 +108,16 @@ export class ValidationsService {
     });
   }
 
-  approve(input: ReviewValidationInput) {
-    return this.reviewPending(input, 'APPROVED');
+  approve(input: ReviewValidationInput, tx?: Db) {
+    return this.reviewPending(input, 'APPROVED', tx);
   }
 
-  reject(input: ReviewValidationInput) {
-    return this.reviewPending(input, 'REJECTED');
+  reject(input: ReviewValidationInput, tx?: Db) {
+    return this.reviewPending(input, 'REJECTED', tx);
   }
 
-  requestChanges(input: ReviewValidationInput) {
-    return this.reviewPending(input, 'CHANGES_REQUESTED');
+  requestChanges(input: ReviewValidationInput, tx?: Db) {
+    return this.reviewPending(input, 'CHANGES_REQUESTED', tx);
   }
 
   async findPending() {
@@ -125,6 +144,13 @@ export class ValidationsService {
                 urgency: true,
                 status: true,
                 space: { select: { name: true } },
+                // Supervisor validation queue: the assigned Contact, same
+                // dual-write relation MaintenanceTicketsService already
+                // reads/writes elsewhere — `assignedTo` (legacy free text)
+                // is included too so the frontend can fall back to it only
+                // when no Contact is linked, never showing both.
+                assignedTo: true,
+                assignedContact: { select: { id: true, fullName: true } },
               },
             });
             break;
@@ -137,6 +163,14 @@ export class ValidationsService {
                 supplierName: true,
                 category: true,
                 status: true,
+                // Supplier Contracts workflow: the Supervisor queue needs
+                // enough to triage a pending contract without opening it —
+                // start/end dates and amount, alongside the submitter/
+                // submission date already carried on the ValidationRequest
+                // itself (submittedBy/submittedAt, above).
+                startDate: true,
+                endDate: true,
+                amount: true,
               },
             });
             break;
@@ -151,6 +185,14 @@ export class ValidationsService {
                 priority: true,
                 status: true,
                 pendingValidationAction: true,
+                // Supervisor validation queue: the assigned responsible
+                // person — reuses the existing Contact relation
+                // (assignedContact), same dual-write pattern as
+                // MaintenanceTicket. `assignedTo` (legacy free text) is
+                // included too so the frontend can fall back to it only
+                // when no Contact is linked.
+                assignedTo: true,
+                assignedContact: { select: { id: true, fullName: true } },
               },
             });
             break;
@@ -205,6 +247,60 @@ export class ValidationsService {
                 destination: true,
                 status: true,
                 pendingValidationAction: true,
+              },
+            });
+            break;
+          case 'ACTIVITY':
+            resource = await this.prisma.activity.findUnique({
+              where: { id: request.resourceId },
+              select: {
+                id: true,
+                title: true,
+                type: true,
+                className: true,
+                date: true,
+                educator: { select: { firstName: true, lastName: true } },
+              },
+            });
+            break;
+          case 'LEAVE_REQUEST': {
+            const attendance = await this.prisma.staffAttendance.findUnique({
+              where: { id: request.resourceId },
+              select: {
+                id: true,
+                staffId: true,
+                type: true,
+                motif: true,
+                dateDebut: true,
+                dateFin: true,
+              },
+            });
+            const staffMember = attendance
+              ? await this.prisma.staffMember.findUnique({
+                  where: { id: attendance.staffId },
+                  select: { firstName: true, lastName: true },
+                })
+              : null;
+            resource = attendance ? { ...attendance, staffMember } : null;
+            break;
+          }
+          case 'FUND_REQUEST':
+            resource = await this.prisma.fundRequest.findUnique({
+              where: { id: request.resourceId },
+              select: { id: true, amountXof: true, motif: true, date: true },
+            });
+            break;
+          case 'EXPENSE_TRANSACTION':
+            resource = await this.prisma.transaction.findUnique({
+              where: { id: request.resourceId },
+              select: {
+                id: true,
+                label: true,
+                amountXof: true,
+                category: true,
+                date: true,
+                expenseWorkflowStatus: true,
+                supplierContact: { select: { id: true, fullName: true } },
               },
             });
             break;

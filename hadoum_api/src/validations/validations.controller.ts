@@ -11,7 +11,7 @@ export class ValidationsController {
   constructor(private readonly validationsService: ValidationsService) {}
 
   @Get('pending')
-  @Roles('SUPERVISOR')
+  @Roles('DIRECTOR', 'SUPERVISOR')
   findPending() {
     return this.validationsService.findPending();
   }

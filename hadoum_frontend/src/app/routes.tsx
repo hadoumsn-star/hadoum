@@ -22,11 +22,11 @@ import { ProfilePage }     from './pages/ProfilePage';
 import { MessagesPage }    from './pages/MessagesPage';
 import { AdministrationPage } from './pages/AdministrationPage';
 import { LocauxPage } from './pages/LocauxPage';
-import { TicketsMaintenancePage } from './pages/TicketsMaintenancePage';
 import { SupplierContractsPage } from './pages/SupplierContractsPage';
 import { DemarchesAdministrativesPage } from './pages/DemarchesAdministrativesPage';
 import { StocksInventairePage } from './pages/StocksInventairePage';
-import { RegistreEntreesSortiesPage } from './pages/RegistreEntreesSortiesPage';
+import { ContactsDemoPage } from './pages/ContactsDemoPage';
+import { AuditLogsPage } from './pages/AuditLogsPage';
 
 export const router = createBrowserRouter([
   { path: '/',                 element: <Navigate to="/login" replace /> },
@@ -56,11 +56,19 @@ export const router = createBrowserRouter([
       { path: 'messages',          Component: MessagesPage },
       { path: 'administration',              Component: AdministrationPage },
       { path: 'locaux-espaces',              Component: LocauxPage },
-      { path: 'tickets-maintenance',         Component: TicketsMaintenancePage },
+      // "Tickets de maintenance" and "Registre d'entrées/sorties" menu
+      // entries were removed from Administration & Locaux (Director/
+      // Supervisor menu simplification) — old links/bookmarks redirect back
+      // to the hub instead of breaking. TicketsMaintenancePage and
+      // RegistreEntreesSortiesPage (and their backend modules/APIs/data)
+      // are untouched and can be re-routed here again later.
+      { path: 'tickets-maintenance',         element: <Navigate to="/app/administration" replace /> },
       { path: 'contrats-fournisseurs',       Component: SupplierContractsPage },
       { path: 'demarches-administratives',   Component: DemarchesAdministrativesPage },
       { path: 'stocks-inventaire',           Component: StocksInventairePage },
-      { path: 'registre-entrees-sorties',    Component: RegistreEntreesSortiesPage },
+      { path: 'registre-entrees-sorties',    element: <Navigate to="/app/administration" replace /> },
+      { path: 'contacts-demo',               Component: ContactsDemoPage }, // dev harness, not in Sidebar nav — see PR 2
+      { path: 'audit-logs',                  Component: AuditLogsPage },
       { path: 'educators',        element: <PlaceholderPage title="Éducateurs" /> },
       { path: 'settings',         element: <PlaceholderPage title="Paramètres" /> },
       { path: 'profile',          Component: ProfilePage },

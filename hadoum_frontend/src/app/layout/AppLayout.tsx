@@ -14,7 +14,7 @@ const PAGE_TITLES: Record<string, { title: string; breadcrumb?: string[] }> = {
   '/app/messages':    { title: 'Messagerie' },
   '/app/finances':    { title: 'Finances & Budget',        breadcrumb: ['Administration'] },
   '/app/reports':     { title: 'Rapports',                 breadcrumb: ['Pilotage'] },
-  '/app/validations': { title: 'Validations en attente',   breadcrumb: ['Supervision'] },
+  '/app/validations': { title: 'Demandes à valider',       breadcrumb: ['Supervision'] },
   '/app/incidents':   { title: 'Incidents',                breadcrumb: ['Supervision'] },
   '/app/monitoring':  { title: 'Suivis individuels',       breadcrumb: ['Supervision'] },
   '/app/indicators':  { title: 'Indicateurs',              breadcrumb: ['Pilotage'] },
@@ -29,6 +29,7 @@ const PAGE_TITLES: Record<string, { title: string; breadcrumb?: string[] }> = {
   '/app/settings':    { title: 'Paramètres' },
   '/app/profile':     { title: 'Mon profil' },
   '/app/design-system': { title: 'Design System' },
+  '/app/contacts-demo': { title: 'Démonstration — Contacts (PR 2)' },
 };
 
 const SIDEBAR_WIDTH = 256;

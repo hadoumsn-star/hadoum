@@ -18,6 +18,7 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { AuthUser } from '../auth/types/request-with-user';
+import { Audited } from '../audit-logs/decorators/audited.decorator';
 import { StockItemsService } from './stock-items.service';
 import { CreateStockItemDto } from './dto/create-stock-item.dto';
 import { UpdateStockItemDto } from './dto/update-stock-item.dto';
@@ -25,6 +26,7 @@ import { CreateStockEntryDto } from './dto/create-stock-entry.dto';
 import { CreateStockExitDto } from './dto/create-stock-exit.dto';
 import { CreateStockAdjustmentDto } from './dto/create-stock-adjustment.dto';
 import { CreateStockTransferDto } from './dto/create-stock-transfer.dto';
+import { CreateStockInventoryCountDto } from './dto/create-stock-inventory-count.dto';
 import { SubmitValidationDto } from './dto/submit-validation.dto';
 import { ReviewValidationDto } from './dto/review-validation.dto';
 import { RejectValidationDto } from './dto/reject-validation.dto';
@@ -36,6 +38,7 @@ export class StockItemsController {
 
   @Post()
   @Roles('DIRECTOR')
+  @Audited({ module: 'STOCK', entity: 'StockItem', action: 'CREATE' })
   create(@Body() dto: CreateStockItemDto, @CurrentUser() user: AuthUser) {
     return this.stockItemsService.create(dto, user.id);
   }
@@ -80,18 +83,23 @@ export class StockItemsController {
 
   @Patch(':id')
   @Roles('DIRECTOR')
+  @Audited({ module: 'STOCK', entity: 'StockItem', action: 'UPDATE' })
   update(@Param('id') id: string, @Body() dto: UpdateStockItemDto) {
     return this.stockItemsService.update(id, dto);
   }
 
   @Patch(':id/archive')
   @Roles('DIRECTOR')
+  @Audited({ module: 'STOCK', entity: 'StockItem', action: 'ARCHIVE' })
   archive(@Param('id') id: string, @CurrentUser() user: AuthUser) {
     return this.stockItemsService.archive(id, user.id);
   }
 
+  // PR 12: SUPERVISOR can record entries/exits too (full access stays
+  // DIRECTOR-only — see adjustments/transfers/archive below, unchanged).
   @Post(':id/entries')
-  @Roles('DIRECTOR')
+  @Roles('DIRECTOR', 'SUPERVISOR')
+  @Audited({ module: 'STOCK', entity: 'StockMovement', action: 'ENTRY' })
   createEntry(
     @Param('id') id: string,
     @CurrentUser() user: AuthUser,
@@ -101,7 +109,8 @@ export class StockItemsController {
   }
 
   @Post(':id/exits')
-  @Roles('DIRECTOR')
+  @Roles('DIRECTOR', 'SUPERVISOR')
+  @Audited({ module: 'STOCK', entity: 'StockMovement', action: 'EXIT' })
   createExit(
     @Param('id') id: string,
     @CurrentUser() user: AuthUser,
@@ -112,6 +121,7 @@ export class StockItemsController {
 
   @Post(':id/adjustments')
   @Roles('DIRECTOR')
+  @Audited({ module: 'STOCK', entity: 'StockMovement', action: 'ADJUSTMENT' })
   createAdjustment(
     @Param('id') id: string,
     @CurrentUser() user: AuthUser,
@@ -122,12 +132,27 @@ export class StockItemsController {
 
   @Post(':id/transfers')
   @Roles('DIRECTOR')
+  @Audited({ module: 'STOCK', entity: 'StockMovement', action: 'TRANSFER' })
   createTransfer(
     @Param('id') id: string,
     @CurrentUser() user: AuthUser,
     @Body() dto: CreateStockTransferDto,
   ) {
     return this.stockItemsService.createTransfer(id, user.id, dto);
+  }
+
+  // PR 12 — physical inventory count. Both DIRECTOR and SUPERVISOR can
+  // perform one; the variance and the resulting adjustment (if any) are
+  // computed server-side (see StockItemsService.createInventoryCount).
+  @Post(':id/inventory-count')
+  @Roles('DIRECTOR', 'SUPERVISOR')
+  @Audited({ module: 'STOCK', entity: 'StockItem', action: 'INVENTORY_COUNT' })
+  createInventoryCount(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthUser,
+    @Body() dto: CreateStockInventoryCountDto,
+  ) {
+    return this.stockItemsService.createInventoryCount(id, user.id, dto);
   }
 
   @Get(':id/movements')
@@ -138,6 +163,11 @@ export class StockItemsController {
 
   @Post(':id/submit-validation')
   @Roles('DIRECTOR')
+  @Audited({
+    module: 'STOCK',
+    entity: 'StockItem',
+    action: 'SUBMIT_VALIDATION',
+  })
   submitValidation(
     @Param('id') id: string,
     @CurrentUser() user: AuthUser,
@@ -148,6 +178,7 @@ export class StockItemsController {
 
   @Patch(':id/approve')
   @Roles('SUPERVISOR')
+  @Audited({ module: 'STOCK', entity: 'StockItem', action: 'APPROVE' })
   approve(
     @Param('id') id: string,
     @CurrentUser() user: AuthUser,
@@ -158,6 +189,7 @@ export class StockItemsController {
 
   @Patch(':id/reject')
   @Roles('SUPERVISOR')
+  @Audited({ module: 'STOCK', entity: 'StockItem', action: 'REJECT' })
   reject(
     @Param('id') id: string,
     @CurrentUser() user: AuthUser,
@@ -168,6 +200,7 @@ export class StockItemsController {
 
   @Patch(':id/request-changes')
   @Roles('SUPERVISOR')
+  @Audited({ module: 'STOCK', entity: 'StockItem', action: 'REQUEST_CHANGES' })
   requestChanges(
     @Param('id') id: string,
     @CurrentUser() user: AuthUser,

@@ -1,17 +1,14 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
 import {
-  Building2, Wrench, FileSignature, Landmark, Package, ClipboardList,
+  Building2, FileSignature, Landmark, Package,
   ArrowRight,
 } from 'lucide-react';
 import { spacesApi } from '../services/spaces.api';
-import { maintenanceTicketsApi } from '../services/maintenanceTickets.api';
 import { supplierContractsApi } from '../services/supplierContracts.api';
 import { administrativeProceduresApi } from '../services/administrativeProcedures.api';
 import { stockItemsApi } from '../services/stockItems.api';
 import { inventoryAssetsApi } from '../services/inventoryAssets.api';
-import { entryLogsApi } from '../services/entryLogs.api';
-import { goodsMovementLogsApi } from '../services/goodsMovementLogs.api';
 
 // ─── Module cards ──────────────────────────────────────────────────────────────
 
@@ -25,6 +22,10 @@ interface ModuleCard {
   iconBg: string;
 }
 
+// "Tickets de maintenance" and "Registre d'entrées/sorties" cards removed
+// from this hub (Director/Supervisor menu simplification) — the underlying
+// pages, routes (now redirecting here, see routes.tsx), services, and
+// backend modules are untouched and can be re-added here later.
 const CARDS: ModuleCard[] = [
   {
     key: 'locaux',
@@ -32,13 +33,6 @@ const CARDS: ModuleCard[] = [
     description: "Gérer les salles, dortoirs et espaces de l'orphelinat.",
     path: '/app/locaux-espaces',
     icon: Building2, iconColor: '#3E5A78', iconBg: '#EEF2F7',
-  },
-  {
-    key: 'tickets',
-    title: 'Tickets de maintenance',
-    description: 'Suivre les interventions et réparations à réaliser.',
-    path: '/app/tickets-maintenance',
-    icon: Wrench, iconColor: '#D97706', iconBg: '#FFFBEB',
   },
   {
     key: 'contrats',
@@ -61,13 +55,6 @@ const CARDS: ModuleCard[] = [
     path: '/app/stocks-inventaire',
     icon: Package, iconColor: '#B91C1C', iconBg: '#FEF2F2',
   },
-  {
-    key: 'registre',
-    title: "Registre d'entrées/sorties",
-    description: 'Enregistrer visiteurs, livraisons et prestataires.',
-    path: '/app/registre-entrees-sorties',
-    icon: ClipboardList, iconColor: '#374151', iconBg: '#F3F4F6',
-  },
 ];
 
 // ─── Main Page ─────────────────────────────────────────────────────────────────
@@ -75,17 +62,12 @@ const CARDS: ModuleCard[] = [
 export function AdministrationPage() {
   const navigate = useNavigate();
   const [activeSpaces, setActiveSpaces] = useState<number | null>(null);
-  const [openTickets, setOpenTickets] = useState<number | null>(null);
   const [activeContracts, setActiveContracts] = useState<number | null>(null);
   const [proceduresNeedingAttention, setProceduresNeedingAttention] = useState<number | null>(null);
   const [stocksNeedingAttention, setStocksNeedingAttention] = useState<number | null>(null);
-  const [registreNeedingAttention, setRegistreNeedingAttention] = useState<number | null>(null);
 
   useEffect(() => {
     spacesApi.list({ isActive: true }).then(data => setActiveSpaces(data.length)).catch(() => {});
-    maintenanceTicketsApi.list().then(data => {
-      setOpenTickets(data.filter(t => t.status !== 'FERME' && t.status !== 'ANNULE').length);
-    }).catch(() => {});
     supplierContractsApi.list().then(data => {
       setActiveContracts(data.filter(c => c.effectiveStatus === 'ACTIF').length);
     }).catch(() => {});
@@ -99,20 +81,13 @@ export function AdministrationPage() {
       const assetAlerts = assets.filter(a => a.isInventoryCheckDue || a.isInventoryCheckOverdue || a.validationStatus === 'PENDING_VALIDATION').length;
       setStocksNeedingAttention(stockAlerts + assetAlerts);
     }).catch(() => {});
-    Promise.all([entryLogsApi.list(), goodsMovementLogsApi.list()]).then(([entries, goods]) => {
-      const entryAlerts = entries.filter(e => e.isCurrentlyPresent || e.isVisitExpected || e.isExpectedDepartureOverdue || e.validationStatus === 'PENDING_VALIDATION').length;
-      const goodsAlerts = goods.filter(g => g.isOverdueReturn || g.validationStatus === 'PENDING_VALIDATION').length;
-      setRegistreNeedingAttention(entryAlerts + goodsAlerts);
-    }).catch(() => {});
   }, []);
 
   const counters: Record<string, number | null> = {
     locaux: activeSpaces,
-    tickets: openTickets,
     contrats: activeContracts,
     demarches: proceduresNeedingAttention,
     stocks: stocksNeedingAttention,
-    registre: registreNeedingAttention,
   };
 
   return (
@@ -122,7 +97,7 @@ export function AdministrationPage() {
           Administration et Gestion des Locaux
         </h2>
         <p style={{ color: '#6B7280', fontSize: 13, marginTop: 2 }}>
-          Locaux, maintenance, contrats, démarches, stocks et registre de l'orphelinat.
+          Locaux, contrats, démarches et stocks de l'orphelinat.
         </p>
       </div>
 

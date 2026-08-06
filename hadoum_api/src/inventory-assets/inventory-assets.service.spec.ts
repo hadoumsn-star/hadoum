@@ -1,10 +1,15 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  NotFoundException,
+} from '@nestjs/common';
 import { InventoryAssetsService } from './inventory-assets.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { UploadService } from '../upload/upload.service';
 import { ValidationsService } from '../validations/validations.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { anyInstanceOf, matching } from '../test-utils/jest-matchers';
 
 function createMockPrisma() {
   return {
@@ -35,7 +40,11 @@ describe('InventoryAssetsService', () => {
     findHistory: jest.Mock;
   };
   let notifications: { create: jest.Mock; createForRole: jest.Mock };
-  let upload: { upload: jest.Mock; getPresignedUrl: jest.Mock; deleteFile: jest.Mock };
+  let upload: {
+    upload: jest.Mock;
+    getPresignedUrl: jest.Mock;
+    deleteFile: jest.Mock;
+  };
 
   const baseAsset = {
     id: 'asset-1',
@@ -77,7 +86,11 @@ describe('InventoryAssetsService', () => {
       findHistory: jest.fn(),
     };
     notifications = { create: jest.fn(), createForRole: jest.fn() };
-    upload = { upload: jest.fn(), getPresignedUrl: jest.fn(), deleteFile: jest.fn() };
+    upload = {
+      upload: jest.fn(),
+      getPresignedUrl: jest.fn(),
+      deleteFile: jest.fn(),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -117,10 +130,18 @@ describe('InventoryAssetsService', () => {
     });
 
     it('sets status to AFFECTE automatically when created already assigned', async () => {
-      prisma.inventoryAsset.create.mockResolvedValue({ ...baseAsset, status: 'AFFECTE' });
-      await service.create({ name: 'x', category: 'INFORMATIQUE', assignedTo: 'Jean' } as any, 'director-1');
+      prisma.inventoryAsset.create.mockResolvedValue({
+        ...baseAsset,
+        status: 'AFFECTE',
+      });
+      await service.create(
+        { name: 'x', category: 'INFORMATIQUE', assignedTo: 'Jean' } as any,
+        'director-1',
+      );
       expect(prisma.inventoryAsset.create).toHaveBeenCalledWith(
-        expect.objectContaining({ data: expect.objectContaining({ status: 'AFFECTE' }) }),
+        matching({
+          data: matching({ status: 'AFFECTE' }),
+        }),
       );
     });
   });
@@ -128,16 +149,23 @@ describe('InventoryAssetsService', () => {
   describe('findOne', () => {
     it('throws NotFoundException for a missing asset', async () => {
       prisma.inventoryAsset.findUnique.mockResolvedValue(null);
-      await expect(service.findOne('missing')).rejects.toBeInstanceOf(NotFoundException);
+      await expect(service.findOne('missing')).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
     });
   });
 
   describe('update (invalid transitions)', () => {
     it('allows a routine status change (DISPONIBLE -> EN_MAINTENANCE)', async () => {
       prisma.inventoryAsset.findUnique.mockResolvedValue(baseAsset);
-      prisma.inventoryAsset.update.mockResolvedValue({ ...baseAsset, status: 'EN_MAINTENANCE' });
+      prisma.inventoryAsset.update.mockResolvedValue({
+        ...baseAsset,
+        status: 'EN_MAINTENANCE',
+      });
 
-      const result = await service.update('asset-1', { status: 'EN_MAINTENANCE' } as any);
+      const result = await service.update('asset-1', {
+        status: 'EN_MAINTENANCE',
+      } as any);
 
       expect(result.status).toBe('EN_MAINTENANCE');
     });
@@ -152,7 +180,10 @@ describe('InventoryAssetsService', () => {
     });
 
     it('rejects any status change starting from an already-terminal state', async () => {
-      prisma.inventoryAsset.findUnique.mockResolvedValue({ ...baseAsset, status: 'REFORME' });
+      prisma.inventoryAsset.findUnique.mockResolvedValue({
+        ...baseAsset,
+        status: 'REFORME',
+      });
 
       await expect(
         service.update('asset-1', { status: 'DISPONIBLE' } as any),
@@ -169,13 +200,18 @@ describe('InventoryAssetsService', () => {
         status: 'AFFECTE',
       });
 
-      const result = await service.assign('asset-1', { assignedTo: 'Jean' } as any);
+      const result = await service.assign('asset-1', {
+        assignedTo: 'Jean',
+      });
 
       expect(result.status).toBe('AFFECTE');
     });
 
     it('refuses to assign an archived asset', async () => {
-      prisma.inventoryAsset.findUnique.mockResolvedValue({ ...baseAsset, status: 'ARCHIVE' });
+      prisma.inventoryAsset.findUnique.mockResolvedValue({
+        ...baseAsset,
+        status: 'ARCHIVE',
+      });
       await expect(
         service.assign('asset-1', { assignedTo: 'Jean' } as any),
       ).rejects.toBeInstanceOf(ConflictException);
@@ -188,11 +224,14 @@ describe('InventoryAssetsService', () => {
         ...baseAsset,
         acquisitionCost: 50_000, // below threshold
       });
-      prisma.inventoryAsset.update.mockResolvedValue({ ...baseAsset, spaceId: 'space-2' });
+      prisma.inventoryAsset.update.mockResolvedValue({
+        ...baseAsset,
+        spaceId: 'space-2',
+      });
 
       const result = await service.transfer('asset-1', 'director-1', {
         spaceId: 'space-2',
-      } as any);
+      });
 
       expect(validations.create).not.toHaveBeenCalled();
       expect(result.spaceId).toBe('space-2');
@@ -211,14 +250,14 @@ describe('InventoryAssetsService', () => {
 
       const result = await service.transfer('asset-1', 'director-1', {
         spaceId: 'space-2',
-      } as any);
+      });
 
       expect(validations.create).toHaveBeenCalledWith(
-        expect.objectContaining({ resourceType: 'INVENTORY_ASSET' }),
+        matching({ resourceType: 'INVENTORY_ASSET' }),
       );
       expect(notifications.createForRole).toHaveBeenCalledWith(
         'SUPERVISOR',
-        expect.objectContaining({ type: 'VALIDATION_SUBMITTED' }),
+        matching({ type: 'VALIDATION_SUBMITTED' }),
       );
       expect(result.pendingValidationAction).toBe('ASSET_TRANSFER');
     });
@@ -259,10 +298,10 @@ describe('InventoryAssetsService', () => {
         pendingValidationAction: 'ASSET_ARCHIVE',
       });
 
-      await service.requestArchive('asset-1', 'director-1', {} as any);
+      await service.requestArchive('asset-1', 'director-1', {});
 
       expect(validations.create).toHaveBeenCalledWith(
-        expect.objectContaining({ resourceType: 'INVENTORY_ASSET' }),
+        matching({ resourceType: 'INVENTORY_ASSET' }),
       );
     });
   });
@@ -277,16 +316,21 @@ describe('InventoryAssetsService', () => {
       };
       prisma.inventoryAsset.findUnique.mockResolvedValue(pendingAsset);
       validations.approve.mockResolvedValue({ submittedById: 'director-1' });
-      prisma.inventoryAsset.update.mockResolvedValue({ ...pendingAsset, status: 'CASSE' });
+      prisma.inventoryAsset.update.mockResolvedValue({
+        ...pendingAsset,
+        status: 'CASSE',
+      });
 
-      const result = await service.approve('asset-1', 'supervisor-1', {} as any);
+      const result = await service.approve('asset-1', 'supervisor-1', {});
 
       expect(prisma.inventoryAsset.update).toHaveBeenCalledWith(
-        expect.objectContaining({ data: expect.objectContaining({ status: 'CASSE' }) }),
+        matching({
+          data: matching({ status: 'CASSE' }),
+        }),
       );
       expect(result.status).toBe('CASSE');
       expect(notifications.create).toHaveBeenCalledWith(
-        expect.objectContaining({ type: 'VALIDATION_APPROVED' }),
+        matching({ type: 'VALIDATION_APPROVED' }),
       );
     });
 
@@ -305,11 +349,14 @@ describe('InventoryAssetsService', () => {
         archivedAt: new Date(),
       });
 
-      const result = await service.approve('asset-1', 'supervisor-1', {} as any);
+      const result = await service.approve('asset-1', 'supervisor-1', {});
 
       expect(prisma.inventoryAsset.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ status: 'ARCHIVE', archivedAt: expect.any(Date) }),
+        matching({
+          data: matching({
+            status: 'ARCHIVE',
+            archivedAt: anyInstanceOf(Date),
+          }),
         }),
       );
       expect(result.status).toBe('ARCHIVE');
@@ -335,24 +382,26 @@ describe('InventoryAssetsService', () => {
         validationStatus: 'REJECTED',
       });
 
-      const result = await service.reject('asset-1', 'supervisor-1', { comment: 'No' } as any);
+      const result = await service.reject('asset-1', 'supervisor-1', {
+        comment: 'No',
+      });
 
       expect(result.validationStatus).toBe('REJECTED');
     });
 
     it('requests changes and notifies the submitter', async () => {
       prisma.inventoryAsset.findUnique.mockResolvedValue(baseAsset);
-      validations.requestChanges.mockResolvedValue({ submittedById: 'director-1' });
+      validations.requestChanges.mockResolvedValue({
+        submittedById: 'director-1',
+      });
       prisma.inventoryAsset.update.mockResolvedValue({
         ...baseAsset,
         validationStatus: 'CHANGES_REQUESTED',
       });
 
-      const result = await service.requestChanges(
-        'asset-1',
-        'supervisor-1',
-        { comment: 'clarify' } as any,
-      );
+      const result = await service.requestChanges('asset-1', 'supervisor-1', {
+        comment: 'clarify',
+      });
 
       expect(result.validationStatus).toBe('CHANGES_REQUESTED');
     });
@@ -368,19 +417,26 @@ describe('InventoryAssetsService', () => {
       const healthy = { ...baseAsset, id: 'a-ok' };
       prisma.inventoryAsset.findMany.mockResolvedValue([healthy, overdue]);
 
-      const result = await service.findAll({ search: 'Dell', spaceId: 'space-1' } as any);
+      const result = await service.findAll({
+        search: 'Dell',
+        spaceId: 'space-1',
+      });
 
       expect(prisma.inventoryAsset.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({ where: expect.objectContaining({ spaceId: 'space-1' }) }),
+        matching({
+          where: matching({ spaceId: 'space-1' }),
+        }),
       );
       expect(result[0].id).toBe('a-overdue');
     });
 
     it('excludes archived assets by default and includes them only when requested', async () => {
       prisma.inventoryAsset.findMany.mockResolvedValue([]);
-      await service.findAll({ archived: true } as any);
+      await service.findAll({ archived: true });
       expect(prisma.inventoryAsset.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({ where: expect.objectContaining({ status: 'ARCHIVE' }) }),
+        matching({
+          where: matching({ status: 'ARCHIVE' }),
+        }),
       );
     });
 
@@ -394,7 +450,7 @@ describe('InventoryAssetsService', () => {
 
       expect(notifications.createForRole).toHaveBeenCalledWith(
         'DIRECTOR',
-        expect.objectContaining({ type: 'ASSET_INVENTORY_DUE' }),
+        matching({ type: 'ASSET_INVENTORY_DUE' }),
       );
     });
   });
@@ -405,19 +461,30 @@ describe('InventoryAssetsService', () => {
       upload.upload.mockResolvedValue('inventory-assets/asset-1/file.pdf');
       prisma.inventoryAssetDocument.create.mockResolvedValue({ id: 'doc-1' });
 
-      const file = { mimetype: 'application/pdf' } as any;
-      await service.uploadDocument('asset-1', 'director-1', file, 'GARANTIE', 'Garantie');
+      const file = { mimetype: 'application/pdf' } as Express.Multer.File;
+      await service.uploadDocument(
+        'asset-1',
+        'director-1',
+        file,
+        'GARANTIE',
+        'Garantie',
+      );
 
       expect(prisma.inventoryAssetDocument.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ assetId: 'asset-1', uploadedById: 'director-1' }),
+        matching({
+          data: matching({
+            assetId: 'asset-1',
+            uploadedById: 'director-1',
+          }),
         }),
       );
     });
 
     it('lists documents for an existing asset', async () => {
       prisma.inventoryAsset.findUnique.mockResolvedValue(baseAsset);
-      prisma.inventoryAssetDocument.findMany.mockResolvedValue([{ id: 'doc-1' }]);
+      prisma.inventoryAssetDocument.findMany.mockResolvedValue([
+        { id: 'doc-1' },
+      ]);
       const result = await service.listDocuments('asset-1');
       expect(result).toHaveLength(1);
     });
@@ -444,9 +511,9 @@ describe('InventoryAssetsService', () => {
         fileKey: 'x',
       });
 
-      await expect(service.getDocumentUrl('asset-1', 'doc-1')).rejects.toBeInstanceOf(
-        NotFoundException,
-      );
+      await expect(
+        service.getDocumentUrl('asset-1', 'doc-1'),
+      ).rejects.toBeInstanceOf(NotFoundException);
     });
   });
 });

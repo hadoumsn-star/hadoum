@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router';
 import { toast } from 'sonner';
 import { useAuth } from '../context/AuthContext';
 import {
@@ -7,6 +8,7 @@ import {
   type CreateStockItemInput,
 } from '../services/stockItems.api';
 import { type ApiStockMovement } from '../services/stockMovements.api';
+import type { CreateStockInventoryCountInput } from '../services/stockItems.api';
 import {
   inventoryAssetsApi,
   type ApiInventoryAsset, type ApiInventoryAssetDetail, type ApiAssetDisposalType,
@@ -26,7 +28,7 @@ import {
   Plus, X, Search, Eye, Pencil, Package, Archive, CheckCircle2,
   Upload, Paperclip, Trash2, Send, ShieldCheck, ShieldAlert, MessageSquareWarning,
   RefreshCw, Clock, AlertTriangle, ArrowDownCircle, ArrowUpCircle, Wrench,
-  ClipboardList, Boxes, UserCog,
+  ClipboardList, Boxes, UserCog, ClipboardCheck, ScrollText,
 } from 'lucide-react';
 
 const INPUT: React.CSSProperties = {
@@ -352,6 +354,92 @@ function MovementModal({ mode, item, onSubmit, onClose }: {
   );
 }
 
+// ─── Physical inventory count modal (PR 12) ─────────────────────────────────
+// Distinct from MovementModal's 'adjustment' mode: the user reports an
+// absolute quantity they physically counted, not a delta — the variance is
+// computed live for preview, and computed again (authoritatively) server-
+// side. Available to DIRECTOR and SUPERVISOR alike (see StockItemDetailModal).
+
+function InventoryCountModal({ item, onSubmit, onClose }: {
+  item: ApiStockItem;
+  onSubmit: (payload: CreateStockInventoryCountInput) => Promise<void>;
+  onClose: () => void;
+}) {
+  const [actualQuantity, setActualQuantity] = useState(String(item.currentQuantity));
+  const [comment, setComment] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  const actual = actualQuantity === '' ? null : parseFloat(actualQuantity);
+  const difference = actual == null || isNaN(actual) ? null : actual - item.currentQuantity;
+  const canSubmit = actual != null && !isNaN(actual) && actual >= 0 && !submitting;
+
+  const handleSubmit = async () => {
+    if (!canSubmit || actual == null) return;
+    setSubmitting(true);
+    try {
+      await onSubmit({ actualQuantity: actual, comment: comment.trim() || undefined });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4"
+      style={{ background: 'rgba(0,0,0,0.45)' }}
+      onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="w-full max-w-sm rounded-2xl overflow-hidden shadow-xl" style={{ background: '#FFFFFF' }}>
+        <div className="flex items-center justify-between px-6 py-5" style={{ borderBottom: '1px solid #F3F4F6' }}>
+          <h3 style={{ color: '#1A1A1A', fontSize: 16, fontWeight: 700 }}>Inventaire physique</h3>
+          <button onClick={onClose}><X size={18} style={{ color: '#9CA3AF' }} /></button>
+        </div>
+        <div className="px-6 py-5 space-y-3">
+          <div className="rounded-lg px-3 py-2.5" style={{ background: '#F9F7F3', border: '1px solid #E5E7EB' }}>
+            <p style={{ fontSize: 12, color: '#6B7280' }}>
+              Quantité attendue (système) : <strong style={{ color: '#374151' }}>{item.currentQuantity} {STOCK_UNIT_LABELS[item.unit]}</strong>
+            </p>
+          </div>
+          <div>
+            <label style={LABEL}>Quantité réelle constatée *</label>
+            <input type="number" min={0} value={actualQuantity} onChange={e => setActualQuantity(e.target.value)} style={INPUT} autoFocus />
+          </div>
+          {difference != null && (
+            <div className="rounded-lg px-3 py-2.5" style={{
+              background: difference === 0 ? '#ECFDF5' : '#FFFBEB',
+              border: `1px solid ${difference === 0 ? '#A7F3D0' : '#FDE68A'}`,
+            }}>
+              <p style={{ fontSize: 12, fontWeight: 600, color: difference === 0 ? '#065F46' : '#D97706' }}>
+                Écart : {difference > 0 ? '+' : ''}{difference} {STOCK_UNIT_LABELS[item.unit]}
+                {difference === 0 && ' — aucun écart constaté'}
+              </p>
+              {Math.abs(difference) > 0 && item.currentQuantity > 0
+                && (Math.abs(difference) / item.currentQuantity) * 100 > 20 && (
+                <p style={{ fontSize: 11, color: '#D97706', marginTop: 3 }}>
+                  ⚠ Écart important (&gt; 20 %) : nécessitera une validation du superviseur.
+                </p>
+              )}
+            </div>
+          )}
+          <div>
+            <label style={LABEL}>Commentaire (optionnel)</label>
+            <textarea value={comment} onChange={e => setComment(e.target.value)} rows={2}
+              placeholder="Ex : comptage mensuel de l'entrepôt" style={{ ...INPUT, resize: 'none' }} />
+          </div>
+        </div>
+        <div className="flex gap-2 px-6 py-4" style={{ borderTop: '1px solid #F3F4F6' }}>
+          <button onClick={onClose} className="flex-1 py-2.5 rounded-lg"
+            style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', color: '#374151', fontSize: 13, fontWeight: 500, cursor: 'pointer' }}>
+            Annuler
+          </button>
+          <button disabled={!canSubmit} onClick={handleSubmit} className="flex-1 py-2.5 rounded-lg"
+            style={{ background: canSubmit ? '#3E5A78' : '#E5E7EB', color: canSubmit ? '#FFFFFF' : '#9CA3AF', fontSize: 13, fontWeight: 600, border: 'none', cursor: canSubmit ? 'pointer' : 'not-allowed' }}>
+            {submitting ? 'Envoi…' : 'Enregistrer le comptage'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Validation decision modal (approve / reject / request-changes) ───────────
 
 type DecisionAction = 'approve' | 'reject' | 'request-changes';
@@ -417,6 +505,7 @@ function StockItemDetailModal({ itemId, isDirector, isSupervisor, onClose, onEdi
   const [uploading, setUploading] = useState(false);
   const [movementMode, setMovementMode] = useState<MovementMode | null>(null);
   const [decisionAction, setDecisionAction] = useState<DecisionAction | null>(null);
+  const [showInventoryCount, setShowInventoryCount] = useState(false);
 
   const load = () => Promise.all([
     stockItemsApi.get(itemId),
@@ -494,6 +583,24 @@ function StockItemDetailModal({ itemId, isDirector, isSupervisor, onClose, onEdi
     }
   };
 
+  const handleInventoryCount = async (payload: CreateStockInventoryCountInput) => {
+    try {
+      const result = await stockItemsApi.createInventoryCount(itemId, payload);
+      setShowInventoryCount(false);
+      if (result.item.validationStatus === 'PENDING_VALIDATION') {
+        toast.success(`Écart de ${result.difference > 0 ? '+' : ''}${result.difference} : envoyé pour validation.`);
+      } else if (result.difference === 0) {
+        toast.success('Comptage enregistré : aucun écart.');
+      } else {
+        toast.success(`Comptage enregistré : écart de ${result.difference > 0 ? '+' : ''}${result.difference} appliqué.`);
+      }
+      await load();
+      onChanged();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erreur lors de l'enregistrement du comptage.");
+    }
+  };
+
   const handleDecision = async (comment: string) => {
     if (!decisionAction) return;
     try {
@@ -525,6 +632,7 @@ function StockItemDetailModal({ itemId, isDirector, isSupervisor, onClose, onEdi
   return (
     <>
       <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
+        data-testid="stock-item-detail-modal"
         style={{ background: 'rgba(0,0,0,0.45)' }}
         onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
         <div className="w-full max-w-lg rounded-2xl overflow-hidden shadow-xl flex flex-col" style={{ background: '#FFFFFF', maxHeight: '90vh' }}>
@@ -654,14 +762,33 @@ function StockItemDetailModal({ itemId, isDirector, isSupervisor, onClose, onEdi
                 </label>
               )}
             </div>
+
+            {(isDirector || isSupervisor) && (
+              <div>
+                <p style={SECTION_TITLE}>TRAÇABILITÉ</p>
+                <Link to={`/app/audit-logs?module=STOCK&search=${encodeURIComponent(detail.name)}`}
+                  className="inline-flex items-center gap-1.5"
+                  style={{ color: '#3E5A78', fontSize: 12, fontWeight: 500, textDecoration: 'underline' }}>
+                  <ScrollText size={12} /> Voir dans le journal d'audit
+                </Link>
+              </div>
+            )}
           </div>
 
-          {isDirector && detail.isActive && (
+          {/* PR 12 — DIRECTOR: full access. SUPERVISOR: entry, exit and
+              inventory count only — no edit/adjustment/transfer/archive, and
+              (movement history has no delete route at all, for either role
+              — see stock-items.controller.ts). */}
+          {(isDirector || isSupervisor) && detail.isActive && (
             <div className="px-6 py-4 flex flex-wrap items-center justify-between gap-2" style={{ borderTop: '1px solid #F3F4F6', background: '#F9F7F3' }}>
-              <button onClick={onEdit} className="flex items-center gap-1.5 px-3 py-2 rounded-lg"
-                style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', color: '#374151', fontSize: 13, fontWeight: 500, cursor: 'pointer' }}>
-                <Pencil size={13} /> Modifier
-              </button>
+              <div className="flex flex-wrap items-center gap-2">
+                {isDirector && (
+                  <button onClick={onEdit} className="flex items-center gap-1.5 px-3 py-2 rounded-lg"
+                    style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', color: '#374151', fontSize: 13, fontWeight: 500, cursor: 'pointer' }}>
+                    <Pencil size={13} /> Modifier
+                  </button>
+                )}
+              </div>
               {isPendingValidation ? (
                 <span className="px-3 py-2 rounded-lg" style={{ background: '#FFFBEB', color: '#D97706', fontSize: 13, fontWeight: 600 }}>En attente de validation</span>
               ) : (
@@ -670,12 +797,18 @@ function StockItemDetailModal({ itemId, isDirector, isSupervisor, onClose, onEdi
                     style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', color: '#065F46', fontSize: 13, fontWeight: 500, cursor: 'pointer' }}><ArrowDownCircle size={13} /> Entrée</button>
                   <button onClick={() => setMovementMode('exit')} className="flex items-center gap-1.5 px-3 py-2 rounded-lg"
                     style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', color: '#3E5A78', fontSize: 13, fontWeight: 500, cursor: 'pointer' }}><ArrowUpCircle size={13} /> Sortie</button>
-                  <button onClick={() => setMovementMode('adjustment')} className="flex items-center gap-1.5 px-3 py-2 rounded-lg"
-                    style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', color: '#D97706', fontSize: 13, fontWeight: 500, cursor: 'pointer' }}><RefreshCw size={13} /> Ajustement</button>
-                  <button onClick={() => setMovementMode('transfer')} className="flex items-center gap-1.5 px-3 py-2 rounded-lg"
-                    style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', color: '#7C3AED', fontSize: 13, fontWeight: 500, cursor: 'pointer' }}><UserCog size={13} /> Transférer</button>
-                  <button onClick={handleArchive} className="flex items-center gap-1.5 px-3 py-2 rounded-lg"
-                    style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', color: '#6B7280', fontSize: 13, fontWeight: 500, cursor: 'pointer' }}><Archive size={13} /> Archiver</button>
+                  <button onClick={() => setShowInventoryCount(true)} className="flex items-center gap-1.5 px-3 py-2 rounded-lg"
+                    style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', color: '#0F766E', fontSize: 13, fontWeight: 500, cursor: 'pointer' }}><ClipboardCheck size={13} /> Inventaire</button>
+                  {isDirector && (
+                    <>
+                      <button onClick={() => setMovementMode('adjustment')} className="flex items-center gap-1.5 px-3 py-2 rounded-lg"
+                        style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', color: '#D97706', fontSize: 13, fontWeight: 500, cursor: 'pointer' }}><RefreshCw size={13} /> Ajustement</button>
+                      <button onClick={() => setMovementMode('transfer')} className="flex items-center gap-1.5 px-3 py-2 rounded-lg"
+                        style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', color: '#7C3AED', fontSize: 13, fontWeight: 500, cursor: 'pointer' }}><UserCog size={13} /> Transférer</button>
+                      <button onClick={handleArchive} className="flex items-center gap-1.5 px-3 py-2 rounded-lg"
+                        style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', color: '#6B7280', fontSize: 13, fontWeight: 500, cursor: 'pointer' }}><Archive size={13} /> Archiver</button>
+                    </>
+                  )}
                 </div>
               )}
             </div>
@@ -693,6 +826,9 @@ function StockItemDetailModal({ itemId, isDirector, isSupervisor, onClose, onEdi
         </div>
       </div>
       {movementMode && <MovementModal mode={movementMode} item={detail} onSubmit={handleMovement} onClose={() => setMovementMode(null)} />}
+      {showInventoryCount && (
+        <InventoryCountModal item={detail} onSubmit={handleInventoryCount} onClose={() => setShowInventoryCount(false)} />
+      )}
       {decisionAction && <ValidationDecisionModal action={decisionAction} onConfirm={handleDecision} onClose={() => setDecisionAction(null)} />}
     </>
   );
@@ -1129,6 +1265,16 @@ function AssetDetailModal({ assetId, isDirector, isSupervisor, onClose, onEdit, 
                 </label>
               )}
             </div>
+            {(isDirector || isSupervisor) && (
+              <div>
+                <p style={SECTION_TITLE}>TRAÇABILITÉ</p>
+                <Link to={`/app/audit-logs?module=STOCK&search=${encodeURIComponent(detail.name)}`}
+                  className="inline-flex items-center gap-1.5"
+                  style={{ color: '#3E5A78', fontSize: 12, fontWeight: 500, textDecoration: 'underline' }}>
+                  <ScrollText size={12} /> Voir dans le journal d'audit
+                </Link>
+              </div>
+            )}
           </div>
 
           {isDirector && !isArchived && (
@@ -1171,7 +1317,13 @@ function AssetDetailModal({ assetId, isDirector, isSupervisor, onClose, onEdit, 
 
 // ─── Main page ───────────────────────────────────────────────────────────────
 
-type MainTab = 'stocks' | 'mouvements' | 'inventaire' | 'alertes';
+// PR 12 — 'stocks' = Consommables, 'inventaire' = Matériel durable (existing
+// asset registry, relabeled for clarity — see requirement #1). 'comptage' is
+// the new physical inventory count workflow, distinct from 'inventaire'
+// (that tab was already named "Inventaire" for the durable-goods registry
+// before this PR; renaming would break a stable, already-understood label,
+// so the new feature gets its own tab instead).
+type MainTab = 'stocks' | 'mouvements' | 'comptage' | 'inventaire' | 'alertes';
 
 export function StocksInventairePage() {
   const { user } = useAuth();
@@ -1190,6 +1342,14 @@ export function StocksInventairePage() {
   const [editItem, setEditItem] = useState<ApiStockItem | null>(null);
   const [detailItemId, setDetailItemId] = useState<string | null>(null);
 
+  // PR 12 — Consommables search & filters (category / supplier / low-stock-
+  // only), client-side like the rest of this page's filtering — the backend
+  // already supports these as query params (see StockItemsController) if a
+  // future page needs server-side filtering instead.
+  const [categoryFilter, setCategoryFilter] = useState<ApiStockCategory | 'all'>('all');
+  const [supplierFilter, setSupplierFilter] = useState('all');
+  const [lowStockOnly, setLowStockOnly] = useState(false);
+
   const [showCreateAsset, setShowCreateAsset] = useState(false);
   const [editAsset, setEditAsset] = useState<ApiInventoryAsset | null>(null);
   const [detailAssetId, setDetailAssetId] = useState<string | null>(null);
@@ -1197,6 +1357,14 @@ export function StocksInventairePage() {
   const [movementItemId, setMovementItemId] = useState<string>('');
   const [selectedMovements, setSelectedMovements] = useState<ApiStockMovement[]>([]);
   const [movementsLoading, setMovementsLoading] = useState(false);
+
+  // PR 12 — physical inventory count tab: independent item selection from
+  // the Mouvements tab above, since a user may be counting a different
+  // article than the one they were last reviewing movements for.
+  const [countItemId, setCountItemId] = useState('');
+  const [countMovements, setCountMovements] = useState<ApiStockMovement[]>([]);
+  const [countLoading, setCountLoading] = useState(false);
+  const [showCountModal, setShowCountModal] = useState(false);
 
   const loadAll = () => Promise.all([stockItemsApi.list(), inventoryAssetsApi.list()])
     .then(([i, a]) => { setItems(i); setAssets(a); setError(false); })
@@ -1215,6 +1383,15 @@ export function StocksInventairePage() {
       .finally(() => setMovementsLoading(false));
   }, [tab, movementItemId]);
 
+  useEffect(() => {
+    if (tab !== 'comptage' || !countItemId) { setCountMovements([]); return; }
+    setCountLoading(true);
+    stockItemsApi.movements(countItemId)
+      .then(setCountMovements)
+      .catch(() => toast.error("Erreur de chargement de l'historique d'inventaire."))
+      .finally(() => setCountLoading(false));
+  }, [tab, countItemId]);
+
   const counters = {
     active: items.filter(i => i.isActive).length,
     lowStock: items.filter(i => i.isLowStock).length,
@@ -1227,14 +1404,27 @@ export function StocksInventairePage() {
     inventoryDue: assets.filter(a => a.isInventoryCheckDue || a.isInventoryCheckOverdue).length,
   };
 
+  // PR 12 — distinct, non-empty supplier names already on Consommables, for
+  // the supplier filter dropdown (no separate supplier directory to query).
+  const supplierOptions = Array.from(
+    new Set(items.map(i => i.supplierName).filter((s): s is string => !!s)),
+  ).sort((a, b) => a.localeCompare(b));
+
   const visibleItems = items.filter(i => {
     if (search.trim()) {
       const q = search.trim().toLowerCase();
       if (!i.name.toLowerCase().includes(q) && !(i.reference ?? '').toLowerCase().includes(q)
         && !(i.storageLocation ?? '').toLowerCase().includes(q)) return false;
     }
+    if (categoryFilter !== 'all' && i.category !== categoryFilter) return false;
+    if (supplierFilter !== 'all' && i.supplierName !== supplierFilter) return false;
+    if (lowStockOnly && !i.isLowStock) return false;
     return true;
   });
+
+  // Unit of the item currently selected in the Mouvements tab, for labelling
+  // quantities in the movement history (e.g. "unités", "kg").
+  const selectedMovementUnit = items.find(i => i.id === movementItemId)?.unit ?? 'UNITE';
 
   const visibleAssets = assets.filter(a => {
     if (search.trim()) {
@@ -1294,11 +1484,35 @@ export function StocksInventairePage() {
     }
   };
 
+  // PR 12 — physical inventory count, from the dedicated "Inventaire
+  // physique" tab (StockItemDetailModal's own count button uses the same
+  // API call independently — see handleInventoryCount there).
+  const handleTabInventoryCount = async (payload: CreateStockInventoryCountInput) => {
+    if (!countItemId) return;
+    try {
+      const result = await stockItemsApi.createInventoryCount(countItemId, payload);
+      setItems(prev => prev.map(i => i.id === result.item.id ? result.item : i));
+      setShowCountModal(false);
+      if (result.item.validationStatus === 'PENDING_VALIDATION') {
+        toast.success(`Écart de ${result.difference > 0 ? '+' : ''}${result.difference} : envoyé pour validation.`);
+      } else if (result.difference === 0) {
+        toast.success('Comptage enregistré : aucun écart.');
+      } else {
+        toast.success(`Comptage enregistré : écart de ${result.difference > 0 ? '+' : ''}${result.difference} appliqué.`);
+      }
+      const m = await stockItemsApi.movements(countItemId);
+      setCountMovements(m);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erreur lors de l'enregistrement du comptage.");
+    }
+  };
+
   const TABS: { key: MainTab; label: string; icon: React.ElementType }[] = [
-    { key: 'stocks',     label: 'Stocks',      icon: Package },
-    { key: 'mouvements', label: 'Mouvements',  icon: ClipboardList },
-    { key: 'inventaire', label: 'Inventaire',  icon: Boxes },
-    { key: 'alertes',    label: 'Alertes',     icon: AlertTriangle },
+    { key: 'stocks',     label: 'Consommables',        icon: Package },
+    { key: 'mouvements', label: 'Mouvements',           icon: ClipboardList },
+    { key: 'comptage',   label: 'Inventaire physique',  icon: ClipboardCheck },
+    { key: 'inventaire', label: 'Matériel durable',     icon: Boxes },
+    { key: 'alertes',    label: 'Alertes',              icon: AlertTriangle },
   ];
 
   return (
@@ -1373,6 +1587,23 @@ export function StocksInventairePage() {
                   </button>
                 )}
               </div>
+              {/* PR 12 — filters: category, supplier, low-stock-only */}
+              <div className="flex flex-col sm:flex-row gap-3 flex-wrap">
+                <select value={categoryFilter} onChange={e => setCategoryFilter(e.target.value as ApiStockCategory | 'all')}
+                  style={{ ...INPUT, width: 'auto', cursor: 'pointer' }}>
+                  <option value="all">Toutes les catégories</option>
+                  {STOCK_CATEGORY_OPTIONS.map(c => <option key={c} value={c}>{STOCK_CATEGORY_LABELS[c]}</option>)}
+                </select>
+                <select value={supplierFilter} onChange={e => setSupplierFilter(e.target.value)}
+                  style={{ ...INPUT, width: 'auto', cursor: 'pointer' }}>
+                  <option value="all">Tous les fournisseurs</option>
+                  {supplierOptions.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+                <label className="flex items-center gap-2 px-3 py-2 rounded-lg" style={{ border: '1px solid #E5E7EB', background: '#FFFFFF', fontSize: 13, color: '#374151', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={lowStockOnly} onChange={e => setLowStockOnly(e.target.checked)} />
+                  Stock faible uniquement
+                </label>
+              </div>
               {visibleItems.length === 0 ? (
                 <div className="py-12 text-center rounded-xl" style={{ background: '#FFFFFF', border: '1px solid #E5E7EB' }}>
                   <Package size={28} style={{ color: '#9CA3AF', margin: '0 auto 8px' }} />
@@ -1435,23 +1666,126 @@ export function StocksInventairePage() {
                 </div>
               ) : (
                 <div className="space-y-2">
-                  {selectedMovements.map(m => (
-                    <div key={m.id} className="rounded-xl p-4" style={{ background: '#FFFFFF', border: '1px solid #E5E7EB' }}>
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="px-2 py-0.5 rounded-full" style={{ background: STOCK_MOVEMENT_TYPE_STYLE[m.type].bg, color: STOCK_MOVEMENT_TYPE_STYLE[m.type].color, fontSize: 10, fontWeight: 700 }}>
-                          {STOCK_MOVEMENT_TYPE_LABELS[m.type].toUpperCase()}
-                        </span>
-                        <span style={{ color: '#9CA3AF', fontSize: 11 }}>{new Date(m.movementDate).toLocaleDateString('fr-FR')}</span>
+                  {selectedMovements.map(m => {
+                    // Presentation only — `m.quantity` from the backend is an
+                    // unsigned magnitude (see StockItemsService), not a signed
+                    // delta, so direction must come from quantityAfter minus
+                    // quantityBefore instead. Both are unchanged, backend-
+                    // computed values; this just lays them out so the reader
+                    // doesn't have to parse an arrow notation.
+                    const unitLabel = STOCK_UNIT_LABELS[selectedMovementUnit] ?? '';
+                    const delta = m.quantityAfter - m.quantityBefore;
+                    const isIncrease = delta >= 0;
+                    return (
+                      <div key={m.id} className="rounded-xl p-4" style={{ background: '#FFFFFF', border: '1px solid #E5E7EB' }}>
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="px-2 py-0.5 rounded-full" style={{ background: STOCK_MOVEMENT_TYPE_STYLE[m.type].bg, color: STOCK_MOVEMENT_TYPE_STYLE[m.type].color, fontSize: 10, fontWeight: 700 }}>
+                            {STOCK_MOVEMENT_TYPE_LABELS[m.type].toUpperCase()}
+                          </span>
+                          <span style={{ color: '#9CA3AF', fontSize: 11 }}>{new Date(m.movementDate).toLocaleDateString('fr-FR')}</span>
+                        </div>
+                        <p style={{ color: isIncrease ? '#065F46' : '#B91C1C', fontSize: 13, fontWeight: 700 }}>
+                          {isIncrease ? 'Quantité ajoutée' : 'Quantité retirée'} : {isIncrease ? '+' : ''}{delta} {unitLabel}
+                        </p>
+                        <p style={{ color: '#374151', fontSize: 12, marginTop: 2 }}>
+                          Stock avant : {m.quantityBefore} {unitLabel} · Stock après : {m.quantityAfter} {unitLabel}
+                        </p>
+                        {m.reason && <p style={{ color: '#6B7280', fontSize: 12, marginTop: 2 }}>{m.reason}</p>}
+                        {m.performedBy && <p style={{ color: '#9CA3AF', fontSize: 11, marginTop: 4 }}>Par {m.performedBy.name}{m.approvedBy && ` · Approuvé par ${m.approvedBy.name}`}</p>}
                       </div>
-                      <p style={{ color: '#374151', fontSize: 13 }}>
-                        {m.quantityBefore} → {m.quantityAfter} ({m.quantity > 0 ? '±' : ''}{m.quantity})
-                        {m.reason && ` · ${m.reason}`}
-                      </p>
-                      {m.performedBy && <p style={{ color: '#9CA3AF', fontSize: 11, marginTop: 2 }}>Par {m.performedBy.name}{m.approvedBy && ` · Approuvé par ${m.approvedBy.name}`}</p>}
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
+            </div>
+          )}
+
+          {/* ─── Inventaire physique tab (PR 12) ───
+              Physical count: expected (system) quantity vs. actual (counted)
+              quantity, with the difference computed here and again,
+              authoritatively, server-side. History below is simply this
+              item's INVENTAIRE_CORRECTION movements — no separate table. */}
+          {tab === 'comptage' && (
+            <div className="space-y-4">
+              <select value={countItemId} onChange={e => setCountItemId(e.target.value)} style={{ ...INPUT, width: 'auto', cursor: 'pointer' }}>
+                <option value="">Sélectionner un article…</option>
+                {items.filter(i => i.isActive).map(i => <option key={i.id} value={i.id}>{i.name}</option>)}
+              </select>
+              {!countItemId ? (
+                <div className="py-12 text-center rounded-xl" style={{ background: '#FFFFFF', border: '1px solid #E5E7EB' }}>
+                  <ClipboardCheck size={28} style={{ color: '#9CA3AF', margin: '0 auto 8px' }} />
+                  <p style={{ color: '#374151', fontSize: 14, fontWeight: 500 }}>Sélectionnez un article pour effectuer un inventaire physique</p>
+                </div>
+              ) : (() => {
+                const countItem = items.find(i => i.id === countItemId);
+                if (!countItem) return null;
+                const inventoryMovements = countMovements.filter(m => m.type === 'INVENTAIRE_CORRECTION');
+                return (
+                  <>
+                    <div className="rounded-xl p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3" style={{ background: '#FFFFFF', border: '1px solid #E5E7EB' }}>
+                      <div>
+                        <p style={{ color: '#1A1A1A', fontSize: 14, fontWeight: 600 }}>{countItem.name}</p>
+                        <p style={{ color: '#6B7280', fontSize: 12, marginTop: 2 }}>
+                          Quantité système (attendue) : {countItem.currentQuantity} {STOCK_UNIT_LABELS[countItem.unit]}
+                        </p>
+                      </div>
+                      {(isDirector || isSupervisor) && (
+                        <button onClick={() => setShowCountModal(true)} className="flex items-center gap-2 px-4 py-2.5 rounded-lg self-start"
+                          style={{ background: '#3E5A78', color: '#FFFFFF', fontSize: 13, fontWeight: 500, border: 'none', cursor: 'pointer' }}>
+                          <ClipboardCheck size={15} /> Nouveau comptage
+                        </button>
+                      )}
+                    </div>
+                    <div>
+                      <p style={SECTION_TITLE}>HISTORIQUE DES INVENTAIRES</p>
+                      {countLoading ? (
+                        <p style={{ color: '#9CA3AF', fontSize: 13, textAlign: 'center', padding: '24px 0' }}>Chargement…</p>
+                      ) : inventoryMovements.length === 0 ? (
+                        <div className="py-8 text-center rounded-xl" style={{ background: '#FFFFFF', border: '1px solid #E5E7EB' }}>
+                          <p style={{ color: '#374151', fontSize: 13 }}>Aucun inventaire physique enregistré pour cet article</p>
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          {inventoryMovements.map(m => {
+                            const diff = m.quantityAfter - m.quantityBefore;
+                            return (
+                              <div key={m.id} className="rounded-xl p-4" style={{ background: '#FFFFFF', border: '1px solid #E5E7EB' }}>
+                                <div className="flex items-center justify-between mb-2">
+                                  <span style={{ fontSize: 11, color: '#9CA3AF' }}>{new Date(m.movementDate).toLocaleDateString('fr-FR')}</span>
+                                  {m.performedBy && <span style={{ fontSize: 11, color: '#9CA3AF' }}>Par {m.performedBy.name}</span>}
+                                </div>
+                                <div className="grid grid-cols-3 gap-2 text-center">
+                                  <div>
+                                    <p style={{ fontSize: 10, color: '#9CA3AF', fontWeight: 600 }}>ATTENDU</p>
+                                    <p style={{ fontSize: 15, fontWeight: 700, color: '#374151' }}>{m.quantityBefore}</p>
+                                  </div>
+                                  <div>
+                                    <p style={{ fontSize: 10, color: '#9CA3AF', fontWeight: 600 }}>RÉEL</p>
+                                    <p style={{ fontSize: 15, fontWeight: 700, color: '#374151' }}>{m.quantityAfter}</p>
+                                  </div>
+                                  <div>
+                                    <p style={{ fontSize: 10, color: '#9CA3AF', fontWeight: 600 }}>ÉCART</p>
+                                    <p style={{ fontSize: 15, fontWeight: 700, color: diff < 0 ? '#B91C1C' : '#065F46' }}>
+                                      {diff > 0 ? '+' : ''}{diff}
+                                    </p>
+                                  </div>
+                                </div>
+                                {m.reason && <p style={{ color: '#6B7280', fontSize: 12, marginTop: 8 }}>{m.reason}</p>}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  </>
+                );
+              })()}
+              {showCountModal && (() => {
+                const countItem = items.find(i => i.id === countItemId);
+                return countItem
+                  ? <InventoryCountModal item={countItem} onSubmit={handleTabInventoryCount} onClose={() => setShowCountModal(false)} />
+                  : null;
+              })()}
             </div>
           )}
 
