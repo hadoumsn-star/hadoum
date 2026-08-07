@@ -14,14 +14,22 @@ const PAGE_TITLES: Record<string, { title: string; breadcrumb?: string[] }> = {
   '/app/messages':    { title: 'Messagerie' },
   '/app/finances':    { title: 'Finances & Budget',        breadcrumb: ['Administration'] },
   '/app/reports':     { title: 'Rapports',                 breadcrumb: ['Pilotage'] },
-  '/app/validations': { title: 'Validations en attente',   breadcrumb: ['Supervision'] },
+  '/app/validations': { title: 'Demandes à valider',       breadcrumb: ['Supervision'] },
   '/app/incidents':   { title: 'Incidents',                breadcrumb: ['Supervision'] },
   '/app/monitoring':  { title: 'Suivis individuels',       breadcrumb: ['Supervision'] },
   '/app/indicators':  { title: 'Indicateurs',              breadcrumb: ['Pilotage'] },
   '/app/exports':     { title: 'Exports',                  breadcrumb: ['Pilotage'] },
+  '/app/administration':            { title: 'Administration et Gestion des Locaux', breadcrumb: ['Administration'] },
+  '/app/locaux-espaces':            { title: 'Locaux et espaces',                    breadcrumb: ['Administration'] },
+  '/app/tickets-maintenance':       { title: 'Tickets de maintenance',               breadcrumb: ['Administration'] },
+  '/app/contrats-fournisseurs':     { title: 'Contrats fournisseurs',                breadcrumb: ['Administration'] },
+  '/app/demarches-administratives': { title: 'Démarches administratives',            breadcrumb: ['Administration'] },
+  '/app/stocks-inventaire':         { title: 'Stocks et inventaire',                 breadcrumb: ['Administration'] },
+  '/app/registre-entrees-sorties':  { title: "Registre d'entrées/sorties",           breadcrumb: ['Administration'] },
   '/app/settings':    { title: 'Paramètres' },
   '/app/profile':     { title: 'Mon profil' },
   '/app/design-system': { title: 'Design System' },
+  '/app/contacts-demo': { title: 'Démonstration — Contacts (PR 2)' },
 };
 
 const SIDEBAR_WIDTH = 256;

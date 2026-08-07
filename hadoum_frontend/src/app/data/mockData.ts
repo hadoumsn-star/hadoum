@@ -141,21 +141,6 @@ export const myStudents = [
   { id: 5, name: 'Riad Hamza', class: 'Primaire 2B', present: true, note: 13.0 },
 ];
 
-// Supervisor data
-export const pendingValidations = [
-  { id: 1, type: 'Sortie scolaire', description: 'Visite musée — 15 élèves', submittedBy: 'Karim M.', date: '03 Mai', urgency: 'haute' as const },
-  { id: 2, type: 'Dépense exceptionnelle', description: 'Matériel médical — 12 500 DA', submittedBy: 'Administration', date: '03 Mai', urgency: 'normale' as const },
-  { id: 3, type: 'Absence éducateur', description: 'Rachid A. — 10 au 14 Mai', submittedBy: 'Rachid A.', date: '02 Mai', urgency: 'haute' as const },
-  { id: 4, type: 'Rapport incident', description: 'Incident cour — Résolu', submittedBy: 'Fatima B.', date: '01 Mai', urgency: 'normale' as const },
-  { id: 5, type: 'Activité hebdomadaire', description: 'Atelier peinture — 25 élèves', submittedBy: 'Zineb M.', date: '30 Avr', urgency: 'basse' as const },
-];
-
-export const openIncidents = [
-  { id: 1, title: 'Conflit entre élèves', date: '02 Mai', class: 'Primaire 3', severity: 'moyen' as const, status: 'en cours' as const },
-  { id: 2, title: 'Matériel endommagé', date: '28 Avr', class: 'Maternelle', severity: 'faible' as const, status: 'résolu' as const },
-  { id: 3, title: 'Absence non justifiée répétée', date: '25 Avr', class: 'Collège', severity: 'élevé' as const, status: 'en cours' as const },
-];
-
 // Board data
 export const boardReports = [
   { id: 1, title: 'Rapport mensuel — Avril 2026', date: '01 Mai 2026', status: 'disponible' as const, type: 'Mensuel' },

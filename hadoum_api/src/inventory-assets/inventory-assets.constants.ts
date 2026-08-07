@@ -1,0 +1,11 @@
+export const ASSET_HIGH_VALUE_THRESHOLD_XOF = Number(
+  process.env.ASSET_HIGH_VALUE_THRESHOLD_XOF ?? 200_000,
+);
+
+export const ASSET_INVENTORY_CHECK_WARNING_DAYS = Number(
+  process.env.ASSET_INVENTORY_CHECK_WARNING_DAYS ?? 30,
+);
+
+export const ASSET_WARRANTY_WARNING_DAYS = Number(
+  process.env.ASSET_WARRANTY_WARNING_DAYS ?? 30,
+);

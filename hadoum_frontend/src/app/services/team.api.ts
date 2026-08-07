@@ -49,6 +49,60 @@ export interface ApiFormerMember {
   scheduledRole?: string | null;
 }
 
+// PR 10 — daily presence confirmation. Distinct from the Congé/Retard/
+// Absence records above (ApiStaffAttendanceRecord isn't a real exported
+// type here, matching this file's existing convention of inlining
+// attendance record shapes). NON_CONFIRMED is never itself stored server
+// side — see StaffPresenceConfirmation's own schema comment — but it's the
+// default every entry below carries until a DIRECTOR confirms one.
+export type ApiPresenceStatus = 'NON_CONFIRMED' | 'PRESENT' | 'ABSENT';
+
+export interface ApiDailyPresenceEntry {
+  staffId: string;
+  firstName: string;
+  lastName: string;
+  role: string;
+  // The StaffAttendance leave type ('absence' | 'conge') active on this
+  // date, or null. Kept as a free string (matching StaffAttendance.type's
+  // own untyped shape) rather than a narrower union.
+  onLeave: string | null;
+  status: ApiPresenceStatus;
+  confirmedBy: { id: string; name: string } | null;
+  confirmedAt: string | null;
+}
+
+export interface ApiDailyPresence {
+  date: string;
+  entries: ApiDailyPresenceEntry[];
+  nonConfirmedCount: number;
+}
+
+// Single source of truth for turning a daily presence response into the
+// Présents/Absents/Non confirmées counts shown both on the Director
+// Dashboard's stat cards and on the "Présences" tab of Mon équipe — kept
+// here so neither place reimplements the tally independently.
+export function summarizeDailyPresence(data: ApiDailyPresence): {
+  present: number; absent: number; nonConfirmed: number;
+} {
+  return {
+    present: data.entries.filter(e => e.status === 'PRESENT').length,
+    absent: data.entries.filter(e => e.status === 'ABSENT').length,
+    nonConfirmed: data.nonConfirmedCount,
+  };
+}
+
+// The exact "eligible for confirmation" predicate behind `nonConfirmedCount`
+// above (see StaffService#listDailyPresence: NON_CONFIRMED and not
+// currently on Congé/Absence) — exported so any UI that needs the actual
+// *list* of people counted (not just the number) — the "Présences" tab's
+// own bulk-confirm target list, and the Director Dashboard's "Non
+// confirmées" modal — filters the exact same `entries` array with the exact
+// same condition `summarizeDailyPresence`/the backend already used, rather
+// than each re-deriving its own version of "eligible."
+export function nonConfirmedEligibleEntries(data: ApiDailyPresence): ApiDailyPresenceEntry[] {
+  return data.entries.filter(e => e.status === 'NON_CONFIRMED' && !e.onLeave);
+}
+
 // ─── API calls ────────────────────────────────────────────────────────────────
 
 export const teamApi = {
@@ -105,6 +159,14 @@ export const teamApi = {
   },
   getAttendanceJustifUrl: (recordId: string) =>
     api.get<{ url: string }>(`/staff/attendance/${recordId}/justif-url`),
+
+  // Daily presence confirmation (PR 10)
+  listDailyPresence: (date: string) =>
+    api.get<ApiDailyPresence>(`/staff/presence?date=${date}`),
+  confirmPresence: (staffId: string, date: string, status: 'PRESENT' | 'ABSENT') =>
+    api.post<ApiDailyPresenceEntry>(`/staff/${staffId}/presence`, { date, status }),
+  resetPresence: (staffId: string, date: string) =>
+    api.delete(`/staff/${staffId}/presence?date=${date}`),
 
   // Candidates
   listCandidates: () => api.get<ApiCandidate[]>('/staff/candidates'),

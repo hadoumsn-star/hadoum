@@ -25,6 +25,95 @@ async function main() {
   });
 
   console.log('✅ User hadoum@gmail.com created/updated.');
+
+  const dounde = await bcrypt.hash('test123', 10);
+
+  await prisma.user.upsert({
+    where: { email: 'dounde.diallo@gmail.com' },
+    update: {
+      passwordHash: dounde,
+      role: 'SUPERVISOR',
+      roleLabel: 'Superviseur',
+      title: 'Supervision générale',
+    },
+    create: {
+      email: 'dounde.diallo@gmail.com',
+      passwordHash: dounde,
+      name: 'Dounde Diallo',
+      initials: 'DD',
+      role: 'SUPERVISOR',
+      roleLabel: 'Superviseur',
+      title: 'Supervision générale',
+    },
+  });
+
+  console.log('✅ User dounde.diallo@gmail.com created/updated.');
+
+  // EDUCATOR / BOARD dev accounts — needed for PR 2's role-restriction
+  // Playwright coverage, which drives the real dev API (see
+  // hadoum_frontend/e2e/helpers.ts). Neither role existed as a seeded user
+  // before; only DIRECTOR and SUPERVISOR did.
+  const educatorPass = await bcrypt.hash('test123', 10);
+  await prisma.user.upsert({
+    where: { email: 'educateur.demo@hadoum.org' },
+    update: { passwordHash: educatorPass, role: 'EDUCATOR' },
+    create: {
+      email: 'educateur.demo@hadoum.org',
+      passwordHash: educatorPass,
+      name: 'Éducateur Démo',
+      initials: 'ED',
+      role: 'EDUCATOR',
+      roleLabel: 'Éducateur',
+      title: 'Équipe éducative',
+    },
+  });
+  console.log('✅ User educateur.demo@hadoum.org created/updated.');
+
+  const boardPass = await bcrypt.hash('test123', 10);
+  await prisma.user.upsert({
+    where: { email: 'conseil.demo@hadoum.org' },
+    update: { passwordHash: boardPass, role: 'BOARD' },
+    create: {
+      email: 'conseil.demo@hadoum.org',
+      passwordHash: boardPass,
+      name: 'Membre CA Démo',
+      initials: 'CA',
+      role: 'BOARD',
+      roleLabel: "Conseil d'Administration",
+      title: "Membre du Conseil",
+    },
+  });
+  console.log('✅ User conseil.demo@hadoum.org created/updated.');
+
+  // Initial ContactCategory rows for the "Répertoire des contacts" module.
+  // Deliberately `update: {}` on the upsert (unlike the User upserts above,
+  // which do overwrite): a category's label/color/sortOrder is meant to be
+  // editable later by a DIRECTOR through the app, and re-running this seed
+  // (e.g. on every `prisma migrate dev`) must never silently revert that
+  // kind of manual edit. Only the `key` is treated as the stable identity;
+  // if the row already exists, this seed leaves it untouched.
+  const CONTACT_CATEGORIES: { key: string; label: string; sortOrder: number }[] = [
+    { key: 'FOURNISSEUR', label: 'Fournisseur', sortOrder: 1 },
+    { key: 'PRESTATAIRE', label: 'Prestataire', sortOrder: 2 },
+    { key: 'ADMINISTRATION', label: 'Administration', sortOrder: 3 },
+    { key: 'SANTE', label: 'Santé', sortOrder: 4 },
+    { key: 'SOCIAL', label: 'Social', sortOrder: 5 },
+    { key: 'TRANSPORT', label: 'Transport', sortOrder: 6 },
+    { key: 'MAINTENANCE', label: 'Maintenance', sortOrder: 7 },
+    { key: 'ARTISAN', label: 'Artisan', sortOrder: 8 },
+    { key: 'COMMERCE', label: 'Commerce', sortOrder: 9 },
+    { key: 'AUTRE', label: 'Autre', sortOrder: 10 },
+  ];
+
+  for (const category of CONTACT_CATEGORIES) {
+    await prisma.contactCategory.upsert({
+      where: { key: category.key },
+      update: {},
+      create: category,
+    });
+  }
+
+  console.log(`✅ ${CONTACT_CATEGORIES.length} contact categories ensured.`);
 }
 
 main()

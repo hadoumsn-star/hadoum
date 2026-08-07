@@ -1,0 +1,97 @@
+name: Monitoring
+
+# Scheduled health/alerting sweep for development and production. Runs
+# independently of deploys, so it catches problems that happen between
+# deployments (e.g. the database container itself falling over, disk
+# filling up, or a container crash-looping).
+#
+# Alerts on: health endpoint failure, container restarts, unhealthy
+# containers, disk usage above threshold, database unavailable - see
+# scripts/monitor/check-containers.sh and docs/monitoring.md.
+#
+# Every step here degrades gracefully if the relevant secrets are not
+# configured yet (skips with a notice rather than failing the workflow),
+# consistent with this being safe to merge before any real server exists.
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+jobs:
+  http-health-check:
+    name: HTTP health check
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: [development, production]
+    steps:
+      - name: Check ${{ matrix.environment }} health endpoint
+        run: |
+          set -u
+          if [ -z "${HEALTH_URL:-}" ]; then
+            echo "::notice::${ENVIRONMENT}_HEALTH_URL secret not configured - skipping (expected until a real server exists)."
+            exit 0
+          fi
+
+          BODY=$(curl -fsS -m 10 "$HEALTH_URL") || {
+            echo "::error::Health check request failed for ${ENVIRONMENT}."
+            [ -n "${ALERT_WEBHOOK_URL:-}" ] && curl -fsS -m 10 -X POST -H 'Content-Type: application/json' \
+              -d "{\"text\":\"[hadoum:health_failure] ${ENVIRONMENT} health endpoint unreachable: ${HEALTH_URL}\"}" \
+              "$ALERT_WEBHOOK_URL" >/dev/null 2>&1 || true
+            exit 1
+          }
+
+          echo "$BODY"
+          STATUS=$(printf '%s' "$BODY" | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{console.log(JSON.parse(d).status)}catch{console.log('parse_error')}})")
+
+          if [ "$STATUS" != "ok" ]; then
+            echo "::error::${ENVIRONMENT} health status is '${STATUS}', expected 'ok'."
+            [ -n "${ALERT_WEBHOOK_URL:-}" ] && curl -fsS -m 10 -X POST -H 'Content-Type: application/json' \
+              -d "{\"text\":\"[hadoum:health_failure] ${ENVIRONMENT} health status is '${STATUS}'. Body: $(printf '%s' "$BODY" | tr '\n' ' ' | tr '"' "'")\"}" \
+              "$ALERT_WEBHOOK_URL" >/dev/null 2>&1 || true
+            exit 1
+          fi
+          echo "OK: ${ENVIRONMENT} is healthy."
+        env:
+          ENVIRONMENT: ${{ matrix.environment }}
+          HEALTH_URL: ${{ matrix.environment == 'production' && secrets.PROD_HEALTH_URL || secrets.DEV_HEALTH_URL }}
+          ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}
+
+  container-checks:
+    name: Container / disk / DB checks
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: [development, production]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run check-containers.sh over SSH
+        run: |
+          set -u
+          if [ -z "${SSH_HOST:-}" ] || [ -z "${SSH_USER:-}" ] || [ -z "${SSH_KEY:-}" ]; then
+            echo "::notice::Deploy SSH secrets not configured for ${ENVIRONMENT} - skipping (expected until a real server exists)."
+            exit 0
+          fi
+
+          umask 077
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -p "${SSH_PORT:-22}" -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+          ssh -i ~/.ssh/deploy_key -p "${SSH_PORT:-22}" "${SSH_USER}@${SSH_HOST}" \
+            "cd ${DEPLOY_PATH:-~/hadoum} && ALERT_WEBHOOK_URL='${ALERT_WEBHOOK_URL:-}' PROJECT_NAME='${PROJECT_NAME}' ./scripts/monitor/check-containers.sh"
+        env:
+          ENVIRONMENT: ${{ matrix.environment }}
+          PROJECT_NAME: ${{ matrix.environment == 'production' && 'hadoum-prod' || 'hadoum-development' }}
+          SSH_HOST: ${{ matrix.environment == 'production' && secrets.PROD_DEPLOY_HOST || secrets.DEV_DEPLOY_HOST }}
+          SSH_USER: ${{ matrix.environment == 'production' && secrets.PROD_DEPLOY_USER || secrets.DEV_DEPLOY_USER }}
+          SSH_KEY: ${{ matrix.environment == 'production' && secrets.PROD_DEPLOY_SSH_KEY || secrets.DEV_DEPLOY_SSH_KEY }}
+          SSH_PORT: ${{ matrix.environment == 'production' && secrets.PROD_DEPLOY_SSH_PORT || secrets.DEV_DEPLOY_SSH_PORT }}
+          DEPLOY_PATH: ${{ matrix.environment == 'production' && secrets.PROD_DEPLOY_PATH || secrets.DEV_DEPLOY_PATH }}
+          ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}

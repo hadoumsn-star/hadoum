@@ -37,3 +37,15 @@ next-env.d.ts
 
 # vite
 /.vite
+
+# playwright
+/playwright-report
+/playwright-report-manual
+/test-results
+/blob-report
+/playwright/.cache
+
+# Manual QA session evidence (screenshots, videos, traces) — the manual
+# test *source* (e2e-manual/**/*.spec.ts) and its planning docs stay tracked;
+# this is generated, run-specific output only.
+/e2e-manual/evidence/

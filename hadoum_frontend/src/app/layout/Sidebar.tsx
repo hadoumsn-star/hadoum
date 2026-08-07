@@ -1,10 +1,10 @@
-import React, { useEffect } from 'react';
+import React from 'react';
 import { Link, useLocation } from 'react-router';
 import {
   LayoutDashboard, Users, UsersRound, CalendarCheck,
   DollarSign, FileText, BookOpen, Activity,
   BarChart2, Download, AlertTriangle,
-  MessageSquare,
+  MessageSquare, Building2, ShieldCheck,
 } from 'lucide-react';
 import { useAuth, UserRole } from '../context/AuthContext';
 import { HadoumLogo } from '../components/HadoumLogo';
@@ -20,24 +20,22 @@ interface SidebarProps {
 
 const NAV_BY_ROLE: Record<UserRole, { primary: NavItem[]; secondary: NavItem[] }> = {
   director: {
-    // primary: [
-    //   { label: "Vue d'ensemble",        path: '/app/dashboard',  icon: LayoutDashboard },
-    //   { label: 'Voir les enfants',       path: '/app/children',   icon: Users },
-    //   { label: 'Valider les présences',  path: '/app/attendance', icon: CalendarCheck },
-    // ],
-    // secondary: [
-    //   { label: 'Mon équipe',             path: '/app/team',       icon: UsersRound },
-    //   { label: 'Suivi des incidents',    path: '/app/incidents',  icon: AlertTriangle },
-    //   { label: 'Suivre les finances',    path: '/app/finances',   icon: DollarSign },
-    //   { label: 'Consulter les rapports', path: '/app/reports',    icon: FileText },
-    // ],
      primary: [
+      { label: "Vue d'ensemble",         path: '/app/dashboard',  icon: LayoutDashboard },
       { label: 'Voir les enfants',       path: '/app/children',   icon: Users },
       { label: 'Mon équipe',             path: '/app/team',       icon: UsersRound },
       { label: 'Consulter les rapports', path: '/app/reports',    icon: FileText },
       // { label: 'Messagerie',             path: '/app/messages',   icon: MessageSquare },
     ],
-    secondary: []
+    // "Journal d'audit" removed from the sidebar for DIRECTOR too — the
+    // page, its route, and the backend module/API/data are all untouched;
+    // it's still reachable directly (e.g. Stock's "Voir dans le journal
+    // d'audit" link) and AuditLogsPage's own `canView` still allows DIRECTOR.
+    secondary: [
+      { label: 'Suivi des incidents',    path: '/app/incidents',  icon: AlertTriangle },
+      { label: 'Suivre les finances',    path: '/app/finances',   icon: DollarSign },
+      { label: 'Administration & Locaux', path: '/app/administration', icon: Building2 },
+    ]
   },
   educator: {
     primary: [
@@ -51,12 +49,25 @@ const NAV_BY_ROLE: Record<UserRole, { primary: NavItem[]; secondary: NavItem[] }
     ],
   },
   supervisor: {
+    // "Mon équipe" and "Journal d'audit" removed (Supervisor experience
+    // simplification) — DIRECTOR keeps both, unchanged, in its own config
+    // above. Direct URL access is also blocked; see TeamPage's role guard
+    // and AuditLogsPage's `canView`.
+    //
+    // "Demandes à valider" links to the full, unified /app/validations page
+    // (every pending ValidationRequest, any resource type — see
+    // PendingValidationsList) — previously reachable only by typing the URL
+    // directly; the Supervisor Dashboard's own condensed version of the
+    // same list is still the landing page, this is the dedicated full view.
     primary: [
       { label: "Vue d'ensemble",         path: '/app/dashboard',   icon: LayoutDashboard },
+      { label: 'Demandes à valider',     path: '/app/validations', icon: ShieldCheck },
     ],
     secondary: [
       { label: 'Suivi des incidents',    path: '/app/incidents',   icon: AlertTriangle },
       { label: 'Consulter les rapports', path: '/app/reports',     icon: FileText },
+      { label: 'Suivre les finances',    path: '/app/finances',    icon: DollarSign },
+      { label: 'Administration & Locaux', path: '/app/administration', icon: Building2 },
     ],
   },
   board: {

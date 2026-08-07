@@ -1,15 +1,19 @@
 import { useState, useEffect, useMemo } from 'react';
+import { useSearchParams, Navigate } from 'react-router';
 import { createPortal } from 'react-dom';
 import { TeamMember, Candidat, FormerMember } from '../data/mockData';
 import {
   Plus, Search, X, Edit3, Check,
-  UserMinus, UserCheck, Upload, ArrowUpRight,
-  Paperclip, Loader2, CalendarClock, Trash2, Eye,
+  UserMinus, UserCheck, UserX, Upload,
+  Paperclip, Loader2, CalendarClock, Trash2, Eye, AlertTriangle,
+  Circle, ChevronLeft, ChevronRight, RotateCcw, Users, CalendarOff,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { useAuth } from '../context/AuthContext';
 import {
-  teamApi, mapStaff, mapCandidate, mapFormer,
+  teamApi, mapStaff, mapCandidate, mapFormer, summarizeDailyPresence, nonConfirmedEligibleEntries,
   type ApiStaffStatus, type ApiCandidateStatus,
+  type ApiDailyPresence, type ApiPresenceStatus,
 } from '../services/team.api';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -55,7 +59,36 @@ const STATUT_CANDIDAT: Record<Candidat['statut'], { bg: string; color: string; l
   'entretien fait':  { bg: '#ECFDF5', color: '#065F46',  label: 'Entretien fait' },
 };
 
-type Tab = 'active' | 'candidates' | 'former';
+type Tab = 'active' | 'candidates' | 'former' | 'attendance';
+
+// ─── Daily presence confirmation (PR 10) ───────────────────────────────────────
+// Moved here from AttendancePage.tsx as part of the Team navigation update:
+// staff presence confirmation now lives under the "Présences" tab of "Mon
+// équipe" instead of its own separate menu entry. Distinct from the Congé/
+// Retard/Absence (StaffAttendance) records managed elsewhere on this page:
+// this is a same-day "did this person show up" check, confirmed by the
+// DIRECTOR, backed by StaffPresenceConfirmation.
+
+const PRESENCE_STATUS_BADGE: Record<ApiPresenceStatus, { bg: string; color: string; label: string }> = {
+  NON_CONFIRMED: { bg: '#F3F4F6', color: '#6B7280', label: 'Non confirmée' },
+  PRESENT:       { bg: '#ECFDF5', color: '#065F46', label: 'Présent' },
+  ABSENT:        { bg: '#FEF2F2', color: '#B91C1C', label: 'Absent' },
+};
+
+const ON_LEAVE_LABEL: Record<string, string> = {
+  conge: 'En congé',
+  absence: 'Absence (RH)',
+};
+
+function todayIso(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function shiftIsoDate(iso: string, deltaDays: number): string {
+  const d = new Date(`${iso}T00:00:00`);
+  d.setDate(d.getDate() + deltaDays);
+  return d.toISOString().slice(0, 10);
+}
 
 const INPUT: React.CSSProperties = {
   width: '100%', padding: '9px 12px', borderRadius: 8,
@@ -634,7 +667,7 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
 
 export type PlanningSlot = { debut: string; fin: string; label: string };
 export type WeekPlan = Record<string, PlanningSlot[]>;
-const JOURS = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi'] as const;
+const JOURS = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'] as const;
 
 export function emptyPlan(): WeekPlan {
   return Object.fromEntries(JOURS.map(j => [j, []]));
@@ -1542,7 +1575,10 @@ function AttendanceModal({ member, onClose, onMemberStatusChange }: {
       if (!map[key]) map[key] = { retards: 0, absJust: 0, absNonJust: 0, conges: 0 };
       if (r.type === 'retard')   map[key].retards++;
       if (r.type === 'conge')    map[key].conges++;
-      if (r.type === 'absence')  r.justified ? map[key].absJust++ : map[key].absNonJust++;
+      if (r.type === 'absence') {
+        if (r.justified) map[key].absJust++;
+        else map[key].absNonJust++;
+      }
     });
     return Object.entries(map)
       .sort(([a], [b]) => b.localeCompare(a))
@@ -2024,11 +2060,11 @@ function AttendanceModal({ member, onClose, onMemberStatusChange }: {
 // ─── Member Card ──────────────────────────────────────────────────────────────
 
 function MemberCard({ m, effectiveStatus, onAttendance, onEdit, onExit }: {
-  m: TeamMember;
+  m: TeamMember & { apiId: string };
   effectiveStatus?: 'present' | 'absent' | 'conge';
-  onAttendance: (m: TeamMember) => void;
-  onEdit: (m: TeamMember) => void;
-  onExit: (m: TeamMember) => void;
+  onAttendance: (m: TeamMember & { apiId: string }) => void;
+  onEdit: (m: TeamMember & { apiId: string }) => void;
+  onExit: (m: TeamMember & { apiId: string }) => void;
 }) {
   const st = STATUS[effectiveStatus ?? m.status];
   const rs = getRoleStyle(m.role);
@@ -2109,11 +2145,11 @@ function MemberCard({ m, effectiveStatus, onAttendance, onEdit, onExit }: {
 // ─── Tab: Active Members ───────────────────────────────────────────────────────
 
 function ActiveTab({ members, onExit, onEdit, onAdd, onAttendance }: {
-  members: TeamMember[];
-  onExit: (m: TeamMember) => void;
-  onEdit: (m: TeamMember) => void;
+  members: (TeamMember & { apiId: string })[];
+  onExit: (m: TeamMember & { apiId: string }) => void;
+  onEdit: (m: TeamMember & { apiId: string }) => void;
   onAdd: () => void;
-  onAttendance: (m: TeamMember) => void;
+  onAttendance: (m: TeamMember & { apiId: string }) => void;
 }) {
   const [search,        setSearch]        = useState('');
   const [filter,        setFilter]        = useState<'all' | 'present' | 'absent' | 'conge'>('all');
@@ -2453,9 +2489,9 @@ function CandidatesTab({ candidates, onAdd, onIntegrate, onIntegrateNow, onEdit 
 // ─── Tab: Former Members ───────────────────────────────────────────────────────
 
 function FormerTab({ former, onReintegrate, onReintegrateNow }: {
-  former: FormerMember[];
-  onReintegrate: (m: FormerMember) => void;
-  onReintegrateNow: (m: FormerMember) => void;
+  former: (FormerMember & { apiId: string })[];
+  onReintegrate: (m: FormerMember & { apiId: string }) => void;
+  onReintegrateNow: (m: FormerMember & { apiId: string }) => void;
 }) {
   return (
     <div className="rounded-xl overflow-hidden" style={{ background: '#FFFFFF', border: '1px solid #E5E7EB' }}>
@@ -2539,14 +2575,406 @@ function FormerTab({ former, onReintegrate, onReintegrateNow }: {
   );
 }
 
+// ─── Présences tab (daily staff presence confirmation, PR 10 + merge) ─────────
+// DIRECTOR can confirm/reset; SUPERVISOR gets the same view read-only
+// (`readOnly`), matching the backend's `@Roles('DIRECTOR')` restriction on
+// the confirm/reset endpoints. `initialStatusFilter` supports deep-linking
+// from the Director Dashboard's attendance stat cards
+// (`/app/team?tab=attendance&status=PRESENT|ABSENT|NON_CONFIRMED`).
+//
+// `'ON_LEAVE'` is a frontend-only filter value (never sent to/from the API,
+// which never has an `ApiPresenceStatus` of that shape) driving the
+// "Indisponibles" stat card below — it narrows the same `entries` list to
+// staff currently on Congé/Absence, the mirror image of the `NON_CONFIRMED`
+// filter now correctly excluding them (see `filtered` below).
+type PresenceFilter = ApiPresenceStatus | 'ON_LEAVE';
+
+function PresenceTab({ readOnly, initialStatusFilter, initialSearch, todayPresence, reloadToday }: {
+  readOnly: boolean; initialStatusFilter: ApiPresenceStatus | null;
+  // Deep-links a specific person into view (e.g. from the Director
+  // Dashboard's "Non confirmées" modal "Confirmer" button) by pre-filling
+  // the search box with their name — same mechanism a DIRECTOR typing it
+  // manually would use, not a separate highlight/scroll system.
+  initialSearch: string;
+  // "Today" is never fetched independently here — `todayPresence` is the
+  // exact same object the parent (`TeamPageContent`) uses for the header
+  // subtitle and tab badge. Sharing it (rather than each side firing its own
+  // `listDailyPresence(todayIso())` call, as before) is what guarantees this
+  // tab's cards and those two can never transiently disagree — there is no
+  // second, possibly-racing "today" fetch to disagree *with*. `reloadToday`
+  // is the parent's own reload function, called directly after a mutation so
+  // the refresh is the same single round trip for both, not two separate
+  // ones.
+  todayPresence: ApiDailyPresence | null;
+  reloadToday: () => Promise<void>;
+}) {
+  const [date, setDate] = useState(todayIso());
+  const isToday = date === todayIso();
+  // Only used when the date picker moves off today — a genuinely different
+  // query, not a duplicate of anything (see `todayPresence` above).
+  const [historicalPresence, setHistoricalPresence] = useState<ApiDailyPresence | null>(null);
+  const [historicalLoading, setHistoricalLoading] = useState(false);
+  const [search, setSearch] = useState(initialSearch);
+  const [statusFilter, setStatusFilter] = useState<PresenceFilter | null>(initialStatusFilter);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [bulkConfirming, setBulkConfirming] = useState(false);
+
+  const presence = isToday ? todayPresence : historicalPresence;
+  const loading = isToday ? todayPresence === null : historicalLoading;
+
+  useEffect(() => {
+    if (isToday) return; // parent already owns and fetches this.
+    setHistoricalLoading(true);
+    teamApi.listDailyPresence(date)
+      .then(d => setHistoricalPresence(d))
+      .catch(() => toast.error('Erreur de chargement des présences.'))
+      .finally(() => setHistoricalLoading(false));
+    // Re-run only when `date` itself changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [date]);
+
+  // Reloads whichever dataset backs the currently-selected date — the
+  // shared "today" one (also refreshing the header/banner/badge, in the
+  // same request) or this tab's own historical one.
+  const reloadCurrent = () =>
+    isToday
+      ? reloadToday()
+      : teamApi.listDailyPresence(date)
+          .then(d => setHistoricalPresence(d))
+          .catch(() => toast.error('Erreur de chargement des présences.'));
+
+  const entries = presence?.entries ?? [];
+  const { present: presentCount, absent: absentCount, nonConfirmed: nonConfirmedCount } =
+    presence ? summarizeDailyPresence(presence) : { present: 0, absent: 0, nonConfirmed: 0 };
+
+  const filtered = entries
+    .filter(e => {
+      if (!statusFilter) return true;
+      if (statusFilter === 'ON_LEAVE') return !!e.onLeave;
+      // NON_CONFIRMED only ever shows staff actually eligible for
+      // confirmation — same "not on leave" rule as the stat card and bulk
+      // button below, so this list can never disagree with the count it was
+      // filtered from. PRESENT/ABSENT are unaffected: those are explicit
+      // confirmations, independent of any leave record.
+      if (statusFilter === 'NON_CONFIRMED') return e.status === 'NON_CONFIRMED' && !e.onLeave;
+      return e.status === statusFilter;
+    })
+    .filter(e =>
+      !search
+      || `${e.firstName} ${e.lastName}`.toLowerCase().includes(search.toLowerCase())
+      || e.role.toLowerCase().includes(search.toLowerCase()));
+
+  const handleConfirm = async (staffId: string, status: 'PRESENT' | 'ABSENT') => {
+    setBusyId(staffId);
+    try {
+      await teamApi.confirmPresence(staffId, date, status);
+      await reloadCurrent();
+    } catch {
+      toast.error('Erreur lors de la confirmation.');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const handleReset = async (staffId: string) => {
+    setBusyId(staffId);
+    try {
+      await teamApi.resetPresence(staffId, date);
+      await reloadCurrent();
+    } catch {
+      toast.error('Erreur lors de la réinitialisation.');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  // Bulk confirmation kept deliberately small and safe: only ever sets
+  // NON_CONFIRMED, not-on-leave staff to PRESENT — it never overrides an
+  // existing ABSENT confirmation or a leave record. `nonConfirmedEligibleEntries`
+  // is the exact same predicate `nonConfirmedCount` (from the API — see
+  // StaffService#listDailyPresence) is built from, so `bulkTargets.length`
+  // always equals it exactly; no gap to explain here — and the Director
+  // Dashboard's "Non confirmées" modal uses this identical helper for its
+  // own list, so the two pages can never disagree about who's eligible.
+  // `onLeaveExcludedCount` is surfaced on its own "Indisponibles" stat card
+  // instead of a parenthetical next to the bulk button.
+  const bulkTargets = presence ? nonConfirmedEligibleEntries(presence) : [];
+  const onLeaveExcludedCount = entries.filter(e => e.status === 'NON_CONFIRMED' && e.onLeave).length;
+  const bulkConfirmPresent = async () => {
+    if (bulkTargets.length === 0) return;
+    setBulkConfirming(true);
+    try {
+      await Promise.all(bulkTargets.map(e => teamApi.confirmPresence(e.staffId, date, 'PRESENT')));
+      await reloadCurrent();
+      toast.success(`${bulkTargets.length} présence(s) confirmée(s).`);
+    } catch {
+      toast.error('Erreur lors de la confirmation groupée.');
+    } finally {
+      setBulkConfirming(false);
+    }
+  };
+
+  const dateLabel = new Date(`${date}T00:00:00`).toLocaleDateString('fr-FR', {
+    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+  });
+
+  const toggleStatusFilter = (status: PresenceFilter) =>
+    setStatusFilter(prev => (prev === status ? null : status));
+
+  return (
+    <div className="space-y-5">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <p style={{ color: '#6B7280', fontSize: 13, textTransform: 'capitalize' }}>{dateLabel}</p>
+        <div className="flex items-center gap-1.5">
+          <button onClick={() => setDate(d => shiftIsoDate(d, -1))} aria-label="Jour précédent"
+            className="p-2 rounded-lg" style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', cursor: 'pointer' }}>
+            <ChevronLeft size={15} style={{ color: '#374151' }} />
+          </button>
+          <input type="date" value={date} onChange={e => setDate(e.target.value)}
+            aria-label="Date des présences"
+            className="px-3 py-2 rounded-lg outline-none"
+            style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', color: '#1A1A1A', fontSize: 13 }} />
+          <button onClick={() => setDate(d => shiftIsoDate(d, 1))} aria-label="Jour suivant"
+            className="p-2 rounded-lg" style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', cursor: 'pointer' }}>
+            <ChevronRight size={15} style={{ color: '#374151' }} />
+          </button>
+          {date !== todayIso() && (
+            <button onClick={() => setDate(todayIso())}
+              className="px-3 py-2 rounded-lg" style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', color: '#3E5A78', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
+              Aujourd'hui
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Stat cards double as status filters — click to narrow the list below.
+          Total équipe = Présents + Absents + Non confirmées + Indisponibles. */}
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+        <button data-testid="presence-filter-all" onClick={() => setStatusFilter(null)}
+          className="rounded-xl px-4 py-3 flex items-center gap-3 text-left"
+          style={{ background: '#EEF2F7', border: statusFilter === null ? '1.5px solid #3E5A78' : '1.5px solid transparent', cursor: 'pointer' }}>
+          <Users size={16} style={{ color: '#3E5A78' }} />
+          <div>
+            <p style={{ color: '#3E5A78', fontSize: 20, fontWeight: 700, lineHeight: 1 }}>{entries.length}</p>
+            <p style={{ color: '#6B7280', fontSize: 11, marginTop: 2 }}>Total équipe</p>
+          </div>
+        </button>
+        <button data-testid="presence-filter-present" onClick={() => toggleStatusFilter('PRESENT')}
+          className="rounded-xl px-4 py-3 flex items-center gap-3 text-left"
+          style={{ background: '#ECFDF5', border: statusFilter === 'PRESENT' ? '1.5px solid #065F46' : '1.5px solid transparent', cursor: 'pointer' }}>
+          <UserCheck size={16} style={{ color: '#065F46' }} />
+          <div>
+            <p style={{ color: '#065F46', fontSize: 20, fontWeight: 700, lineHeight: 1 }}>{presentCount}</p>
+            <p style={{ color: '#6B7280', fontSize: 11, marginTop: 2 }}>Présents</p>
+          </div>
+        </button>
+        <button data-testid="presence-filter-absent" onClick={() => toggleStatusFilter('ABSENT')}
+          className="rounded-xl px-4 py-3 flex items-center gap-3 text-left"
+          style={{ background: '#FEF2F2', border: statusFilter === 'ABSENT' ? '1.5px solid #B91C1C' : '1.5px solid transparent', cursor: 'pointer' }}>
+          <UserX size={16} style={{ color: '#B91C1C' }} />
+          <div>
+            <p style={{ color: '#B91C1C', fontSize: 20, fontWeight: 700, lineHeight: 1 }}>{absentCount}</p>
+            <p style={{ color: '#6B7280', fontSize: 11, marginTop: 2 }}>Absents</p>
+          </div>
+        </button>
+        <button data-testid="non-confirmed-kpi" onClick={() => toggleStatusFilter('NON_CONFIRMED')}
+          className="rounded-xl px-4 py-3 flex items-center gap-3 text-left"
+          style={{
+            background: nonConfirmedCount > 0 ? '#FFFBEB' : '#F3F4F6',
+            border: statusFilter === 'NON_CONFIRMED' ? '1.5px solid #D97706' : '1.5px solid transparent',
+            cursor: 'pointer',
+          }}>
+          <Circle size={16} style={{ color: nonConfirmedCount > 0 ? '#D97706' : '#9CA3AF' }} />
+          <div>
+            <p style={{ color: nonConfirmedCount > 0 ? '#D97706' : '#374151', fontSize: 20, fontWeight: 700, lineHeight: 1 }}>{nonConfirmedCount}</p>
+            <p style={{ color: '#6B7280', fontSize: 11, marginTop: 2 }}>Non confirmées</p>
+          </div>
+        </button>
+        {/* Staff currently on Congé/Absence (Maladie included — the type is a
+            free string, not a narrow union) are excluded from "Non
+            confirmées" (see StaffService#listDailyPresence) but must not
+            just vanish from the equation — they're accounted for here
+            instead, keeping Total équipe = Présents + Absents +
+            Non confirmées + Indisponibles always true. */}
+        <button data-testid="on-leave-kpi" onClick={() => toggleStatusFilter('ON_LEAVE')}
+          className="rounded-xl px-4 py-3 flex items-center gap-3 text-left"
+          style={{
+            background: onLeaveExcludedCount > 0 ? '#F5F3FF' : '#F3F4F6',
+            border: statusFilter === 'ON_LEAVE' ? '1.5px solid #7C3AED' : '1.5px solid transparent',
+            cursor: 'pointer',
+          }}>
+          <CalendarOff size={16} style={{ color: onLeaveExcludedCount > 0 ? '#7C3AED' : '#9CA3AF' }} />
+          <div>
+            <p style={{ color: onLeaveExcludedCount > 0 ? '#7C3AED' : '#374151', fontSize: 20, fontWeight: 700, lineHeight: 1 }}>{onLeaveExcludedCount}</p>
+            <p style={{ color: '#6B7280', fontSize: 11, marginTop: 2 }}>Indisponibles</p>
+          </div>
+        </button>
+      </div>
+
+      {nonConfirmedCount > 0 && (
+        <div data-testid="unconfirmed-alert" className="flex items-center justify-between gap-3 flex-wrap px-4 py-2.5 rounded-xl"
+          style={{ background: '#FFFBEB', border: '1px solid #FDE68A' }}>
+          <div className="flex items-center gap-2">
+            <AlertTriangle size={15} style={{ color: '#D97706', flexShrink: 0 }} />
+            <span style={{ color: '#1A1A1A', fontSize: 13 }}>
+              <strong>{nonConfirmedCount}</strong> présence{nonConfirmedCount > 1 ? 's' : ''} non confirmée{nonConfirmedCount > 1 ? 's' : ''}
+            </span>
+          </div>
+          {!readOnly && bulkTargets.length > 0 && (
+            <button
+              data-testid="bulk-confirm-present"
+              onClick={bulkConfirmPresent}
+              disabled={bulkConfirming}
+              title="Confirme uniquement les membres non confirmés qui ne sont pas en congé/absence."
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg"
+              style={{ background: '#065F46', color: '#FFFFFF', fontSize: 12, fontWeight: 600, border: 'none', cursor: bulkConfirming ? 'default' : 'pointer', opacity: bulkConfirming ? 0.7 : 1 }}>
+              <Check size={13} /> Confirmer {bulkTargets.length} en Présent
+            </button>
+          )}
+        </div>
+      )}
+
+      <div className="relative" style={{ maxWidth: 320 }}>
+        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Rechercher un membre…"
+          className="w-full pl-3 pr-8 py-2 rounded-lg outline-none"
+          style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', color: '#1A1A1A', fontSize: 13 }} />
+        {search && (
+          <button onClick={() => setSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2"
+            style={{ color: '#9CA3AF', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>×</button>
+        )}
+      </div>
+
+      <div className="rounded-xl overflow-hidden" style={{ background: '#FFFFFF', border: '1px solid #E5E7EB' }}>
+        <div className="grid gap-0 px-5 py-3"
+          style={{ gridTemplateColumns: '2fr 1fr 1.6fr', background: '#F9F7F3', borderBottom: '1px solid #F3F4F6' }}>
+          {['MEMBRE', 'STATUT', 'ACTIONS'].map(h => (
+            <span key={h} style={{ color: '#9CA3AF', fontSize: 11, fontWeight: 600, letterSpacing: '0.05em' }}>{h}</span>
+          ))}
+        </div>
+        {loading ? (
+          <p style={{ color: '#9CA3AF', fontSize: 13, textAlign: 'center', padding: '24px 0' }}>Chargement…</p>
+        ) : filtered.length === 0 ? (
+          <p style={{ color: '#9CA3AF', fontSize: 13, textAlign: 'center', padding: '24px 0' }}>Aucun membre trouvé.</p>
+        ) : filtered.map((entry, i) => {
+          const st = PRESENCE_STATUS_BADGE[entry.status];
+          const isLast = i === filtered.length - 1;
+          const isBusy = busyId === entry.staffId;
+          const initials = `${entry.firstName[0] ?? '?'}${entry.lastName[0] ?? '?'}`.toUpperCase();
+
+          return (
+            <div key={entry.staffId} data-testid={`presence-row-${entry.staffId}`}
+              className="grid items-center gap-0 px-5 py-4"
+              style={{ gridTemplateColumns: '2fr 1fr 1.6fr', borderBottom: isLast ? 'none' : '1px solid #F9F7F3' }}>
+              <div className="flex items-center gap-3">
+                <div className="flex items-center justify-center rounded-full flex-shrink-0"
+                  style={{ width: 36, height: 36, background: '#F3F4F6', color: '#6B7280', fontSize: 12, fontWeight: 700 }}>
+                  {initials}
+                </div>
+                <div>
+                  <p style={{ color: '#1A1A1A', fontSize: 13, fontWeight: 600 }}>{entry.firstName} {entry.lastName}</p>
+                  <p style={{ color: '#9CA3AF', fontSize: 11 }}>{entry.role}</p>
+                </div>
+              </div>
+              <div>
+                {entry.onLeave ? (
+                  <span className="px-2 py-0.5 rounded-full inline-block" style={{ background: '#FFFBEB', color: '#D97706', fontSize: 11, fontWeight: 600 }}>
+                    {ON_LEAVE_LABEL[entry.onLeave] ?? entry.onLeave}
+                  </span>
+                ) : (
+                  <span className="px-2 py-0.5 rounded-full inline-block" style={{ background: st.bg, color: st.color, fontSize: 11, fontWeight: 600 }}>
+                    {st.label}
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {entry.onLeave ? (
+                  <span style={{ color: '#9CA3AF', fontSize: 11 }}>Géré via Congé/Absence</span>
+                ) : readOnly ? (
+                  <span style={{ color: '#9CA3AF', fontSize: 11 }}>Lecture seule</span>
+                ) : entry.status === 'NON_CONFIRMED' ? (
+                  <>
+                    <button disabled={isBusy} onClick={() => handleConfirm(entry.staffId, 'PRESENT')}
+                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg"
+                      style={{ background: '#ECFDF5', color: '#065F46', fontSize: 12, fontWeight: 600, border: 'none', cursor: isBusy ? 'default' : 'pointer' }}>
+                      <Check size={12} /> Présent
+                    </button>
+                    <button disabled={isBusy} onClick={() => handleConfirm(entry.staffId, 'ABSENT')}
+                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg"
+                      style={{ background: '#FEF2F2', color: '#B91C1C', fontSize: 12, fontWeight: 600, border: 'none', cursor: isBusy ? 'default' : 'pointer' }}>
+                      <X size={12} /> Absent
+                    </button>
+                  </>
+                ) : (
+                  <button disabled={isBusy} onClick={() => handleReset(entry.staffId)}
+                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg"
+                    style={{ background: '#F3F4F6', color: '#6B7280', fontSize: 12, fontWeight: 500, border: 'none', cursor: isBusy ? 'default' : 'pointer' }}>
+                    <RotateCcw size={12} /> Réinitialiser
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ─── Main Page ────────────────────────────────────────────────────────────────
+//
+// "Mon équipe" is DIRECTOR-only (Supervisor experience simplification) — a
+// SUPERVISOR opening /app/team directly (old bookmark/link, or typed URL)
+// is redirected to the Supervisor dashboard instead of seeing the page,
+// same convention as AttendancePage's legacy-route redirect. The role check
+// lives in this thin wrapper (not inside TeamPageContent itself) so it runs
+// before any of TeamPageContent's own hooks — conditionally skipping hooks
+// inside a single component would break the Rules of Hooks.
 
 export function TeamPage() {
-  const [tab, setTab] = useState<Tab>('active');
+  const { user } = useAuth();
+  if (user?.role === 'supervisor') return <Navigate to="/app/dashboard" replace />;
+  return <TeamPageContent />;
+}
+
+function TeamPageContent() {
+  const { user } = useAuth();
+  const [searchParams] = useSearchParams();
+  // Deep-linking from the Director Dashboard's attendance stat cards
+  // (?tab=attendance&status=PRESENT|ABSENT|NON_CONFIRMED), the "Non
+  // confirmées" modal's "Confirmer" button (adds &search=<name>), and from
+  // AttendancePage's legacy-route redirect.
+  const [tab, setTab] = useState<Tab>(() => (searchParams.get('tab') === 'attendance' ? 'attendance' : 'active'));
+  const [presenceStatusFilter] = useState<ApiPresenceStatus | null>(() => {
+    const s = searchParams.get('status');
+    return s === 'PRESENT' || s === 'ABSENT' || s === 'NON_CONFIRMED' ? s : null;
+  });
+  const [presenceSearch] = useState(() => searchParams.get('search') ?? '');
   const [members,    setMembers]    = useState<(TeamMember & { apiId: string })[]>([]);
   const [candidates, setCandidates] = useState<(Candidat  & { apiId: string })[]>([]);
   const [former,     setFormer]     = useState<(FormerMember & { apiId: string })[]>([]);
   const [loading,    setLoading]    = useState(true);
+  // Today's daily-presence snapshot — the single source of truth for every
+  // attendance number on this page: the header subtitle and tab badge below
+  // both derive from it directly, and `PresenceTab` itself reads this exact
+  // same object (not a fetch of its own) whenever its selected date is
+  // today — see `PresenceTab`'s `todayPresence` prop. There is only ever one
+  // `listDailyPresence(todayIso())` call in flight, so there is nothing for
+  // any of these to transiently disagree with. Reloaded on mount and again
+  // after any confirm/reset/bulk mutation made while viewing today (via
+  // `reloadTodayPresence`, passed down as `reloadToday`).
+  //
+  // A top-of-page "N présences non confirmées aujourd'hui" nudge banner used
+  // to live here too, duplicating the "Présences" tab's own summary block
+  // (`unconfirmed-alert`, above the member list and bulk button) — removed;
+  // that block is the single place this number is now shown.
+  const [todayPresence, setTodayPresence] = useState<ApiDailyPresence | null>(null);
+  const reloadTodayPresence = () =>
+    teamApi.listDailyPresence(todayIso())
+      .then(d => setTodayPresence(d))
+      .catch(() => {});
+  const todaySummary = todayPresence
+    ? summarizeDailyPresence(todayPresence)
+    : { present: 0, absent: 0, nonConfirmed: 0 };
 
   // Modals
   const [exitTarget,         setExitTarget]         = useState<(TeamMember & { apiId: string }) | null>(null);
@@ -2567,6 +2995,11 @@ export function TeamPage() {
       })
       .catch(() => toast.error('Erreur de chargement de l\'équipe.'))
       .finally(() => setLoading(false));
+
+    reloadTodayPresence();
+    // `reloadTodayPresence` is intentionally not in the dependency array —
+    // it's recreated every render but only needs to run once on mount here;
+    // it's re-invoked explicitly via `onChanged` below after mutations.
   }, []);
 
   const handleExit = async (motif: string) => {
@@ -2730,9 +3163,10 @@ export function TeamPage() {
   };
 
   const TABS: { key: Tab; label: string; count: number }[] = [
-    { key: 'active',     label: 'Équipe active',  count: members.length },
-    { key: 'candidates', label: 'Candidats',       count: candidates.length },
-    { key: 'former',     label: 'Anciens membres', count: former.length },
+    { key: 'active',      label: 'Équipe active',  count: members.length },
+    { key: 'candidates',  label: 'Candidats',       count: candidates.length },
+    { key: 'former',      label: 'Anciens membres', count: former.length },
+    { key: 'attendance',  label: 'Présences',       count: todaySummary.nonConfirmed },
   ];
 
   if (loading) return (
@@ -2746,15 +3180,21 @@ export function TeamPage() {
       {/* Header */}
       <div>
         <h2 style={{ color: '#1A1A1A', fontSize: 22, fontWeight: 700 }}>Mon équipe</h2>
-        <p style={{ color: '#6B7280', fontSize: 13, marginTop: 2 }}>
-          {members.length} membres actifs · {members.filter(m => m.status === 'present').length} présents aujourd'hui
+        <p data-testid="team-header-subtitle" style={{ color: '#6B7280', fontSize: 13, marginTop: 2 }}>
+          {/* Same dataset as the "Présences" tab's "Total équipe"/"Présents"
+              cards (`todayPresence`, via `summarizeDailyPresence`) — not
+              `members`/`StaffMember.status`, which is a different concept
+              (a manually-set field) and was the source of the previous
+              mismatch here. Falls back to `members.length` only while
+              `todayPresence` hasn't loaded yet, to avoid a "0 membres" flash. */}
+          {todayPresence?.entries.length ?? members.length} membres actifs · {todaySummary.present} présents aujourd'hui
         </p>
       </div>
 
       {/* Tabs */}
       <div className="flex gap-1 p-1 rounded-xl" style={{ background: '#F3F4F6', width: 'fit-content' }}>
         {TABS.map(t => (
-          <button key={t.key} onClick={() => setTab(t.key)}
+          <button key={t.key} data-testid={`team-tab-${t.key}`} onClick={() => setTab(t.key)}
             className="flex items-center gap-2 px-4 py-2 rounded-lg transition-all"
             style={{
               background: tab === t.key ? '#FFFFFF' : 'transparent',
@@ -2793,6 +3233,15 @@ export function TeamPage() {
       )}
       {tab === 'former' && (
         <FormerTab former={former} onReintegrate={setReintegrateTarget} onReintegrateNow={handleReintegrateNow} />
+      )}
+      {tab === 'attendance' && (
+        <PresenceTab
+          readOnly={user?.role === 'supervisor'}
+          initialStatusFilter={presenceStatusFilter}
+          initialSearch={presenceSearch}
+          todayPresence={todayPresence}
+          reloadToday={reloadTodayPresence}
+        />
       )}
 
       {/* Modals */}

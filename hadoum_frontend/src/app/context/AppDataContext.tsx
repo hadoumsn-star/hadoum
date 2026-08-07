@@ -50,10 +50,6 @@ interface AppDataContextType {
   addFundRequest: (r: Omit<FundRequest, 'id' | 'status'>) => void;
   validateFund: (id: number, note: string) => void;
   refuseFund: (id: number, note: string) => void;
-
-  // Team attendance (point 5)
-  teamAttendanceConfirmed: Record<number, boolean>;
-  updateTeamAttendanceConfirmed: (id: number, val: boolean) => void;
 }
 
 const AppDataContext = createContext<AppDataContextType | null>(null);
@@ -77,7 +73,6 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
   const [pendingActivities, setPendingActivities] = useState<PendingActivity[]>(INIT_ACTIVITIES);
   const [leaveRequests, setLeaveRequests]         = useState<LeaveRequest[]>(INIT_LEAVE);
   const [fundRequests, setFundRequests]           = useState<FundRequest[]>(INIT_FUND);
-  const [teamAttendanceConfirmed, setTeamAttendanceConfirmed] = useState<Record<number, boolean>>({});
 
   const addActivity = (a: Omit<PendingActivity, 'id' | 'status'>) => {
     setPendingActivities(prev => [{ ...a, id: Date.now(), status: 'en attente' }, ...prev]);
@@ -103,15 +98,11 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
   const refuseFund = (id: number, note: string) =>
     setFundRequests(prev => prev.map(r => r.id === id ? { ...r, status: 'refusé', note } : r));
 
-  const updateTeamAttendanceConfirmed = (id: number, val: boolean) =>
-    setTeamAttendanceConfirmed(prev => ({ ...prev, [id]: val }));
-
   return (
     <AppDataContext.Provider value={{
       pendingActivities, addActivity, validateActivity, refuseActivity,
       leaveRequests, addLeaveRequest, validateLeave, refuseLeave,
       fundRequests, addFundRequest, validateFund, refuseFund,
-      teamAttendanceConfirmed, updateTeamAttendanceConfirmed,
     }}>
       {children}
     </AppDataContext.Provider>

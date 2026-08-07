@@ -3,7 +3,7 @@ import { Link } from 'react-router';
 import { HadoumLogo } from '../components/HadoumLogo';
 import { Mail, ArrowLeft, CheckCircle2 } from 'lucide-react';
 
-const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3001/api';
+const API_BASE = import.meta.env.VITE_API_URL ?? '/api';
 
 export function ForgotPasswordPage() {
   const [email, setEmail]     = useState('');

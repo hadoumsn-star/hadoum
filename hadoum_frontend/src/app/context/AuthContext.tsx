@@ -1,4 +1,5 @@
-import React, { createContext, useContext, useState } from 'react';
+import React, { createContext, useContext, useEffect, useState } from 'react';
+import { setAuthToken, setUnauthorizedHandler } from '../services/api';
 
 export type UserRole = 'director' | 'educator' | 'supervisor' | 'board';
 
@@ -83,11 +84,16 @@ function readStorage<T>(key: string): T | null {
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user,  setUser]  = useState<User | null>(() => readStorage<User>(USER_KEY));
-  const [token, setToken] = useState<string | null>(() => readStorage<string>(TOKEN_KEY));
+  const [token, setToken] = useState<string | null>(() => {
+    const t = readStorage<string>(TOKEN_KEY);
+    setAuthToken(t);
+    return t;
+  });
 
   const persist = (u: User, t: string | null) => {
     setUser(u);
     setToken(t);
+    setAuthToken(t);
     try {
       localStorage.setItem(USER_KEY, JSON.stringify(u));
       if (t) localStorage.setItem(TOKEN_KEY, JSON.stringify(t));
@@ -107,11 +113,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const logout = () => {
     setUser(null);
     setToken(null);
+    setAuthToken(null);
     try {
       localStorage.removeItem(USER_KEY);
       localStorage.removeItem(TOKEN_KEY);
     } catch {}
   };
+
+  // A 401 from the API (missing/invalid/expired session) logs the user out
+  // and sends them back to the login page, instead of leaving them on a
+  // page that silently fails every subsequent request.
+  useEffect(() => {
+    setUnauthorizedHandler(() => {
+      logout();
+      if (window.location.pathname !== '/login') {
+        window.location.href = '/login';
+      }
+    });
+    return () => setUnauthorizedHandler(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <AuthContext.Provider value={{ user, token, login, loginWithUser, logout, isAuthenticated: !!user }}>

@@ -1,0 +1,190 @@
+name: CD
+
+# Flow: PR -> ci.yml -> merge to develop -> automatic deploy to development
+#       -> tag push (v*) or GitHub Release -> deploy to production, gated
+#          by the "production" GitHub Environment's required reviewers
+#          (configure that in repo Settings > Environments - this workflow
+#          cannot set it for you).
+#
+# Every deploy: backs up the target database, pulls the built image, runs
+# migrations (via entrypoint.sh, automatically on container start), health
+# checks the result, and rolls back to the last known-good tag on failure.
+# See scripts/deploy/deploy.sh for the actual logic executed on the host.
+#
+# Requires this repo to have a working deploy host reachable over SSH, with
+# a checked-out copy of this repo and a real .env.development / .env.prod
+# file (see docs/deployment.md). Until that host exists, the deploy jobs
+# below will fail fast at the "Verify required secrets" step rather than
+# doing anything - this file is safe to merge before any server exists.
+
+on:
+  push:
+    branches: [develop]
+    tags: ['v*']
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Environment to deploy
+        required: true
+        type: choice
+        options: [development, production]
+      image_tag:
+        description: >-
+          Specific image tag to deploy instead of building HEAD (e.g. for a
+          manual/emergency rollback to a previous known-good tag). Leave
+          blank to build and deploy the current ref.
+        required: false
+        type: string
+
+concurrency:
+  group: cd-${{ github.event.inputs.environment || (startsWith(github.ref, 'refs/tags/') && 'production') || 'development' }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  API_IMAGE_NAME: ${{ github.repository_owner }}/hadoum-api
+  FRONTEND_IMAGE_NAME: ${{ github.repository_owner }}/hadoum-frontend
+
+jobs:
+  build-and-push:
+    name: Build and push images
+    runs-on: ubuntu-latest
+    if: ${{ !inputs.image_tag }}
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image_tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Compute image tag
+        id: tag
+        run: echo "tag=${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push API image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./hadoum_api
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.API_IMAGE_NAME }}:${{ steps.tag.outputs.tag }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./hadoum_frontend
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.FRONTEND_IMAGE_NAME }}:${{ steps.tag.outputs.tag }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy-development:
+    name: Deploy to development
+    needs: [build-and-push]
+    if: |
+      always() && !cancelled() &&
+      (needs.build-and-push.result == 'success' || needs.build-and-push.result == 'skipped') &&
+      (github.ref == 'refs/heads/develop' || github.event.inputs.environment == 'development')
+    runs-on: ubuntu-latest
+    environment: development
+    env:
+      IMAGE_TAG: ${{ inputs.image_tag || needs.build-and-push.outputs.image_tag }}
+    steps:
+      - name: Verify required secrets are present
+        run: |
+          missing=0
+          for var in DEV_DEPLOY_HOST DEV_DEPLOY_USER DEV_DEPLOY_SSH_KEY DEV_HEALTH_URL; do
+            eval "val=\${$var:-}"
+            if [ -z "$val" ]; then echo "Missing required secret: $var" >&2; missing=1; fi
+          done
+          exit $missing
+        env:
+          DEV_DEPLOY_HOST: ${{ secrets.DEV_DEPLOY_HOST }}
+          DEV_DEPLOY_USER: ${{ secrets.DEV_DEPLOY_USER }}
+          DEV_DEPLOY_SSH_KEY: ${{ secrets.DEV_DEPLOY_SSH_KEY }}
+          DEV_HEALTH_URL: ${{ secrets.DEV_HEALTH_URL }}
+
+      - name: Deploy over SSH
+        run: |
+          set -eu
+          umask 077
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -p "${SSH_PORT:-22}" -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+          ssh -i ~/.ssh/deploy_key -p "${SSH_PORT:-22}" "${SSH_USER}@${SSH_HOST}" \
+            "cd ${DEPLOY_PATH:-~/hadoum} && git fetch origin develop && git checkout develop && git reset --hard origin/develop && ./scripts/deploy/deploy.sh development '${IMAGE_TAG}' '${HEALTH_URL}'"
+        env:
+          SSH_HOST: ${{ secrets.DEV_DEPLOY_HOST }}
+          SSH_USER: ${{ secrets.DEV_DEPLOY_USER }}
+          SSH_KEY: ${{ secrets.DEV_DEPLOY_SSH_KEY }}
+          SSH_PORT: ${{ secrets.DEV_DEPLOY_SSH_PORT }}
+          DEPLOY_PATH: ${{ secrets.DEV_DEPLOY_PATH }}
+          HEALTH_URL: ${{ secrets.DEV_HEALTH_URL }}
+
+  deploy-production:
+    name: Deploy to production
+    needs: [build-and-push]
+    if: |
+      always() && !cancelled() &&
+      (needs.build-and-push.result == 'success' || needs.build-and-push.result == 'skipped') &&
+      (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'release' || github.event.inputs.environment == 'production')
+    runs-on: ubuntu-latest
+    # Configure required reviewers on the "production" Environment in repo
+    # Settings > Environments - that's the manual-approval gate in the
+    # PR -> CI -> develop -> approval -> tag/release -> prod flow. This
+    # workflow file cannot enable that setting on its own.
+    environment: production
+    env:
+      IMAGE_TAG: ${{ inputs.image_tag || needs.build-and-push.outputs.image_tag }}
+    steps:
+      - name: Verify required secrets are present
+        run: |
+          missing=0
+          for var in PROD_DEPLOY_HOST PROD_DEPLOY_USER PROD_DEPLOY_SSH_KEY PROD_HEALTH_URL; do
+            eval "val=\${$var:-}"
+            if [ -z "$val" ]; then echo "Missing required secret: $var" >&2; missing=1; fi
+          done
+          exit $missing
+        env:
+          PROD_DEPLOY_HOST: ${{ secrets.PROD_DEPLOY_HOST }}
+          PROD_DEPLOY_USER: ${{ secrets.PROD_DEPLOY_USER }}
+          PROD_DEPLOY_SSH_KEY: ${{ secrets.PROD_DEPLOY_SSH_KEY }}
+          PROD_HEALTH_URL: ${{ secrets.PROD_HEALTH_URL }}
+
+      - name: Deploy over SSH
+        run: |
+          set -eu
+          umask 077
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -p "${SSH_PORT:-22}" -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+          ssh -i ~/.ssh/deploy_key -p "${SSH_PORT:-22}" "${SSH_USER}@${SSH_HOST}" \
+            "cd ${DEPLOY_PATH:-~/hadoum} && git fetch origin main && git checkout main && git reset --hard origin/main && ./scripts/deploy/deploy.sh prod '${IMAGE_TAG}' '${HEALTH_URL}'"
+        env:
+          SSH_HOST: ${{ secrets.PROD_DEPLOY_HOST }}
+          SSH_USER: ${{ secrets.PROD_DEPLOY_USER }}
+          SSH_KEY: ${{ secrets.PROD_DEPLOY_SSH_KEY }}
+          SSH_PORT: ${{ secrets.PROD_DEPLOY_SSH_PORT }}
+          DEPLOY_PATH: ${{ secrets.PROD_DEPLOY_PATH }}
+          HEALTH_URL: ${{ secrets.PROD_HEALTH_URL }}
