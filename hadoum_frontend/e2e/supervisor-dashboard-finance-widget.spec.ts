@@ -98,7 +98,11 @@ test.describe('Supervisor Dashboard — expense cards inside the unified "Demand
     const dashboard = page.getByTestId('supervisor-dashboard');
     // Exactly one "Demandes à valider" heading — the widget and the generic
     // list were merged into one, so there is nothing left to duplicate.
-    await expect(dashboard.getByText('Demandes à valider')).toHaveCount(1);
+    // Scoped to the heading role specifically: Module 6 (PR 24) added an
+    // Opérations card whose own label is also the literal text "Demandes à
+    // valider" (the same pending-validations count, as one of five
+    // operational tiles) — a bare getByText() would now (correctly) find 2.
+    await expect(dashboard.getByRole('heading', { name: 'Demandes à valider' })).toHaveCount(1);
     const card = pendingCard(page, label);
     await expect(card).toBeVisible({ timeout: 10_000 });
     await expect(card.getByText('DÉPENSE')).toBeVisible();
@@ -116,7 +120,7 @@ test.describe('Supervisor Dashboard — expense cards inside the unified "Demand
     await loginAsSupervisor(page);
     await page.goto('/app/dashboard');
     const dashboard = page.getByTestId('supervisor-dashboard');
-    await expect(dashboard.getByText('Demandes à valider')).toBeVisible({ timeout: 10_000 });
+    await expect(dashboard.getByRole('heading', { name: 'Demandes à valider' })).toBeVisible({ timeout: 10_000 });
 
     const card = pendingCard(page, label);
     await card.getByRole('button', { name: 'Approuver' }).click();

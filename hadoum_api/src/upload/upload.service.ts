@@ -77,4 +77,29 @@ export class UploadService {
       );
     }
   }
+
+  /**
+   * PR 17 (Module 5): fetches an object's actual bytes, rather than a URL
+   * to it — needed to embed an approved DonorReportPhoto directly into a
+   * generated PDF (PdfReportService). Every other consumer of this service
+   * only ever needed a presigned URL or a delete; this is the first to
+   * need the bytes themselves, so it's added here rather than duplicated
+   * as a second S3 client/implementation.
+   */
+  async downloadFile(key: string): Promise<Buffer> {
+    try {
+      const result = await this.s3.send(
+        new GetObjectCommand({ Bucket: this.bucket, Key: key }),
+      );
+      const body = result.Body;
+      if (!body) {
+        throw new Error('Empty response body');
+      }
+      const bytes = await body.transformToByteArray();
+      return Buffer.from(bytes);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new InternalServerErrorException(`S3 download failed: ${message}`);
+    }
+  }
 }

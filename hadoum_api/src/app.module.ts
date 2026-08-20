@@ -30,6 +30,8 @@ import { ActivitiesModule } from './activities/activities.module';
 import { FundRequestsModule } from './fund-requests/fund-requests.module';
 import { ContactsModule } from './contacts/contacts.module';
 import { AuditLogsModule } from './audit-logs/audit-logs.module';
+import { DonorsModule } from './donors/donors.module';
+import { DashboardModule } from './dashboard/dashboard.module';
 import { AuditLogInterceptor } from './audit-logs/interceptors/audit-log.interceptor';
 
 @Module({
@@ -94,6 +96,8 @@ import { AuditLogInterceptor } from './audit-logs/interceptors/audit-log.interce
     FundRequestsModule,
     ContactsModule,
     AuditLogsModule,
+    DonorsModule,
+    DashboardModule,
   ],
   controllers: [AppController],
   providers: [

@@ -141,14 +141,6 @@ export const myStudents = [
   { id: 5, name: 'Riad Hamza', class: 'Primaire 2B', present: true, note: 13.0 },
 ];
 
-// Board data
-export const boardReports = [
-  { id: 1, title: 'Rapport mensuel — Avril 2026', date: '01 Mai 2026', status: 'disponible' as const, type: 'Mensuel' },
-  { id: 2, title: 'Rapport trimestriel — T1 2026', date: '01 Avr 2026', status: 'disponible' as const, type: 'Trimestriel' },
-  { id: 3, title: 'Rapport annuel 2025', date: '15 Jan 2026', status: 'disponible' as const, type: 'Annuel' },
-  { id: 4, title: 'Audit financier 2025', date: '10 Fév 2026', status: 'disponible' as const, type: 'Financier' },
-];
-
 // ─── Full children dataset ──────────────────────────────────────────────────
 
 export interface Child {

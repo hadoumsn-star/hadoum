@@ -26,6 +26,35 @@ async function main() {
 
   console.log('✅ User hadoum@gmail.com created/updated.');
 
+  // Pre-existing account, unrelated to Module 5 — created during an earlier
+  // "add a second DIRECTOR account" task, kept here (not touched by any
+  // Module 5 PR) purely so the dev DB keeps having it on repeated seed
+  // runs. Flagged explicitly (see PR 19's seed-cleanup review) so a future
+  // commit split doesn't mistake it for part of the donor/campaign category
+  // additions below.
+  const hadoumsnPass = await bcrypt.hash('test123', 10);
+
+  await prisma.user.upsert({
+    where: { email: 'hadoumsn@gmail.com' },
+    update: {
+      passwordHash: hadoumsnPass,
+      role: 'DIRECTOR',
+      roleLabel: 'Directeur',
+      title: 'Direction générale',
+    },
+    create: {
+      email: 'hadoumsn@gmail.com',
+      passwordHash: hadoumsnPass,
+      name: 'Hadoum SN',
+      initials: 'HS',
+      role: 'DIRECTOR',
+      roleLabel: 'Directeur',
+      title: 'Direction générale',
+    },
+  });
+
+  console.log('✅ User hadoumsn@gmail.com created/updated.');
+
   const dounde = await bcrypt.hash('test123', 10);
 
   await prisma.user.upsert({
@@ -103,6 +132,14 @@ async function main() {
     { key: 'ARTISAN', label: 'Artisan', sortOrder: 8 },
     { key: 'COMMERCE', label: 'Commerce', sortOrder: 9 },
     { key: 'AUTRE', label: 'Autre', sortOrder: 10 },
+    // PR 18 (Module 5 frontend) — purely organizational: ContactAutocomplete
+    // scopes its donor picker/create-flow to these two keys so a Director
+    // creating a new sponsor's Contact gets a sensible default category.
+    // The actual PARRAIN / DONATEUR_PONCTUEL distinction that carries real
+    // business rules is DonorProfile.type (see its own schema comment) —
+    // this category is cosmetic, never read by DonorsService/DonationsService.
+    { key: 'PARRAIN', label: 'Parrain', sortOrder: 11 },
+    { key: 'DONATEUR_PONCTUEL', label: 'Donateur ponctuel', sortOrder: 12 },
   ];
 
   for (const category of CONTACT_CATEGORIES) {

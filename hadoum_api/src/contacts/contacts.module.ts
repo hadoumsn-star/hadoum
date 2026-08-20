@@ -17,5 +17,9 @@ import { ContactCategoriesService } from './contact-categories.service';
   // controllers, so the ordering is expressed at the module level instead.)
   controllers: [ContactCategoriesController, ContactsController],
   providers: [ContactsService, ContactCategoriesService],
+  // PR 15 (Module 5): DonorsModule reuses ContactsService.findOne() to
+  // validate a DonorProfile's contactId, rather than re-implementing Contact
+  // lookups. Nothing in this module's own behavior changes.
+  exports: [ContactsService],
 })
 export class ContactsModule {}

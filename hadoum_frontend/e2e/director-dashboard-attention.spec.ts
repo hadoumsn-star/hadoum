@@ -1,17 +1,19 @@
 import { test, expect, APIRequestContext } from '@playwright/test';
-import { DIRECTOR_CREDENTIALS, SUPERVISOR_CREDENTIALS, loginAsDirector } from './helpers';
+import { DIRECTOR_CREDENTIALS, loginAsDirector } from './helpers';
 
-// Director Dashboard reorder + new "Demandes à traiter" section: Quick
-// Actions is now the first content block below the header, immediately
-// followed by "Demandes à traiter" — active incidents (status !== RESOLU;
-// there is no "archived" incident status in this system) prioritized
-// supervisor-created-first, then newest first. Reuses the existing,
-// unmodified GET /incidents endpoint and IncidentsPage's own DetailModal
-// (via /app/incidents?open=<id>) — no new backend route, no second detail
-// screen. See director-dashboard.spec.ts for the pre-existing Finance/
-// Présence/Activité récente coverage, unaffected by this reorder (their
-// relative order to each other is unchanged; only Quick Actions moved
-// above them and this new section was inserted).
+// Module 6 (PR 23): the old incidents-only "Demandes à traiter" section is
+// replaced by the consolidated, cross-domain "À traiter" attention feed,
+// sourced from GET /dashboard/attention (Module 6, PR 22). Every condition
+// (stock/maintenance/procedures/incidents/validations/campaigns/donor
+// reports) is computed backend-side from real current entity state — this
+// spec asserts the dashboard renders exactly what that endpoint returns
+// (title/message/count/severity/targetPath), never a frontend-side re-
+// derivation of which conditions are "attention-worthy" or how urgent they
+// are. The rich per-incident supervisor-badge/priority-styling behavior the
+// old section had is intentionally not reproduced here — that level of
+// detail belongs on /app/incidents itself (see IncidentsPage), not a
+// dashboard summary; the dashboard now shows an aggregate "Incidents
+// ouverts" card like every other domain.
 
 const API_BASE = process.env.E2E_API_URL ?? 'http://localhost:3001/api';
 
@@ -24,195 +26,240 @@ async function apiLogin(request: APIRequestContext, email: string, password: str
   return (await res.json()).token as string;
 }
 const directorToken = (request: APIRequestContext) => apiLogin(request, DIRECTOR_CREDENTIALS.email, DIRECTOR_CREDENTIALS.password);
-const supervisorToken = (request: APIRequestContext) => apiLogin(request, SUPERVISOR_CREDENTIALS.email, SUPERVISOR_CREDENTIALS.password);
 
-async function apiCreateIncident(request: APIRequestContext, token: string, data: Record<string, unknown>) {
+async function apiCreateIncident(request: APIRequestContext, token: string, data: Record<string, unknown> = {}) {
   const res = await request.post(`${API_BASE}/incidents`, {
     headers: { Authorization: `Bearer ${token}` },
-    data: { type: 'AUTRE', description: 'Créé pour un test e2e.', signaledBy: 'E2E', priority: 'N3', ...data },
+    data: { title: unique('Incident E2E'), type: 'AUTRE', description: 'Créé pour un test e2e.', signaledBy: 'E2E', priority: 'N3', ...data },
   });
   return res.json();
 }
-async function apiChangeStatus(request: APIRequestContext, token: string, id: string, status: string) {
-  await request.patch(`${API_BASE}/incidents/${id}/status`, {
+
+async function apiCreateCampaignEndingSoon(request: APIRequestContext, token: string) {
+  const endDate = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const res = await request.post(`${API_BASE}/campaigns`, {
     headers: { Authorization: `Bearer ${token}` },
-    data: { status, note: 'Résolution e2e.' },
+    data: {
+      title: unique('Cagnotte E2E Bientôt Finie'),
+      targetAmountXof: 100_000,
+      startDate: new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
+      endDate,
+    },
   });
+  const campaign = await res.json();
+  await request.post(`${API_BASE}/campaigns/${campaign.id}/activate`, {
+    headers: { Authorization: `Bearer ${token}` },
+    data: {},
+  });
+  return campaign;
 }
 
-function attentionCard(page: import('@playwright/test').Page, title: string) {
-  return page.locator(`xpath=//p[text()="${title}"]/ancestor::div[@data-testid][starts-with(@data-testid,"attention-incident-")][1]`);
-}
-
-test.describe('Director Dashboard — layout order', () => {
-  test('Quick Actions is the first content block below the header, immediately followed by Demandes à traiter', async ({ page }) => {
+test.describe('Director Dashboard — "À traiter" layout order', () => {
+  test('Quick Actions is the first content block below the header, immediately followed by À traiter', async ({ page }) => {
     await loginAsDirector(page);
     await page.goto('/app/dashboard');
 
     const quickActions = page.getByTestId('quick-action-add-child');
     await expect(quickActions).toBeVisible({ timeout: 10_000 });
-    const demandes = page.getByTestId('demandes-a-traiter').or(page.getByTestId('demandes-a-traiter-empty'));
-    await expect(demandes).toBeVisible({ timeout: 10_000 });
+    const attention = page.getByTestId('a-traiter').or(page.getByTestId('a-traiter-empty'));
+    await expect(attention).toBeVisible({ timeout: 10_000 });
     const finance = page.getByTestId('finance-kpis');
     await expect(finance).toBeVisible();
 
     const quickActionsBox = await quickActions.boundingBox();
-    const demandesBox = await demandes.boundingBox();
+    const attentionBox = await attention.boundingBox();
     const financeBox = await finance.boundingBox();
     expect(quickActionsBox).not.toBeNull();
-    expect(demandesBox).not.toBeNull();
+    expect(attentionBox).not.toBeNull();
     expect(financeBox).not.toBeNull();
 
-    // Quick Actions above Demandes à traiter, which is above Finance —
-    // i.e. Quick Actions is the first block, Demandes à traiter is
-    // immediately next, both ahead of everything that used to lead the
-    // page (Finance/Présence/Activité récente keep their own relative
-    // order, unaffected — see director-dashboard.spec.ts).
-    expect(quickActionsBox!.y).toBeLessThan(demandesBox!.y);
-    expect(demandesBox!.y).toBeLessThan(financeBox!.y);
+    expect(quickActionsBox!.y).toBeLessThan(attentionBox!.y);
+    expect(attentionBox!.y).toBeLessThan(financeBox!.y);
+  });
+
+  test('the section title is "À TRAITER"', async ({ page }) => {
+    await loginAsDirector(page);
+    await page.goto('/app/dashboard');
+    await expect(page.getByTestId('section-title-a-traiter')).toHaveText('À TRAITER', { timeout: 10_000 });
   });
 });
 
-test.describe('Director Dashboard — Demandes à traiter', () => {
-  test('shows only active incidents (not RESOLU), with supervisor-created ones first and newest-first within each group', async ({ page, request }) => {
-    const dToken = await directorToken(request);
-    const sToken = await supervisorToken(request);
-
-    // Order of creation: director-old, supervisor-old, director-new,
-    // supervisor-new — expected render order is supervisor-new,
-    // supervisor-old, director-new, director-old (supervisor group first,
-    // newest first within each group).
-    const directorOld = unique('Incident Director Ancien');
-    await apiCreateIncident(request, dToken, { title: directorOld });
-    const supervisorOld = unique('Incident Supervisor Ancien');
-    await apiCreateIncident(request, sToken, { title: supervisorOld });
-    const directorNew = unique('Incident Director Récent');
-    await apiCreateIncident(request, dToken, { title: directorNew });
-    const supervisorNew = unique('Incident Supervisor Récent');
-    await apiCreateIncident(request, sToken, { title: supervisorNew });
-
-    // A resolved incident from a supervisor must NOT appear, despite
-    // otherwise sorting first — status filtering wins over the sort.
-    const resolvedSupervisor = unique('Incident Supervisor Résolu');
-    const resolved = await apiCreateIncident(request, sToken, { title: resolvedSupervisor });
-    await apiChangeStatus(request, sToken, resolved.id, 'RESOLU');
+test.describe('Director Dashboard — À traiter items', () => {
+  test('an open incident produces an "incidents-open" attention card with title, message, count and a working drill-down', async ({ page, request }) => {
+    const token = await directorToken(request);
+    await apiCreateIncident(request, token);
 
     await loginAsDirector(page);
     await page.goto('/app/dashboard');
-    const section = page.getByTestId('demandes-a-traiter');
-    await expect(section).toBeVisible({ timeout: 10_000 });
+    const item = page.getByTestId('attention-item-incidents-open');
+    await expect(item).toBeVisible({ timeout: 10_000 });
 
-    await expect(section.getByText(resolvedSupervisor)).toHaveCount(0);
+    // Rendered exactly from the backend's own fields — no frontend
+    // recomputation of the count or the wording.
+    await expect(item.getByText(/incident/i).first()).toBeVisible();
+    await expect(item.locator('[data-testid^="attention-severity-"]')).toBeVisible();
 
-    const titles = [supervisorNew, supervisorOld, directorNew, directorOld];
-    const indices = await Promise.all(titles.map(async t => {
-      const card = attentionCard(page, t);
-      await expect(card).toBeVisible();
-      const box = await card.boundingBox();
-      return box!.y;
-    }));
-    for (let i = 0; i < indices.length - 1; i++) {
-      expect(indices[i]).toBeLessThan(indices[i + 1]);
+    await item.getByTestId('attention-action-incidents-open').click();
+    await expect(page).toHaveURL(/\/app\/incidents$/);
+  });
+
+  test('resolving an incident decreases the incidents-open count on next load (backend current-state, not a frontend cache — the dashboard never persists a stale attention item)', async ({ page, request }) => {
+    const token = await directorToken(request);
+    const incident = await apiCreateIncident(request, token);
+
+    await loginAsDirector(page);
+    await page.goto('/app/dashboard');
+    const item = page.getByTestId('attention-item-incidents-open');
+    await expect(item).toBeVisible({ timeout: 10_000 });
+    const before = await request.get(`${API_BASE}/dashboard/attention`, {
+      headers: { Authorization: `Bearer ${token}` },
+    }).then(r => r.json());
+    const countBefore = before.items.find((i: { key: string }) => i.key === 'incidents-open')?.count ?? 0;
+
+    await request.patch(`${API_BASE}/incidents/${incident.id}/status`, {
+      headers: { Authorization: `Bearer ${token}` },
+      data: { status: 'RESOLU', note: 'Résolu pour le test e2e.' },
+    });
+
+    await page.goto('/app/dashboard');
+    if (countBefore - 1 > 0) {
+      // Other open incidents remain (likely, in the shared dev DB) — the
+      // card stays, with a lower count.
+      await expect(page.getByTestId('attention-item-incidents-open')).toContainText(String(countBefore - 1), { timeout: 10_000 });
+    } else {
+      // This was the only open incident — zero-count conditions are
+      // omitted entirely by the backend, so the whole card disappears.
+      await expect(page.getByTestId('finance-kpis')).toBeVisible({ timeout: 10_000 }); // page finished loading
+      await expect(page.getByTestId('attention-item-incidents-open')).toHaveCount(0);
     }
   });
+});
 
-  test('a supervisor-created card shows the "Créé par le superviseur" badge; a director-created one does not', async ({ page, request }) => {
-    const dToken = await directorToken(request);
-    const sToken = await supervisorToken(request);
-    const directorTitle = unique('Incident Badge Director');
-    const supervisorTitle = unique('Incident Badge Supervisor');
-    await apiCreateIncident(request, dToken, { title: directorTitle });
-    await apiCreateIncident(request, sToken, { title: supervisorTitle });
+test.describe('Director Dashboard — À traiter severity UX', () => {
+  test('CRITICAL/WARNING/INFO are distinguishable beyond color: each card shows an explicit French severity label alongside its icon', async ({ page, request }) => {
+    const token = await directorToken(request);
+    await apiCreateIncident(request, token); // -> WARNING (incidents-open)
 
     await loginAsDirector(page);
     await page.goto('/app/dashboard');
-    await expect(page.getByTestId('demandes-a-traiter')).toBeVisible({ timeout: 10_000 });
+    const item = page.getByTestId('attention-item-incidents-open');
+    await expect(item).toBeVisible({ timeout: 10_000 });
 
-    const supervisorCard = attentionCard(page, supervisorTitle);
-    await expect(supervisorCard).toBeVisible();
-    await expect(supervisorCard.getByText('Créé par le superviseur')).toBeVisible();
-
-    const directorCard = attentionCard(page, directorTitle);
-    await expect(directorCard).toBeVisible();
-    await expect(directorCard.getByText('Créé par le superviseur')).toHaveCount(0);
+    const badge = item.getByTestId('attention-severity-incidents-open');
+    await expect(badge).toBeVisible();
+    await expect(badge).toHaveText('À surveiller');
+    // An icon (svg) renders alongside the text badge — never color alone.
+    await expect(item.locator('svg').first()).toBeVisible();
   });
 
-  test('each card shows priority badge, status, created by, creation date, concerned entities and a description preview', async ({ page, request }) => {
-    const dToken = await directorToken(request);
-    const spaceRes = await request.post(`${API_BASE}/spaces`, {
-      headers: { Authorization: `Bearer ${dToken}` }, data: { name: unique('Local E2E'), type: 'INFIRMERIE' },
-    });
-    const space = await spaceRes.json();
-    const title = unique('Incident Détails Carte');
-    await apiCreateIncident(request, dToken, {
-      title, priority: 'N1', description: 'Description détaillée pour la carte du tableau de bord.', spaceIds: [space.id],
-    });
+  test('never exposes the raw backend severity enum string (e.g. "WARNING") as visible text', async ({ page, request }) => {
+    const token = await directorToken(request);
+    await apiCreateIncident(request, token);
 
     await loginAsDirector(page);
     await page.goto('/app/dashboard');
-    const card = attentionCard(page, title);
-    await expect(card).toBeVisible({ timeout: 10_000 });
-
-    await expect(card.getByText('N1')).toBeVisible();
-    await expect(card.getByText('EN COURS')).toBeVisible();
-    await expect(card.getByText(/Créé par /)).toBeVisible();
-    await expect(card.getByText('1 local')).toBeVisible();
-    await expect(card.getByText('Description détaillée pour la carte du tableau de bord.')).toBeVisible();
-    await expect(card.getByRole('button', { name: 'Voir' })).toBeVisible();
-  });
-
-  test('empty state shows "Aucune demande en cours." when there are no active incidents', async ({ page }) => {
-    // Deterministic via a mocked response — the shared dev DB accumulates
-    // fixture incidents from every other e2e spec, so a real zero can't be
-    // relied on; this still exercises the exact same rendering path a
-    // genuine zero would (same convention as director-dashboard.spec.ts's
-    // own empty-state test for the "Non confirmées" modal).
-    await page.route('**/incidents', route => route.fulfill({ json: [] }));
-
-    await loginAsDirector(page);
-    await page.goto('/app/dashboard');
-    const empty = page.getByTestId('demandes-a-traiter-empty');
-    await expect(empty).toBeVisible({ timeout: 10_000 });
-    await expect(empty.getByText('Aucune demande en cours.')).toBeVisible();
-    await expect(page.getByTestId('demandes-a-traiter')).toHaveCount(0);
-  });
-
-  test('"Voir" opens the correct incident in the existing Incident detail modal, not a new screen', async ({ page, request }) => {
-    const dToken = await directorToken(request);
-    const title = unique('Incident Voir Dashboard');
-    const created = await apiCreateIncident(request, dToken, { title, description: 'Ouverture depuis le tableau de bord.' });
-
-    await loginAsDirector(page);
-    await page.goto('/app/dashboard');
-    const card = attentionCard(page, title);
-    await expect(card).toBeVisible({ timeout: 10_000 });
-    await card.getByRole('button', { name: 'Voir' }).click();
-
-    await expect(page).toHaveURL(/\/app\/incidents\?open=/);
-    // The exact same DetailModal component IncidentsPage already renders
-    // for its own "Voir" button — not a bespoke dashboard detail view.
-    const detail = page.getByTestId('incident-detail-modal');
-    await expect(detail).toBeVisible({ timeout: 10_000 });
-    await expect(detail.getByText(title)).toBeVisible();
-    await expect(detail.getByText('Ouverture depuis le tableau de bord.')).toBeVisible();
-
-    // The deep-link param is consumed, not left dangling in the URL.
-    await expect(page).toHaveURL('/app/incidents');
-    expect(created.id).toBeTruthy();
+    const item = page.getByTestId('attention-item-incidents-open');
+    await expect(item).toBeVisible({ timeout: 10_000 });
+    await expect(item.getByText('WARNING', { exact: true })).toHaveCount(0);
+    await expect(item.getByText('CRITICAL', { exact: true })).toHaveCount(0);
+    await expect(item.getByText('INFO', { exact: true })).toHaveCount(0);
   });
 });
 
-test.describe('Director Dashboard — Demandes à traiter mobile layout', () => {
+test.describe('Director Dashboard — À traiter empty state', () => {
+  test('shows "Aucun point d\'attention actuellement." when there are no attention items', async ({ page }) => {
+    await page.route('**/dashboard/attention', route =>
+      route.fulfill({ json: { summary: { total: 0, critical: 0, warning: 0, info: 0 }, items: [] } }),
+    );
+
+    await loginAsDirector(page);
+    await page.goto('/app/dashboard');
+    const empty = page.getByTestId('a-traiter-empty');
+    await expect(empty).toBeVisible({ timeout: 10_000 });
+    await expect(empty.getByText("Aucun point d'attention actuellement.")).toBeVisible();
+    await expect(page.getByTestId('a-traiter')).toHaveCount(0);
+  });
+});
+
+test.describe('Director Dashboard — À traiter API failure', () => {
+  test('a failed /dashboard/attention request shows a retry state without breaking the rest of the dashboard', async ({ page }) => {
+    // Every call fails until explicitly unrouted below — a call-counting
+    // mock is fragile to any other consumer of this same endpoint racing
+    // against the test's own request.
+    await page.route('**/dashboard/attention', route => route.fulfill({ status: 500, json: { message: 'boom' } }));
+
+    await loginAsDirector(page);
+    await page.goto('/app/dashboard');
+
+    const errorState = page.getByTestId('a-traiter-error');
+    await expect(errorState).toBeVisible({ timeout: 10_000 });
+
+    // Overview KPIs (a different endpoint) still render normally.
+    await expect(page.getByTestId('finance-kpis')).toBeVisible();
+    await expect(page.getByTestId('kpi-budget-total')).not.toContainText('—', { timeout: 10_000 });
+
+    await page.unroute('**/dashboard/attention');
+    await errorState.getByRole('button', { name: 'Réessayer' }).click();
+    const recovered = page.getByTestId('a-traiter').or(page.getByTestId('a-traiter-empty'));
+    await expect(recovered).toBeVisible({ timeout: 10_000 });
+  });
+});
+
+test.describe('Director Dashboard — À traiter donor drill-down', () => {
+  test('a campaign-ending-soon attention item opens Donateurs & Parrains on the Cagnottes tab', async ({ page, request }) => {
+    const token = await directorToken(request);
+    await apiCreateCampaignEndingSoon(request, token);
+
+    await loginAsDirector(page);
+    await page.goto('/app/dashboard');
+    const item = page.getByTestId('attention-item-campaigns-ending-soon');
+    await expect(item).toBeVisible({ timeout: 10_000 });
+
+    await item.getByTestId('attention-action-campaigns-ending-soon').click();
+    await expect(page).toHaveURL(/\/app\/donateurs\?tab=cagnottes$/);
+    await expect(page.getByRole('button', { name: 'Cagnottes' })).toHaveCSS('background-color', 'rgb(62, 90, 120)');
+  });
+
+  test('a donor-reports-to-prepare attention item opens Donateurs & Parrains on the Rapports tab', async ({ page }) => {
+    // Deterministic via a mocked response — creating a real "PARRAIN with
+    // zero reports" fixture would collide with fixtures from other specs
+    // sharing the dev DB; this still exercises the exact same navigation
+    // code path a genuine item would.
+    await page.route('**/dashboard/attention', route =>
+      route.fulfill({
+        json: {
+          summary: { total: 1, critical: 0, warning: 0, info: 1 },
+          items: [{
+            key: 'donor-reports-to-prepare', domain: 'DONOR_REPORTS', severity: 'INFO',
+            title: 'Rapports donateurs à préparer', message: '1 rapport donateur à préparer.',
+            count: 1, targetPath: '/app/donateurs',
+          }],
+        },
+      }),
+    );
+
+    await loginAsDirector(page);
+    await page.goto('/app/dashboard');
+    const item = page.getByTestId('attention-item-donor-reports-to-prepare');
+    await expect(item).toBeVisible({ timeout: 10_000 });
+    await expect(item.getByTestId('attention-severity-donor-reports-to-prepare')).toHaveText('Information');
+
+    await item.getByTestId('attention-action-donor-reports-to-prepare').click();
+    await expect(page).toHaveURL(/\/app\/donateurs\?tab=rapports$/);
+    await expect(page.getByRole('button', { name: 'Rapports' })).toHaveCSS('background-color', 'rgb(62, 90, 120)');
+  });
+});
+
+test.describe('Director Dashboard — À traiter mobile layout', () => {
   test.use({ viewport: { width: 375, height: 812 } });
 
   test('renders with no horizontal overflow on mobile', async ({ page, request }) => {
     const token = await directorToken(request);
-    const title = unique('Incident Mobile Dashboard');
-    await apiCreateIncident(request, token, { title });
+    await apiCreateIncident(request, token);
 
     await loginAsDirector(page);
     await page.goto('/app/dashboard');
-    await expect(attentionCard(page, title)).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByTestId('attention-item-incidents-open')).toBeVisible({ timeout: 10_000 });
 
     const hasHorizontalOverflow = await page.evaluate(
       () => document.documentElement.scrollWidth > document.documentElement.clientWidth,

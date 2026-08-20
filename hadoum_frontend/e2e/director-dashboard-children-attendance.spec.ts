@@ -1,16 +1,18 @@
 import { test, expect, APIRequestContext, Page } from '@playwright/test';
 import { DIRECTOR_CREDENTIALS, loginAsDirector } from './helpers';
 
-// Director Dashboard — "Présence des enfants" section.
-// Real child attendance stats (Présents/Absents), sourced from the same
-// GET /children ChildrenPage itself uses (no new backend endpoint), tallied
-// with the exact same rules as ChildrenPage's own "Présent aujourd'hui" stat
-// card (../src/app/utils/childAttendance.ts) — so these two counts, and the
-// underlying eligibility rules, can never diverge. There is deliberately no
-// "Non confirmée" card and no confirmation workflow for children — every
-// effectively-active child is counted as exactly PRESENT or ABSENT.
-// See team-attendance-merge.spec.ts for the equivalent staff-presence
-// coverage this file is modeled on (kept separate: different model/API).
+// Director Dashboard — "Situation aujourd'hui — Enfants" section.
+// Module 6 (PR 23): child attendance now comes from GET /dashboard/overview
+// (children.presentToday/absentToday), the backend's own centralized port
+// of the exact same rule ChildrenPage's frontend util (../src/app/utils/
+// childAttendance.ts) already implements (see hadoum_api's PR 21
+// child-attendance.util.ts) — so these counts still can never diverge from
+// what ChildrenPage itself shows for the same day. The dashboard no longer
+// fetches the full /children collection merely to compute these two
+// numbers — see the "no raw /children fetch" test below. There is
+// deliberately no "Non confirmée" card and no confirmation workflow for
+// children — every effectively-active child is counted as exactly PRESENT
+// or ABSENT.
 
 const API_BASE = process.env.E2E_API_URL ?? 'http://localhost:3001/api';
 
@@ -54,10 +56,11 @@ async function apiExitChild(
   });
 }
 
-// ─── Reimplementation of ../src/app/utils/childAttendance.ts, applied to
-// the raw ApiChildSummary JSON, kept intentionally independent of the
-// frontend source so this test can catch a real divergence rather than
-// import the very code it's meant to verify.
+// Independent reimplementation of the child-attendance rule, applied to the
+// raw /children JSON — kept deliberately separate from both the frontend
+// util AND the backend port it's now verifying, so this test can catch a
+// real divergence in either rather than importing the very code it means
+// to check.
 interface RawChild { isActive: boolean; exitType?: string | null; exitDate?: string | null; exitReturnDate?: string | null }
 
 function daysFromToday(dateStr: string): number {
@@ -82,20 +85,19 @@ function effectiveAttendance(c: RawChild): 'present' | 'absent' {
   return (state === 'active' || state === 'returned') ? 'absent' : 'present';
 }
 
-// Same reasoning as team-attendance-merge.spec.ts's waitForPresenceKpiLoaded
-// — the card renders a "—" placeholder before childrenApi.list() resolves.
 async function waitForChildPresenceKpiLoaded(page: Page) {
   await expect(page.getByTestId('kpi-child-presence-present')).not.toContainText('—', { timeout: 10_000 });
 }
 
-test.describe('Director Dashboard — Présence des enfants', () => {
-  test('section and both stat cards are visible with a clear icon each', async ({ page }) => {
+test.describe('Director Dashboard — Situation aujourd\'hui — Enfants', () => {
+  test('section and all three cards (accueillis/présents/absents) are visible with a clear icon each', async ({ page }) => {
     await loginAsDirector(page);
     await page.goto('/app/dashboard');
 
-    await expect(page.getByTestId('section-title-presence-enfants')).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByTestId('section-title-presence-enfants')).toHaveText('PRÉSENCE DES ENFANTS');
+    await expect(page.getByTestId('section-title-situation-enfants')).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByTestId('section-title-situation-enfants')).toContainText('ENFANTS');
     await expect(page.getByTestId('child-presence-kpis')).toBeVisible();
+    await expect(page.getByTestId('kpi-children-total')).toBeVisible();
     await expect(page.getByTestId('kpi-child-presence-present')).toBeVisible();
     await expect(page.getByTestId('kpi-child-presence-absent')).toBeVisible();
     await expect(page.getByTestId('kpi-child-presence-present').locator('svg')).toBeVisible();
@@ -127,7 +129,6 @@ test.describe('Director Dashboard — Présence des enfants', () => {
 
     await page.goto('/app/children');
     const statText = await page.getByTestId('children-present-stat').innerText();
-    // "N sur M" — N is presentCount, the same value the dashboard card shows.
     const pagePresent = parseInt(statText.trim().split(/\s+/)[0], 10);
     expect(pagePresent).toBe(dashboardPresent);
   });
@@ -138,7 +139,9 @@ test.describe('Director Dashboard — Présence des enfants', () => {
     await expect(page.getByTestId('child-presence-kpis')).toBeVisible({ timeout: 10_000 });
 
     await expect(page.getByTestId('kpi-child-presence-non-confirmed')).toHaveCount(0);
-    await expect(page.getByTestId('child-presence-kpis').getByTestId(/^kpi-child-presence-/)).toHaveCount(2);
+    // Enfants accueillis + Présents + Absents — no confirmation-related
+    // fourth card.
+    await expect(page.getByTestId('child-presence-kpis').getByTestId(/^kpi-(children|child-presence)-/)).toHaveCount(3);
     await expect(page.getByTestId('child-presence-kpis').getByText('Non confirmée')).toHaveCount(0);
     await expect(page.getByTestId('child-presence-kpis').getByText('Non confirmées')).toHaveCount(0);
   });
@@ -191,10 +194,6 @@ test.describe('Director Dashboard — Présence des enfants', () => {
     const presentBefore = parseInt((await page.getByTestId('kpi-child-presence-present').locator('p').first().innerText()).trim(), 10);
     const absentBefore = parseInt((await page.getByTestId('kpi-child-presence-absent').locator('p').first().innerText()).trim(), 10);
 
-    // Departed today, no return date yet → sortie state 'active' → Absent.
-    // The child was just created (counted in presentBefore as Présent), so
-    // it now moves buckets: Présent -1, Absent +1 — still counted overall,
-    // never dropped from the eligible pool.
     await apiExitChild(request, token, child.id, { exitType: 'temporaire', exitDate: todayIso() });
 
     await page.goto('/app/dashboard');
@@ -204,7 +203,6 @@ test.describe('Director Dashboard — Présence des enfants', () => {
     await expect(page.getByTestId('kpi-child-presence-present').locator('p').first())
       .toHaveText(String(presentBefore - 1), { timeout: 10_000 });
 
-    // Same conclusion on Dossiers enfants for the same date — no divergence.
     await page.goto('/app/children');
     await page.getByPlaceholder('Rechercher un enfant…').fill(name);
     await expect(page.getByText('Absent', { exact: true }).first()).toBeVisible({ timeout: 10_000 });
@@ -224,8 +222,6 @@ test.describe('Director Dashboard — Présence des enfants', () => {
 
     await page.goto('/app/dashboard');
     await waitForChildPresenceKpiLoaded(page);
-    // Back down by one Présent, and Absent unaffected — the child is
-    // dropped entirely, not shifted into the other bucket.
     await expect(page.getByTestId('kpi-child-presence-present').locator('p').first())
       .toHaveText(String(presentAfterCreate - 1), { timeout: 10_000 });
     await expect(page.getByTestId('kpi-child-presence-absent').locator('p').first())
@@ -233,34 +229,80 @@ test.describe('Director Dashboard — Présence des enfants', () => {
   });
 });
 
-test.describe('Director Dashboard — Présence des enfants block order', () => {
-  test('sits between Présence de l\'équipe and Activité récente', async ({ page }) => {
+// Module 6 (PR 23): privacy/architecture requirement — the dashboard must
+// consume only Module 6's aggregate responses, never fetch a full
+// child/staff/donor collection merely to compute a KPI count.
+test.describe('Director Dashboard — no person-level fetch for dashboard counting (Module 6)', () => {
+  test('loading the dashboard never issues a GET /children request', async ({ page }) => {
+    let childrenRequested = false;
+    await page.route('**/children', route => {
+      childrenRequested = true;
+      return route.continue();
+    });
+    await page.route('**/children?**', route => {
+      childrenRequested = true;
+      return route.continue();
+    });
+
+    await loginAsDirector(page);
+    await page.goto('/app/dashboard');
+    await waitForChildPresenceKpiLoaded(page);
+
+    expect(childrenRequested).toBe(false);
+  });
+
+  test('dashboard KPI cards are populated entirely from GET /dashboard/overview', async ({ page }) => {
+    const overviewRequests: string[] = [];
+    await page.route('**/dashboard/overview**', route => {
+      overviewRequests.push(route.request().url());
+      return route.continue();
+    });
+
+    await loginAsDirector(page);
+    await page.goto('/app/dashboard');
+    await waitForChildPresenceKpiLoaded(page);
+
+    expect(overviewRequests.length).toBeGreaterThan(0);
+  });
+});
+
+test.describe('Director Dashboard — Situation aujourd\'hui — Enfants block order', () => {
+  test('sits between Situation aujourd\'hui — Personnel and Finances', async ({ page }) => {
     await loginAsDirector(page);
     await page.goto('/app/dashboard');
     await expect(page.getByTestId('child-presence-kpis')).toBeVisible({ timeout: 10_000 });
+    // The "À traiter" section (above this one) resolves asynchronously and
+    // can still be expanding as it renders its own items — wait for it to
+    // settle before measuring any positions below it, or the three
+    // boundingBox() reads below can be taken mid-reflow and race each
+    // other into a false ordering.
+    await expect(page.getByTestId('a-traiter').or(page.getByTestId('a-traiter-empty'))).toBeVisible({ timeout: 10_000 });
 
     const teamBox = await page.getByTestId('team-presence-kpis').boundingBox();
     const childBox = await page.getByTestId('child-presence-kpis').boundingBox();
-    const activityBox = await page.getByTestId('recent-activity').boundingBox();
+    const financeBox = await page.getByTestId('finance-kpis').boundingBox();
     expect(teamBox).not.toBeNull();
     expect(childBox).not.toBeNull();
-    expect(activityBox).not.toBeNull();
-    expect(teamBox!.y).toBeLessThan(childBox!.y);
-    expect(childBox!.y).toBeLessThan(activityBox!.y);
+    expect(financeBox).not.toBeNull();
+    expect(childBox!.y).toBeLessThan(teamBox!.y);
+    expect(teamBox!.y).toBeLessThan(financeBox!.y);
   });
 });
 
 test.describe('Director Dashboard — section title style', () => {
   const TITLE_TESTIDS = [
     'section-title-actions-rapides',
-    'section-title-demandes-a-traiter',
-    'section-title-finances',
+    'section-title-a-traiter',
+    'section-title-situation-enfants',
     'section-title-presence-equipe',
-    'section-title-presence-enfants',
+    'section-title-finances',
+    'section-title-operations',
+    'section-title-donateurs',
+    'section-title-tendances',
     'section-title-activite-recente',
   ];
 
-  test('all six main section titles share one consistent, bold style, larger than a card label', async ({ page }) => {
+  test('all nine main section titles share one consistent, bold style, larger than a card label', async ({ page }) => {
     await loginAsDirector(page);
     await page.goto('/app/dashboard');
     await expect(page.getByTestId('child-presence-kpis')).toBeVisible({ timeout: 10_000 });
@@ -292,8 +334,6 @@ test.describe('Director Dashboard — section title style', () => {
         const s = getComputedStyle(el);
         return { fontSize: parseFloat(s.fontSize), fontWeight: parseInt(s.fontWeight, 10) };
       });
-      // Mobile size stays modest (not the desktop-bumped size) but still
-      // clearly bold.
       expect(fontSize).toBeLessThanOrEqual(16);
       expect(fontWeight).toBeGreaterThanOrEqual(700);
     }
@@ -305,7 +345,7 @@ test.describe('Director Dashboard — section title style', () => {
   });
 });
 
-test.describe('Director Dashboard — Présence des enfants mobile layout', () => {
+test.describe('Director Dashboard — Situation aujourd\'hui — Enfants mobile layout', () => {
   test.use({ viewport: { width: 375, height: 812 } });
 
   test('renders with no horizontal overflow on mobile', async ({ page }) => {

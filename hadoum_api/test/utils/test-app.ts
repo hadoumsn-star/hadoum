@@ -9,19 +9,38 @@ import { PrismaExceptionFilter } from '../../src/prisma/prisma-exception.filter'
 
 // Integration/e2e tests never touch real object storage. Every upload
 // returns a deterministic fake key/URL instead.
+//
+// PR 17 (Module 5): bytes are now actually kept in an in-memory Map,
+// keyed by the fake key — needed so e2e specs can retrieve a generated
+// donor-report PDF's real bytes back (via getUploadService(app) below) and
+// assert on its actual rendered content (donor name present, no child PII,
+// ...), not just that *a* fake key was returned. Every pre-existing
+// upload/deleteFile/getPresignedUrl caller is unaffected — this only adds
+// a new downloadFile() capability, mirroring the real UploadService's own
+// PR 17 addition.
 class FakeUploadService {
+  private readonly store = new Map<string, Buffer>();
+
   upload(file: Express.Multer.File, folder: string): Promise<string> {
-    void file;
-    return Promise.resolve(
-      `${folder}/fake-${Date.now()}-${Math.random().toString(36).slice(2)}.bin`,
-    );
+    const key = `${folder}/fake-${Date.now()}-${Math.random().toString(36).slice(2)}.bin`;
+    this.store.set(key, file.buffer);
+    return Promise.resolve(key);
   }
   getPresignedUrl(key: string): Promise<string> {
     return Promise.resolve(`https://fake-signed-url.test/${key}`);
   }
-  deleteFile(_key: string): Promise<void> {
-    void _key;
+  deleteFile(key: string): Promise<void> {
+    this.store.delete(key);
     return Promise.resolve();
+  }
+  downloadFile(key: string): Promise<Buffer> {
+    const bytes = this.store.get(key);
+    if (!bytes) {
+      return Promise.reject(
+        new Error(`FakeUploadService: no stored file for key "${key}"`),
+      );
+    }
+    return Promise.resolve(bytes);
   }
 }
 
@@ -43,6 +62,14 @@ export async function createTestApp(): Promise<INestApplication<App>> {
 
 export function getPrisma(app: INestApplication): PrismaService {
   return app.get(PrismaService);
+}
+
+// PR 17 (Module 5) — returns the app's actual FakeUploadService instance
+// (typed as the real UploadService), so a spec can call `.downloadFile(key)`
+// on it directly to inspect what a real request actually stored, e.g. a
+// generated donor-report PDF's real bytes.
+export function getUploadService(app: INestApplication): UploadService {
+  return app.get(UploadService);
 }
 
 // Truncates every table except Prisma's own migration-history table.

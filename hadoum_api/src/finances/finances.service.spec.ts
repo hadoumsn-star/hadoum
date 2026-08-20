@@ -29,6 +29,15 @@ function createMockPrisma() {
     contact: {
       findUnique: jest.fn(),
     },
+    // PR 16 (Module 5): updateTransaction/deleteTransaction now check for a
+    // linked Donation before allowing a protected-field change or a
+    // delete. Defaults to "no linked donation" so every pre-existing test
+    // in this file (none of which are about Module 5) is unaffected;
+    // individual tests below override this to `mockResolvedValue({...})`
+    // to exercise the new protection itself.
+    donation: {
+      findUnique: jest.fn().mockResolvedValue(null),
+    },
   };
 }
 
@@ -551,6 +560,83 @@ describe('FinancesService', () => {
           date: '2026-09-01',
         } as any),
       ).resolves.toBeDefined();
+    });
+  });
+
+  // ─── Donation-linked Transaction protection (PR 16, Module 5) ───────────
+
+  describe('updateTransaction / deleteTransaction — Donation-linked protection', () => {
+    const donationBackedTransaction = {
+      ...baseExpense,
+      id: 'txn-don-1',
+      type: 'RECETTE',
+      category: 'DON',
+      donorName: 'Fatou Diop',
+      isAnonymousDonor: false,
+      expenseWorkflowStatus: null as string | null,
+    };
+    const linkedDonation = { id: 'donation-1', transactionId: 'txn-don-1' };
+
+    it('rejects an amount change on a Transaction linked to a Donation', async () => {
+      prisma.transaction.findUnique.mockResolvedValue(
+        donationBackedTransaction,
+      );
+      prisma.donation.findUnique.mockResolvedValue(linkedDonation);
+      await expect(
+        service.updateTransaction('txn-don-1', { amountXof: 999_999 } as any),
+      ).rejects.toBeInstanceOf(ConflictException);
+    });
+
+    it('rejects a date/category/type/donor-identity change on a Transaction linked to a Donation', async () => {
+      prisma.transaction.findUnique.mockResolvedValue(
+        donationBackedTransaction,
+      );
+      prisma.donation.findUnique.mockResolvedValue(linkedDonation);
+      await expect(
+        service.updateTransaction('txn-don-1', {
+          donorName: 'Someone Else',
+        } as any),
+      ).rejects.toBeInstanceOf(ConflictException);
+    });
+
+    it('still allows a non-financial field change (paymentMethod) on a Transaction linked to a Donation', async () => {
+      prisma.transaction.findUnique.mockResolvedValue(
+        donationBackedTransaction,
+      );
+      prisma.donation.findUnique.mockResolvedValue(linkedDonation);
+      prisma.transaction.update.mockResolvedValue(donationBackedTransaction);
+      await expect(
+        service.updateTransaction('txn-don-1', {
+          paymentMethod: 'CARTE',
+        } as any),
+      ).resolves.toBeDefined();
+    });
+
+    it('does not block a PATCH resending the same amount/date/category/type unchanged on a Donation-linked Transaction', async () => {
+      prisma.transaction.findUnique.mockResolvedValue(
+        donationBackedTransaction,
+      );
+      prisma.donation.findUnique.mockResolvedValue(linkedDonation);
+      prisma.transaction.update.mockResolvedValue(donationBackedTransaction);
+      await expect(
+        service.updateTransaction('txn-don-1', {
+          amountXof: donationBackedTransaction.amountXof,
+          category: donationBackedTransaction.category,
+          date: donationBackedTransaction.date.toISOString(),
+          type: donationBackedTransaction.type,
+        } as any),
+      ).resolves.toBeDefined();
+    });
+
+    it('rejects deleting a Transaction linked to a Donation', async () => {
+      prisma.transaction.findUnique.mockResolvedValue(
+        donationBackedTransaction,
+      );
+      prisma.donation.findUnique.mockResolvedValue(linkedDonation);
+      await expect(
+        service.deleteTransaction('txn-don-1'),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(prisma.transaction.delete).not.toHaveBeenCalled();
     });
   });
 
@@ -1158,6 +1244,72 @@ describe('FinancesService', () => {
       });
       await service.cancelExpense('txn-1');
       expect(workflow.cancel).toHaveBeenCalledWith('txn-1');
+    });
+  });
+
+  // Module 6 (PR 21) — daily Finance trend, used by DashboardService for
+  // period=today/week.
+  describe('getDailyTrend', () => {
+    it('returns a zero bucket per day, in range order, for an empty transaction set', async () => {
+      prisma.transaction.findMany.mockResolvedValue([]);
+
+      const result = await service.getDailyTrend(
+        new Date('2026-08-17T00:00:00.000Z'),
+        new Date('2026-08-20T00:00:00.000Z'),
+      );
+
+      expect(result).toEqual([
+        { date: '2026-08-17', recettesXof: 0, depensesXof: 0 },
+        { date: '2026-08-18', recettesXof: 0, depensesXof: 0 },
+        { date: '2026-08-19', recettesXof: 0, depensesXof: 0 },
+      ]);
+    });
+
+    it('sums RECETTE/DEPENSE transactions into the correct day bucket', async () => {
+      prisma.transaction.findMany.mockResolvedValue([
+        {
+          date: new Date('2026-08-17T09:00:00.000Z'),
+          type: 'RECETTE',
+          amountXof: 10000,
+        },
+        {
+          date: new Date('2026-08-17T15:00:00.000Z'),
+          type: 'DEPENSE',
+          amountXof: 4000,
+        },
+        {
+          date: new Date('2026-08-18T00:00:00.000Z'),
+          type: 'RECETTE',
+          amountXof: 2500,
+        },
+      ]);
+
+      const result = await service.getDailyTrend(
+        new Date('2026-08-17T00:00:00.000Z'),
+        new Date('2026-08-19T00:00:00.000Z'),
+      );
+
+      expect(result).toEqual([
+        { date: '2026-08-17', recettesXof: 10000, depensesXof: 4000 },
+        { date: '2026-08-18', recettesXof: 2500, depensesXof: 0 },
+      ]);
+    });
+
+    it('only queries VALIDE transactions within [start, end)', async () => {
+      prisma.transaction.findMany.mockResolvedValue([]);
+      const start = new Date('2026-08-17T00:00:00.000Z');
+      const end = new Date('2026-08-18T00:00:00.000Z');
+
+      await service.getDailyTrend(start, end);
+
+      expect(prisma.transaction.findMany).toHaveBeenCalledWith(
+        matching({
+          where: matching({
+            status: 'VALIDE',
+            date: { gte: start, lt: end },
+          }),
+        }),
+      );
     });
   });
 });

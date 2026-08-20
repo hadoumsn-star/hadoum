@@ -25,10 +25,7 @@ import { RequestRenewalDto } from './dto/request-renewal.dto';
 import { RequestArchiveDto } from './dto/request-archive.dto';
 import { ReviewValidationDto } from './dto/review-validation.dto';
 import { RejectValidationDto } from './dto/reject-validation.dto';
-import {
-  PROCEDURE_EXPIRATION_WARNING_DAYS,
-  PROCEDURE_RENEWAL_WARNING_DAYS,
-} from './administrative-procedures.constants';
+import { computeProcedureAlerts } from './administrative-procedure-alerts.util';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -70,6 +67,10 @@ type ProcedureWithDeadlines = AdministrativeProcedure & {
   daysUntilExpiration: number | null;
   daysUntilRenewal: number | null;
   daysWaitingForResponse: number | null;
+  // PR 22 — additive: the authoritative "requiring attention" union (see
+  // administrative-procedure-alerts.util.ts). Existing consumers that
+  // don't know about this field are unaffected.
+  requiresAttention: boolean;
 };
 
 @Injectable()
@@ -108,72 +109,16 @@ export class AdministrativeProceduresService {
   };
 
   // ─── Derived / computed fields ────────────────────────────────────────────
-
-  private daysUntil(target: Date, from: Date): number {
-    return Math.ceil((target.getTime() - from.getTime()) / DAY_MS);
-  }
-
-  private isExpired(procedure: {
-    status: ProcedureStatus;
-    expirationDate: Date | null;
-  }): boolean {
-    if (procedure.status === 'ARCHIVE' || !procedure.expirationDate)
-      return false;
-    return procedure.expirationDate < new Date();
-  }
-
-  private effectiveStatus(procedure: {
-    status: ProcedureStatus;
-    expirationDate: Date | null;
-  }): ProcedureStatus {
-    if (procedure.status === 'ARCHIVE') return procedure.status;
-    return this.isExpired(procedure) ? 'EXPIRE' : procedure.status;
-  }
+  // PR 22: the actual formulas now live in administrative-procedure-
+  // alerts.util.ts's computeProcedureAlerts (extracted verbatim, unchanged
+  // behavior) — reused by DashboardService too, so the two never disagree.
 
   private withComputedFields<T extends AdministrativeProcedure>(
     procedure: T,
   ): T & ProcedureWithDeadlines {
-    const now = new Date();
-    const isArchived = procedure.status === 'ARCHIVE';
-    const expired = this.isExpired(procedure);
-
-    const daysUntilExpiration = procedure.expirationDate
-      ? this.daysUntil(procedure.expirationDate, now)
-      : null;
-    const daysUntilRenewal = procedure.renewalDate
-      ? this.daysUntil(procedure.renewalDate, now)
-      : null;
-    const daysWaitingForResponse = procedure.expectedResponseDate
-      ? this.daysUntil(now, procedure.expectedResponseDate)
-      : null;
-
-    const isExpiringSoon =
-      !isArchived &&
-      !expired &&
-      daysUntilExpiration !== null &&
-      daysUntilExpiration <= PROCEDURE_EXPIRATION_WARNING_DAYS;
-
-    const isRenewalDueSoon =
-      !isArchived &&
-      daysUntilRenewal !== null &&
-      daysUntilRenewal <= PROCEDURE_RENEWAL_WARNING_DAYS;
-
-    const isResponseOverdue =
-      !isArchived &&
-      procedure.status === 'EN_ATTENTE_REPONSE' &&
-      procedure.expectedResponseDate !== null &&
-      procedure.expectedResponseDate < now;
-
     return {
       ...procedure,
-      effectiveStatus: this.effectiveStatus(procedure),
-      isExpiringSoon,
-      isRenewalDueSoon,
-      isResponseOverdue,
-      isExpired: expired,
-      daysUntilExpiration,
-      daysUntilRenewal,
-      daysWaitingForResponse,
+      ...computeProcedureAlerts(procedure),
     };
   }
 

@@ -345,6 +345,75 @@ export class StaffService {
     };
   }
 
+  // Module 6 (PR 21) — multi-day staff attendance trend for
+  // GET /dashboard/trends. This intentionally does NOT call
+  // listDailyPresence() in a loop (that would be N+1 queries for an
+  // N-day range) — instead it fetches each of the three underlying
+  // tables ONCE for the whole [startStr, endStr) range and buckets them
+  // per day in JS, while preserving listDailyPresence's exact rules
+  // verbatim: a staff member on Congé/Absence for a given day is
+  // "onLeave" and excluded from that day's non-confirmed count (but
+  // still eligible to be counted PRESENT/ABSENT if a confirmation exists
+  // for them anyway); a day with no confirmation row for a given staff
+  // member is NON_CONFIRMED. See staff-attendance-trend parity test,
+  // which asserts this produces identical present/absent/nonConfirmed
+  // numbers to listDailyPresence() for a single-day range.
+  //
+  // `dateStrs` — every "YYYY-MM-DD" day to report on, ascending. Only
+  // aggregate counts are returned per day: never staff names/ids.
+  async listPresenceTrend(dateStrs: string[]) {
+    if (dateStrs.length === 0) return [];
+
+    const rangeStart = this.dayBounds(dateStrs[0]).start;
+    const rangeEnd = this.dayBounds(dateStrs[dateStrs.length - 1]).end;
+
+    const [staff, confirmations, onLeave] = await Promise.all([
+      this.prisma.staffMember.findMany({ select: { id: true } }),
+      this.prisma.staffPresenceConfirmation.findMany({
+        where: { date: { gte: rangeStart, lte: rangeEnd } },
+        select: { staffId: true, date: true, status: true },
+      }),
+      this.prisma.staffAttendance.findMany({
+        where: {
+          type: { in: ['absence', 'conge'] },
+          dateDebut: { lte: rangeEnd },
+          OR: [{ dateFin: null }, { dateFin: { gte: rangeStart } }],
+        },
+        select: { staffId: true, dateDebut: true, dateFin: true },
+      }),
+    ]);
+
+    return dateStrs.map((dateStr) => {
+      const { start, end } = this.dayBounds(dateStr);
+      const confirmationByStaff = new Map(
+        confirmations
+          .filter((c) => c.date.getTime() === start.getTime())
+          .map((c) => [c.staffId, c.status]),
+      );
+      const onLeaveStaffIds = new Set(
+        onLeave
+          .filter(
+            (a) =>
+              a.dateDebut <= end && (a.dateFin === null || a.dateFin >= start),
+          )
+          .map((a) => a.staffId),
+      );
+
+      let present = 0;
+      let absent = 0;
+      let nonConfirmed = 0;
+      for (const m of staff) {
+        const status = confirmationByStaff.get(m.id) ?? 'NON_CONFIRMED';
+        const onLeaveNow = onLeaveStaffIds.has(m.id);
+        if (status === 'PRESENT') present++;
+        else if (status === 'ABSENT') absent++;
+        else if (!onLeaveNow) nonConfirmed++;
+      }
+
+      return { date: dateStr, present, absent, nonConfirmed };
+    });
+  }
+
   async confirmPresence(
     staffId: string,
     dateStr: string,

@@ -14,6 +14,12 @@ build/
 .env.dev
 .env.development
 .env.prod
+.pgportable
+# Portable MinIO server (PR 19) — local/test S3-compatible storage for
+# running the real UploadService against real E2E/Playwright coverage
+# without Docker. Same rationale as .pgportable above: a downloaded binary
+# + its data dir, never committed. See hadoum_api/README.md.
+.minio-portable
 
 # Local/dev/prod database dumps
 backups/

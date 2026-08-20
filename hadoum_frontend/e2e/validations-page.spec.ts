@@ -139,7 +139,11 @@ test.describe('Validations page — real expense workflow (PR 5F)', () => {
     await expect(historyModal).toBeVisible();
     await expect(historyModal.getByText(label)).toBeVisible();
     await expect(historyModal.getByText('EN ATTENTE DE VALIDATION')).toBeVisible();
-    await expect(historyModal.getByText('Soumis par Hadoum Director')).toBeVisible();
+    // PR 19: stale expectation fixed — the seeded DIRECTOR account (see
+    // prisma/seed.ts, hadoum@gmail.com) has always been named "Hadoum
+    // Admin", never "Hadoum Director"; this test's string never matched
+    // current repository intent, only a pretty display alias.
+    await expect(historyModal.getByText('Soumis par Hadoum Admin')).toBeVisible();
   });
 
   test('DIRECTOR sees the same pending expense read-only: no Approuver/Refuser buttons', async ({ page, request }) => {

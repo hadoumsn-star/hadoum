@@ -24,6 +24,54 @@ services:
     networks:
       - hadoum-network-local
 
+  # PR 19 (Module 5 stabilization) — optional local S3-compatible storage.
+  # S3 is otherwise "optionnel en local" (see .env.local.example) and the
+  # api container simply runs with uploads disabled if S3_* is left blank.
+  # This service exists so a developer *can* opt in to real upload/PDF
+  # coverage locally without touching UploadService or paying for/pointing
+  # at the real Hetzner Object Storage bucket used in development/prod. Set
+  # S3_ENDPOINT=http://minio:9000, S3_ACCESS_KEY/S3_SECRET_KEY to match
+  # MINIO_ROOT_USER/MINIO_ROOT_PASSWORD below, and S3_BUCKET=hadoum-local in
+  # .env.local to use it — the api container never talks to Hetzner then.
+  minio:
+    image: minio/minio:latest
+    container_name: hadoum-minio-local
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-hadoum_dev_minio}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-hadoum_dev_minio_pw_local_only}
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # Web console
+    volumes:
+      - hadoum_minio_local_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - hadoum-network-local
+
+  # One-shot: creates the hadoum-local bucket if it doesn't exist yet, then
+  # exits. `docker compose up` runs it alongside the long-lived services;
+  # its own exit code doesn't affect `api`/`frontend` (no `depends_on` from
+  # them), so a fresh `minio` volume self-provisions its bucket without any
+  # manual `mc mb` step.
+  minio-init:
+    image: minio/mc:latest
+    container_name: hadoum-minio-init-local
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 ${MINIO_ROOT_USER:-hadoum_dev_minio} ${MINIO_ROOT_PASSWORD:-hadoum_dev_minio_pw_local_only} &&
+      mc mb --ignore-existing local/hadoum-local
+      "
+    networks:
+      - hadoum-network-local
+
   api:
     build:
       context: ./hadoum_api
@@ -94,6 +142,8 @@ networks:
 volumes:
   hadoum_postgres_local_data:
     name: hadoum-postgres-local-data
+  hadoum_minio_local_data:
+    name: hadoum-minio-local-data
   hadoum_api_local_node_modules:
     name: hadoum-api-local-node-modules
   hadoum_frontend_local_node_modules:

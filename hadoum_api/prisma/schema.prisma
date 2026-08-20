@@ -564,6 +564,13 @@ model Transaction {
   // ExpenseWorkflowService for the state machine this field is driven by.
   expenseWorkflowStatus ExpenseWorkflowStatus?
 
+  // PR 14 (Module 5 foundation): reverse side of Donation.transactionId
+  // (@unique there) — a Transaction backs at most one Donation. Nothing
+  // writes this relation yet; PR 16 is the first to create a Transaction
+  // from a Donation, through the existing FinancesService, never a second
+  // ledger. Purely a schema-level relation — adds no column to this table.
+  donation Donation?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -805,6 +812,16 @@ model User {
 
   auditLogs AuditLog[] @relation("AuditLogUser") // PR 13
 
+  // PR 14 (Module 5 foundation) — all nullable createdBy-style relations,
+  // same convention as every other "who created this row" FK above. No
+  // business logic reads these yet; only the schema/relations exist.
+  donorProfilesCreated       DonorProfile[]        @relation("DonorProfileCreatedBy")
+  campaignsCreated           FundraisingCampaign[] @relation("CampaignCreatedBy")
+  campaignDocumentsUploaded  CampaignDocument[]    @relation("CampaignDocumentUploadedBy")
+  donationsCreated           Donation[]            @relation("DonationCreatedBy")
+  donorCommunicationsCreated DonorCommunication[]  @relation("DonorCommunicationCreatedBy")
+  donorReportsCreated        DonorReport[]         @relation("DonorReportCreatedBy")
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -969,6 +986,13 @@ enum ValidationResourceType {
   // StaffAttendance — not a bare TRANSACTION, since RECETTE transactions
   // never enter this workflow and never get a ValidationRequest.
   EXPENSE_TRANSACTION
+  // PR 19 (Module 5 stabilization) — tagging only, for Notification.resourceType.
+  // Neither ever goes through the ValidationRequest workflow itself (donor/
+  // campaign mutations aren't validation-gated), this enum is just reused as
+  // the generic "what kind of thing does this notification/resource pointer
+  // refer to" tag, same as STOCK_ITEM/ENTRY_LOG above.
+  CAMPAIGN
+  DONOR_PROFILE
 }
 
 model ValidationRequest {
@@ -1027,6 +1051,15 @@ enum NotificationType {
   // (PR 5B/5C) and so have no existing VALIDATION_* type to reuse.
   EXPENSE_COMPLETED
   EXPENSE_CANCELLED
+  // PR 19 (Module 5 stabilization): lazy compute-on-read alerts, same
+  // pattern as CONTRACT_EXPIRING_SOON/STOCK_LOW — computed fresh on every
+  // list read (CampaignsService.findAll/DonorReportsService.findAll), never
+  // a cron, deduplicated per resource via the existing
+  // findFirst-before-create check so a condition notifies DIRECTOR once,
+  // not on every subsequent read.
+  CAMPAIGN_ENDING_SOON
+  CAMPAIGN_END_DATE_PASSED
+  DONOR_REPORT_MISSING
 }
 
 model Notification {
@@ -1863,6 +1896,11 @@ model Contact {
   // PR 9: fourth consuming-module relation (Administrative Procedures). See
   // AdministrativeProcedure.assignedContact for the FK side and onDelete rule.
   administrativeProcedures AdministrativeProcedure[]
+  // PR 14 (Module 5 foundation): fifth consuming-module relation (Donors).
+  // Unlike the four relations above, this one is @unique on the FK side
+  // (DonorProfile.contactId) — a Contact is a donor at most once. See
+  // DonorProfile for the FK side and onDelete rule.
+  donorProfile             DonorProfile?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1892,6 +1930,10 @@ enum AuditModule {
   SUPPLIER_CONTRACTS
   STOCK
   INCIDENTS
+  // PR 14 (Module 5 foundation) — no route uses this yet (no controller
+  // exists in this PR); added now so PR 15+ mutations can carry
+  // @Audited({ module: 'DONORS', ... }) from day one.
+  DONORS
 }
 
 model AuditLog {
@@ -1916,4 +1958,319 @@ model AuditLog {
   @@index([entity, entityId])
   @@index([userId])
   @@index([createdAt])
+}
+
+// ─── Module 5 : Répertoire des parrains et donateurs (PR 14 — fondations) ───
+//
+// Schema-only PR. No controller routes are added, no Transaction is ever
+// created here, no PDF is generated, no notification fires. See the
+// approved Module 5 architecture plan for the full picture; this section is
+// deliberately just the additive data foundation PR 15+ builds on.
+//
+// Contact stays the single identity source for a donor (fullName, phone,
+// email, address, city, photo, dedup, search) — nothing here duplicates
+// those fields. DonorProfile only carries what's structurally specific to
+// a donor relationship, exactly the same "extend Contact via a dedicated FK"
+// pattern SupplierContract.supplierContact / MaintenanceTicket.assignedContact
+// already use, except this FK is required + @unique: a donor profile is
+// meaningless without an identity, and a Contact is a donor at most once.
+
+enum DonorType {
+  PARRAIN
+  DONATEUR_PONCTUEL
+}
+
+model DonorProfile {
+  id String @id @default(uuid())
+
+  contactId String  @unique
+  contact   Contact @relation(fields: [contactId], references: [id], onDelete: Restrict)
+
+  type DonorType
+
+  // PR 15: donor/sponsor-specific — Contact remains the generic identity/
+  // address model (no `country` field there); adding it here rather than
+  // to Contact keeps every other Contact consumer untouched. Nullable,
+  // never backfilled.
+  country String?
+
+  // PARRAIN-only fields (recurring monthly commitment). Left nullable
+  // rather than split into a separate table — a DONATEUR_PONCTUEL simply
+  // never has these set. Enforced at the DTO/service layer in PR 15, not
+  // the DB, matching how e.g. Transaction.supplierContactId is "DEPENSE
+  // only" without a DB-level constraint (see Transaction above).
+  engagementStartDate    DateTime?
+  monthlyContributionXof Int?
+
+  // Donor-relationship engagement status — distinct from Contact.active
+  // (a generic directory soft-delete flag). A PARRAIN/DONATEUR_PONCTUEL can
+  // become inactive while their underlying Contact stays active, and vice
+  // versa.
+  active Boolean @default(true)
+  notes  String?
+
+  donations      Donation[]
+  communications DonorCommunication[]
+  reports        DonorReport[]
+
+  createdById String?
+  createdBy   User?   @relation("DonorProfileCreatedBy", fields: [createdById], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([type])
+  @@index([active])
+}
+
+enum CampaignStatus {
+  BROUILLON
+  ACTIVE
+  TERMINEE
+  ANNULEE
+}
+
+model FundraisingCampaign {
+  id          String  @id @default(uuid())
+  title       String
+  description String?
+
+  targetAmountXof Int
+  // Deliberately no `collectedAmountXof` column. PR 16 derives it from
+  // sum(Donation.amountXof) for this campaign — the same aggregate-on-read
+  // pattern FinancesService.getDashboard already uses for solde/budget
+  // figures — so it can never drift from the underlying Donation rows.
+
+  startDate DateTime
+  endDate   DateTime?
+
+  status CampaignStatus @default(BROUILLON)
+
+  utilizationReport String?
+
+  donations Donation[]
+  documents CampaignDocument[]
+
+  createdById String?
+  createdBy   User?   @relation("CampaignCreatedBy", fields: [createdById], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+}
+
+// Document metadata only — file bytes live in S3 via the existing
+// UploadService, never in Postgres. Same shape as ContractDocument /
+// ProcedureDocument. No upload endpoint exists yet in this PR.
+model CampaignDocument {
+  id         String              @id @default(uuid())
+  campaignId String
+  campaign   FundraisingCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  fileKey  String
+  fileMime String
+  label    String?
+
+  uploadedById String?
+  uploadedBy   User?   @relation("CampaignDocumentUploadedBy", fields: [uploadedById], references: [id])
+
+  createdAt DateTime @default(now())
+}
+
+// Deliberately one model for both a parrain's recurring monthly payment
+// (campaignId = null) and a one-time campaign donation (campaignId set) —
+// the two have the exact same shape, so a separate "SponsorPayment" model
+// would only duplicate it.
+model Donation {
+  id String @id @default(uuid())
+
+  donorProfileId String
+  // Restrict, not SetNull: donorProfileId is required (a donation with no
+  // donor is meaningless), so the column can't be nulled out on delete —
+  // this instead blocks deleting a DonorProfile that has donation history,
+  // same "never silently lose a financial record" principle used
+  // throughout Finance/Contacts, just expressed as Restrict here because
+  // the FK itself is non-optional.
+  donorProfile   DonorProfile @relation(fields: [donorProfileId], references: [id], onDelete: Restrict)
+
+  campaignId String?
+  campaign   FundraisingCampaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+
+  amountXof Int
+  date      DateTime
+
+  paymentMethod PaymentMethod? // reuses the existing Finance enum as-is
+  reference     String?
+  notes         String?
+
+  // PR 16 sets this once a Transaction(type=RECETTE, category=DON) is
+  // created through the existing FinancesService — never a second,
+  // parallel ledger. @unique guarantees the inverse can't happen either:
+  // one Transaction can never back more than one Donation.
+  transactionId String?      @unique
+  transaction   Transaction? @relation(fields: [transactionId], references: [id], onDelete: SetNull)
+
+  // PR 16 — idempotency protection: a client-supplied key (e.g. a UUID the
+  // frontend generates once per "record this donation" action and resends
+  // on retry). @unique is what makes a retried/double-submitted request
+  // provably safe at the DB level, not just by convention — see
+  // DonationsService.create. Nullable: optional, so a caller that never
+  // supplies one still works, just without replay protection.
+  idempotencyKey String? @unique
+
+  createdById String?
+  createdBy   User?   @relation("DonationCreatedBy", fields: [createdById], references: [id])
+
+  createdAt DateTime @default(now())
+
+  @@index([donorProfileId])
+  @@index([campaignId])
+}
+
+enum DonorCommunicationType {
+  REPORT_SENT
+  MESSAGE_SENT
+  MESSAGE_RECEIVED
+  ACKNOWLEDGEMENT
+}
+
+enum DonorCommunicationDirection {
+  OUTGOING
+  INCOMING
+}
+
+model DonorCommunication {
+  id String @id @default(uuid())
+
+  donorProfileId String
+  donorProfile   DonorProfile @relation(fields: [donorProfileId], references: [id], onDelete: Cascade)
+
+  type      DonorCommunicationType
+  // Nullable: mainly meaningful for MESSAGE_SENT/MESSAGE_RECEIVED — a
+  // REPORT_SENT or ACKNOWLEDGEMENT row's direction is already implied by
+  // its type, so callers aren't forced to fill it in every time.
+  direction DonorCommunicationDirection?
+
+  date    DateTime
+  subject String
+  content String?
+
+  // Single optional attachment — same fileKey/fileMime pair convention as
+  // every other document reference in this schema. No upload endpoint
+  // exists yet — deferred the same way PR 16 deferred CampaignDocument's
+  // own upload, still not in scope for PR 17 (see the PR 17 report).
+  documentKey  String?
+  documentMime String?
+
+  // PR 17: set automatically when DonorReportsService.markSent creates
+  // this row (type = REPORT_SENT) — links the log entry back to the exact
+  // report it announces. Nullable/SetNull: every other communication type
+  // has no report to point at, and a communication must never disappear
+  // just because its report is later deleted.
+  donorReportId String?
+  donorReport   DonorReport? @relation(fields: [donorReportId], references: [id], onDelete: SetNull)
+
+  createdById String?
+  createdBy   User?   @relation("DonorCommunicationCreatedBy", fields: [createdById], references: [id])
+
+  createdAt DateTime @default(now())
+
+  @@index([donorProfileId])
+  @@index([type])
+}
+
+enum DonorReportPeriodType {
+  MENSUEL
+  TRIMESTRIEL
+}
+
+enum DonorReportStatus {
+  DRAFT
+  GENERATED
+  SENT
+}
+
+// One row per donor/parrain per reporting period. Must stay anonymized
+// regarding children — nothing here references Child, DailyObservation, or
+// any other child-identifying model; see ReportDataService.
+model DonorReport {
+  id String @id @default(uuid())
+
+  donorProfileId String
+  donorProfile   DonorProfile @relation(fields: [donorProfileId], references: [id], onDelete: Cascade)
+
+  periodType  DonorReportPeriodType
+  periodStart DateTime
+  periodEnd   DateTime
+
+  status DonorReportStatus @default(DRAFT)
+
+  generatedAt DateTime?
+  // PR 17: set only by markSent — distinct from generatedAt (a report can
+  // be regenerated while still DRAFT/GENERATED; sentAt marks the one-way
+  // GENERATED -> SENT transition, see DonorReportsService.
+  sentAt      DateTime?
+
+  // The generated PDF, stored via the existing UploadService/S3 — same
+  // fileKey/fileMime pair convention as every other document model here.
+  fileKey  String?
+  fileMime String?
+
+  // PR 17: Director-provided free text — the only narrative content in a
+  // report that isn't a derived aggregate. Never auto-generated/fabricated
+  // (see ReportDataService's own comment).
+  activitiesNarrative String?
+
+  // PR 17: frozen at generation time — the exact numbers rendered into the
+  // PDF, so re-reading an already-generated/sent report later never shows
+  // different figures than what the donor actually received, even if new
+  // Donations/Transactions are recorded afterwards. Same reasoning as
+  // AuditLog.before/after being snapshots, not live joins.
+  financialSummarySnapshot Json?
+
+  photos DonorReportPhoto[]
+
+  // PR 17: reverse side of DonorCommunication.donorReportId — set once
+  // markSent creates the REPORT_SENT communication row.
+  communications DonorCommunication[]
+
+  createdById String?
+  createdBy   User?   @relation("DonorReportCreatedBy", fields: [createdById], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // PR 17: prevents generating two periodic reports for the same donor
+  // covering the same period — the actual duplicate-report protection
+  // (backed by the DB, not just application-level checking). A donor can
+  // still have both a MENSUEL and a TRIMESTRIEL report overlapping the
+  // same dates — periodType is part of the key, deliberately, since those
+  // are different documents.
+  @@unique([donorProfileId, periodType, periodStart, periodEnd])
+  @@index([donorProfileId])
+  @@index([status])
+  @@index([periodStart, periodEnd])
+}
+
+// Curated photos for a generated report. Metadata only, same as every
+// other *Document model — file bytes live in S3 via UploadService, never
+// as binary data in Postgres. No upload/curation endpoint exists yet.
+model DonorReportPhoto {
+  id            String      @id @default(uuid())
+  donorReportId String
+  donorReport   DonorReport @relation(fields: [donorReportId], references: [id], onDelete: Cascade)
+
+  fileKey  String
+  fileMime String
+  caption  String?
+
+  // PR 17: the actual safety gate — uploading a photo never implies it's
+  // safe to include. Only a photo explicitly approved through its own
+  // dedicated endpoint (a distinct, audited action from upload) is ever
+  // read by ReportDataService/PdfReportService. Defaults false so every
+  // newly-uploaded photo starts excluded.
+  approvedForDonorReport Boolean @default(false)
+
+  createdAt DateTime @default(now())
 }

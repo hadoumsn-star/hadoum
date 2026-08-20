@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import {
   ExpenseWorkflowStatus,
+  Prisma,
   TransactionType,
   TransactionCategory,
   TransactionStatus,
@@ -31,6 +32,13 @@ const FINANCIALLY_LOCKED_STATES: ExpenseWorkflowStatus[] = [
   'COMPLETED',
   'CANCELLED',
 ];
+
+// PR 16 (Module 5): same `Db` convention ValidationsService already uses so
+// a caller (DonationsService) can atomically persist a Transaction
+// alongside its own Donation row in one `prisma.$transaction`. Omitting it
+// (every pre-existing caller) is identical to today's behavior — it just
+// falls back to the injected PrismaService.
+type Db = Prisma.TransactionClient;
 
 interface TransactionFilters {
   type?: TransactionType;
@@ -124,7 +132,20 @@ export class FinancesService {
     }
   }
 
-  async createTransaction(dto: CreateTransactionDto) {
+  /**
+   * PR 16 (Module 5): accepts an optional caller-provided Prisma
+   * transaction client (`tx`) so DonationsService can create a Transaction
+   * and its owning Donation atomically, in one `prisma.$transaction`.
+   * Every existing caller (FinancesController) omits `tx` and behaves
+   * exactly as before — `db` just falls back to the injected
+   * PrismaService. `assertContactAssignable`'s own Contact lookup is
+   * intentionally left on `this.prisma` rather than threaded through
+   * `tx` too: it only runs on the DEPENSE+supplierContactId path, which
+   * Module 5 (RECETTE/DON only, rejected by assertNoSupplierOnIncome
+   * below) never takes — keeping this refactor to the minimum needed.
+   */
+  async createTransaction(dto: CreateTransactionDto, tx?: Db) {
+    const db = tx ?? this.prisma;
     this.assertNoSupplierOnIncome(dto.type, dto.supplierContactId);
 
     let supplierContactId: string | undefined;
@@ -133,7 +154,7 @@ export class FinancesService {
       supplierContactId = contact.id;
     }
 
-    return this.prisma.transaction.create({
+    return db.transaction.create({
       data: {
         type: dto.type,
         category: dto.category,
@@ -216,11 +237,66 @@ export class FinancesService {
     }
   }
 
+  // PR 16 (Module 5): a Transaction created from a Donation
+  // (DonationsService, via createTransaction above) must never drift out of
+  // sync with the Donation that owns it — see Donation.transactionId's own
+  // comment. `donation.findUnique({ where: { transactionId } })` is a
+  // cheap, always-correct check (the column is @unique) rather than
+  // threading a "came from a Donation" flag through Transaction itself.
+  private findLinkedDonation(transactionId: string) {
+    return this.prisma.donation.findUnique({ where: { transactionId } });
+  }
+
+  /**
+   * Mirrors assertFinancialFieldsUnlocked's shape/wording, for the
+   * "financial fact must stay trustworthy" reason instead of the expense-
+   * workflow one: once a Donation exists for this Transaction, its type,
+   * category, amount, date, and donor identity (donorName/
+   * isAnonymousDonor) can never be changed independently through Finance —
+   * that would desynchronize the Donation record without Module 5 ever
+   * knowing. Every other field (status, paymentMethod, justificatif
+   * documents, ...) stays freely editable.
+   */
+  private assertNotDonationLinkedFieldsUnlocked(
+    existing: {
+      amountXof: number;
+      category: TransactionCategory;
+      date: Date;
+      type: TransactionType;
+      donorName: string | null;
+      isAnonymousDonor: boolean | null;
+    },
+    dto: UpdateTransactionDto,
+    isDonationLinked: boolean,
+  ) {
+    if (!isDonationLinked) return;
+    const touchesProtectedField =
+      (dto.amountXof !== undefined && dto.amountXof !== existing.amountXof) ||
+      (dto.category !== undefined && dto.category !== existing.category) ||
+      (dto.date !== undefined &&
+        new Date(dto.date).getTime() !== existing.date.getTime()) ||
+      (dto.type !== undefined && dto.type !== existing.type) ||
+      (dto.donorName !== undefined && dto.donorName !== existing.donorName) ||
+      (dto.isAnonymousDonor !== undefined &&
+        dto.isAnonymousDonor !== existing.isAnonymousDonor);
+    if (touchesProtectedField) {
+      throw new ConflictException(
+        "Cette transaction est liée à un don (Module 5) : le montant, la catégorie, la date, le type et l'identité du donateur ne peuvent être modifiés que depuis le module Donateurs.",
+      );
+    }
+  }
+
   async updateTransaction(id: string, dto: UpdateTransactionDto) {
     const existing = await this.findRawTransaction(id);
     const effectiveType = dto.type ?? existing.type;
     this.assertNoSupplierOnIncome(effectiveType, dto.supplierContactId);
     this.assertFinancialFieldsUnlocked(existing, dto);
+    const linkedDonation = await this.findLinkedDonation(id);
+    this.assertNotDonationLinkedFieldsUnlocked(
+      existing,
+      dto,
+      linkedDonation !== null,
+    );
 
     // Same three-state contract as MaintenanceTicket.assignedContactId (PR
     // 3): omitted leaves the relation untouched; an id validates and
@@ -296,6 +372,18 @@ export class FinancesService {
       where: { id },
     });
     if (!transaction) throw new NotFoundException('Transaction not found');
+    // PR 16 (Module 5): deleting a Donation-linked Transaction would leave
+    // the Donation pointing at nothing (onDelete: SetNull) while its
+    // amount stops being reflected anywhere in Finance — a silent
+    // financial-history loss. Rejected outright; there is deliberately no
+    // "detach first" escape hatch here (see the PR 16 report's open
+    // questions on donation correction/reversal).
+    const linkedDonation = await this.findLinkedDonation(id);
+    if (linkedDonation) {
+      throw new ConflictException(
+        'Cette transaction est liée à un don (Module 5) et ne peut pas être supprimée depuis Finances.',
+      );
+    }
     const keys = [
       transaction.justifKey,
       transaction.purchaseOrderKey,
@@ -613,7 +701,11 @@ export class FinancesService {
     };
   }
 
-  private async getMonthlyTrend(year: number, month: number) {
+  // Module 6 (PR 21) — made non-private (was private, called only from
+  // getDashboard) so DashboardService can reuse this exact rolling
+  // 6-month window for the "Recettes vs Dépenses" trend rather than
+  // re-deriving its own version. Behavior is completely unchanged.
+  async getMonthlyTrend(year: number, month: number) {
     const months: { year: number; month: number }[] = [];
     for (let i = 5; i >= 0; i--) {
       const d = new Date(Date.UTC(year, month - 1 - i, 1));
@@ -652,5 +744,55 @@ export class FinancesService {
     );
 
     return sums;
+  }
+
+  // Module 6 (PR 21) — reusable domain-level daily aggregation for the
+  // Finance trend when the selected dashboard period is 'today' or 'week':
+  // getMonthlyTrend's fixed 6-month window cannot honestly represent a
+  // single day or a 7-day window, so per the PR 21 instruction this is a
+  // dedicated aggregation rather than a misuse of the monthly one. Bounded
+  // to the caller's own [start, end) range (never the whole table) — one
+  // query, reduced into per-day buckets in JS, since Prisma has no portable
+  // day-truncation for groupBy. Only VALIDE transactions count, matching
+  // getDashboard/getMonthlyTrend's own filter exactly.
+  async getDailyTrend(start: Date, end: Date) {
+    const transactions = await this.prisma.transaction.findMany({
+      where: {
+        status: TransactionStatus.VALIDE,
+        date: { gte: start, lt: end },
+      },
+      select: { date: true, type: true, amountXof: true },
+    });
+
+    const byDay = new Map<
+      string,
+      { recettesXof: number; depensesXof: number }
+    >();
+    for (
+      let d = new Date(start);
+      d.getTime() < end.getTime();
+      d = new Date(
+        Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1),
+      )
+    ) {
+      byDay.set(d.toISOString().slice(0, 10), {
+        recettesXof: 0,
+        depensesXof: 0,
+      });
+    }
+
+    for (const t of transactions) {
+      const key = t.date.toISOString().slice(0, 10);
+      const bucket = byDay.get(key);
+      if (!bucket) continue; // outside the pre-seeded range — defensive only
+      if (t.type === TransactionType.RECETTE) bucket.recettesXof += t.amountXof;
+      else if (t.type === TransactionType.DEPENSE)
+        bucket.depensesXof += t.amountXof;
+    }
+
+    return Array.from(byDay.entries()).map(([date, sums]) => ({
+      date,
+      ...sums,
+    }));
   }
 }

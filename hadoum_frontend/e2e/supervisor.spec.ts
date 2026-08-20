@@ -16,28 +16,41 @@ test.describe('Supervisor dashboard', () => {
   // <PendingValidationsList variant="card" /> below now covers every
   // resource type, expenses included, under one "Demandes à valider"
   // heading — see supervisor-validation-consistency.spec.ts for that
-  // merge's own coverage. Nothing on this page should mention incidents,
-  // the old budget KPI cards, or fund requests any more.
-  test('shows the header, "Demandes à valider" and no incidents/old-budget-KPI/fund-request content', async ({ page }) => {
+  // merge's own coverage.
+  //
+  // Module 6 (PR 24): SUPERVISOR was upgraded from that minimal
+  // validations-only page into a real Module 6 oversight dashboard
+  // (overview/operations/attention/trends — same aggregate backbone as
+  // DirectorDashboard). "Incidents ouverts" now legitimately reappears as
+  // one of the five real Opérations cards (and possibly in À traiter) —
+  // this is a live, backend-sourced count, not a resurrection of the old
+  // mock "Suivi des incidents" section, so the blanket "no incidents
+  // mention at all" assertion this test used to make no longer holds and
+  // has been removed below. See supervisor-dashboard-module6.spec.ts for
+  // the new Module 6 section coverage (including its own explicit
+  // assertion that "Incidents ouverts" is the real Opérations card, not a
+  // mock one). The old budget-KPI/fund-request assertions below still
+  // hold — nothing Module 6 added resurrects either.
+  test('shows the header, "Demandes à valider" and no old-budget-KPI/fund-request content', async ({ page }) => {
     await loginAsSupervisor(page);
     await page.goto('/app/dashboard');
 
-    // Scoped to the dashboard's own content, not the whole page — the
-    // sidebar itself has an unrelated "Suivi des incidents" *link*
-    // (Incidents keeps its own full page/nav entry; nothing here duplicates
-    // it), which a page-wide text search would wrongly treat as a leftover.
     const dashboard = page.getByTestId('supervisor-dashboard');
-    await expect(dashboard.getByText('Demandes à valider')).toBeVisible({ timeout: 10_000 });
+    // Scoped to the heading, not a plain text search — Module 6 (PR 24)
+    // added an Opérations card whose own label is also the literal text
+    // "Demandes à valider" (the same "pending validations" count, just as
+    // one of five operational tiles), so a bare getByText('Demandes à
+    // valider') is now ambiguous on this page.
+    await expect(dashboard.getByRole('heading', { name: 'Demandes à valider' })).toBeVisible({ timeout: 10_000 });
 
     // Removed top summary block's count+label (a leading digit) — distinct
     // from the kept list's "<N> au total" header and "Aucune demande en
     // attente" empty state, neither of which this can match.
     await expect(dashboard.getByText(/\d+\s+demandes?\s+en attente/)).toHaveCount(0);
-    // Removed "Suivi des incidents" section (and its former badge/text) —
-    // nothing in the dashboard's own content says "incident(s)" any more.
-    await expect(dashboard.getByText(/incidents?/i)).toHaveCount(0);
-    // Removed "Vue économique" section — budget KPIs and the mock fund
-    // requests list (with its own Valider/Refuser buttons) are both gone.
+    // Removed "Vue économique" section — the old budget KPIs and the mock
+    // fund requests list (with its own Valider/Refuser buttons) are both
+    // gone; the real Module 6 "Budget Total"/"Budget Restant" cards (added
+    // in PR 24) never carry the old "Budget alloué" label.
     await expect(dashboard.getByText('Vue économique')).toHaveCount(0);
     await expect(dashboard.getByText('Budget alloué')).toHaveCount(0);
     await expect(dashboard.getByText(/Demandes de fonds/)).toHaveCount(0);
@@ -47,13 +60,27 @@ test.describe('Supervisor dashboard', () => {
     await loginAsSupervisor(page);
     await page.goto('/app/dashboard');
 
-    const section = page.getByTestId('supervisor-dashboard').getByText('Demandes à valider').locator('../..');
+    // Scoped to the heading (see the previous test's own comment on why a
+    // bare getByText('Demandes à valider') is now ambiguous).
+    const section = page.getByTestId('supervisor-dashboard')
+      .getByRole('heading', { name: 'Demandes à valider' }).locator('../..');
     await expect(section).toBeVisible({ timeout: 10_000 });
+
+    // Module 6 (PR 24): this dashboard now fires several concurrent
+    // fetches (overview/operations/trends/attention, alongside this list's
+    // own GET /validations/pending), so the outer container above renders
+    // immediately while the list itself may still be in its own loading
+    // spinner state. Wait for the list to settle into one of its two
+    // terminal states before reading row counts — otherwise a slow
+    // /validations/pending response races this assertion.
+    const emptyState = section.getByText('Aucune demande en attente');
+    const firstRow = section.locator('li').first();
+    await expect(emptyState.or(firstRow)).toBeVisible({ timeout: 10_000 });
 
     const rows = section.locator('li');
     const rowCount = await rows.count();
     if (rowCount === 0) {
-      await expect(section.getByText('Aucune demande en attente')).toBeVisible();
+      await expect(emptyState).toBeVisible();
       return;
     }
     // Every row shows a resource-type badge, a "Soumis par <submitter>"
@@ -73,14 +100,15 @@ test.describe('Supervisor dashboard', () => {
     await loginAsSupervisor(page);
     await page.goto('/app/dashboard');
     const dashboard = page.getByTestId('supervisor-dashboard');
-    await expect(dashboard.getByText('Demandes à valider')).toBeVisible({ timeout: 10_000 });
+    const heading = dashboard.getByRole('heading', { name: 'Demandes à valider' });
+    await expect(heading).toBeVisible({ timeout: 10_000 });
     const countBefore = await dashboard.locator('text=/\\d+ au total/').textContent();
 
     // Full SPA round trip through another route and back remounts the page
     // (no special caching keeps it alive), which is what re-fetches the list.
     await page.goto('/app/incidents');
     await page.goto('/app/dashboard');
-    await expect(dashboard.getByText('Demandes à valider')).toBeVisible({ timeout: 10_000 });
+    await expect(heading).toBeVisible({ timeout: 10_000 });
     const countAfter = await dashboard.locator('text=/\\d+ au total/').textContent();
     // Not asserting a specific delta (no decision was actually made here) —
     // just that the count element re-rendered from a fresh fetch, not a
@@ -196,10 +224,11 @@ test.describe('Supervisor dashboard + Administration hub — mobile layout', () 
   test('no horizontal overflow on either page', async ({ page }) => {
     await loginAsSupervisor(page);
     await page.goto('/app/dashboard');
-    // Scoped to the dashboard's own content — the sidebar now also has a
-    // "Demandes à valider" *link* (same rename), which a page-wide text
-    // search would otherwise collide with.
-    await expect(page.getByTestId('supervisor-dashboard').getByText('Demandes à valider')).toBeVisible({ timeout: 10_000 });
+    // Scoped to the dashboard's own heading — the sidebar has a "Demandes
+    // à valider" *link* (same rename) and, since Module 6 (PR 24), the
+    // Opérations section has a "Demandes à valider" *card label* too; a
+    // page-wide or unscoped text search would collide with either.
+    await expect(page.getByTestId('supervisor-dashboard').getByRole('heading', { name: 'Demandes à valider' })).toBeVisible({ timeout: 10_000 });
     expect(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth)).toBe(false);
 
     await page.goto('/app/administration');

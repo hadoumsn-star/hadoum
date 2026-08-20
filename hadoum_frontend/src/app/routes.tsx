@@ -27,6 +27,7 @@ import { DemarchesAdministrativesPage } from './pages/DemarchesAdministrativesPa
 import { StocksInventairePage } from './pages/StocksInventairePage';
 import { ContactsDemoPage } from './pages/ContactsDemoPage';
 import { AuditLogsPage } from './pages/AuditLogsPage';
+import { DonorsPage } from './pages/DonorsPage';
 
 export const router = createBrowserRouter([
   { path: '/',                 element: <Navigate to="/login" replace /> },
@@ -69,6 +70,7 @@ export const router = createBrowserRouter([
       { path: 'registre-entrees-sorties',    element: <Navigate to="/app/administration" replace /> },
       { path: 'contacts-demo',               Component: ContactsDemoPage }, // dev harness, not in Sidebar nav — see PR 2
       { path: 'audit-logs',                  Component: AuditLogsPage },
+      { path: 'donateurs',                   Component: DonorsPage },
       { path: 'educators',        element: <PlaceholderPage title="Éducateurs" /> },
       { path: 'settings',         element: <PlaceholderPage title="Paramètres" /> },
       { path: 'profile',          Component: ProfilePage },

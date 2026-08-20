@@ -84,10 +84,17 @@ test.describe('Audit Logs (PR 13)', () => {
     await expect(page.getByText('Aucune entrée ne correspond à ces filtres')).toBeVisible({ timeout: 10_000 });
   });
 
-  test('non-director/supervisor roles see the access-restricted message', async ({ page }) => {
+  // PR 25 — stale wording: AuditLogsPage's own `canView` guard
+  // (src/app/pages/AuditLogsPage.tsx) is DIRECTOR-only, and its real
+  // message has always read "Accès réservé à la direction." (no "et à la
+  // supervision" — SUPERVISOR is denied by the exact same guard/message,
+  // see supervisor.spec.ts's own "SUPERVISOR opening /app/audit-logs
+  // directly sees the existing unauthorized message" test). This test's
+  // expected string had drifted from that real, already-approved text.
+  test('non-director roles see the access-restricted message', async ({ page }) => {
     await loginAsEducator(page);
     await page.goto('/app/audit-logs');
-    await expect(page.getByText('Accès réservé à la direction et à la supervision.')).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText('Accès réservé à la direction.')).toBeVisible({ timeout: 10_000 });
   });
 });
 

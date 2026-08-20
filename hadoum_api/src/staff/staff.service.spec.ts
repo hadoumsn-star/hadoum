@@ -365,6 +365,97 @@ describe('StaffService', () => {
     });
   });
 
+  describe('listPresenceTrend (PR 21)', () => {
+    it('returns an empty array for an empty date list without querying', async () => {
+      const result = await service.listPresenceTrend([]);
+      expect(result).toEqual([]);
+      expect(prisma.staffMember.findMany).not.toHaveBeenCalled();
+    });
+
+    it('is a parity match with listDailyPresence for a single-day range', async () => {
+      const staffC = { ...staffA, id: 'staff-3', firstName: 'Fatou' };
+      prisma.staffMember.findMany.mockResolvedValue([staffA, staffB, staffC]);
+      prisma.staffPresenceConfirmation.findMany.mockResolvedValue([
+        { staffId: 'staff-1', date: new Date('2026-08-04'), status: 'PRESENT' },
+        { staffId: 'staff-2', date: new Date('2026-08-04'), status: 'ABSENT' },
+      ]);
+      prisma.staffAttendance.findMany.mockResolvedValue([
+        {
+          staffId: 'staff-3',
+          type: 'conge',
+          dateDebut: new Date('2026-08-01'),
+          dateFin: new Date('2026-08-10'),
+        },
+      ]);
+
+      const single = await service.listDailyPresence('2026-08-04');
+      const trend = await service.listPresenceTrend(['2026-08-04']);
+
+      expect(trend).toHaveLength(1);
+      expect(trend[0]).toEqual({
+        date: '2026-08-04',
+        present: single.entries.filter((e) => e.status === 'PRESENT').length,
+        absent: single.entries.filter((e) => e.status === 'ABSENT').length,
+        nonConfirmed: single.nonConfirmedCount,
+      });
+      // Concretely: staff-1 present, staff-2 absent, staff-3 onLeave (so
+      // excluded from nonConfirmed despite having no confirmation row).
+      expect(trend[0]).toEqual({
+        date: '2026-08-04',
+        present: 1,
+        absent: 1,
+        nonConfirmed: 0,
+      });
+    });
+
+    it('buckets confirmations and leave correctly per day across a multi-day range', async () => {
+      prisma.staffMember.findMany.mockResolvedValue([staffA, staffB]);
+      prisma.staffPresenceConfirmation.findMany.mockResolvedValue([
+        { staffId: 'staff-1', date: new Date('2026-08-04'), status: 'PRESENT' },
+        { staffId: 'staff-1', date: new Date('2026-08-05'), status: 'ABSENT' },
+      ]);
+      prisma.staffAttendance.findMany.mockResolvedValue([
+        {
+          staffId: 'staff-2',
+          dateDebut: new Date('2026-08-05'),
+          dateFin: new Date('2026-08-05'),
+        },
+      ]);
+
+      const trend = await service.listPresenceTrend([
+        '2026-08-04',
+        '2026-08-05',
+        '2026-08-06',
+      ]);
+
+      expect(trend).toEqual([
+        { date: '2026-08-04', present: 1, absent: 0, nonConfirmed: 1 }, // staff-2 unconfirmed, not on leave yet
+        { date: '2026-08-05', present: 0, absent: 1, nonConfirmed: 0 }, // staff-2 on leave this day
+        { date: '2026-08-06', present: 0, absent: 0, nonConfirmed: 2 }, // no confirmations, no leave
+      ]);
+    });
+
+    it('fetches each underlying table exactly once regardless of range length (no N+1)', async () => {
+      prisma.staffMember.findMany.mockResolvedValue([staffA]);
+      prisma.staffPresenceConfirmation.findMany.mockResolvedValue([]);
+      prisma.staffAttendance.findMany.mockResolvedValue([]);
+
+      await service.listPresenceTrend([
+        '2026-08-01',
+        '2026-08-02',
+        '2026-08-03',
+        '2026-08-04',
+        '2026-08-05',
+      ]);
+
+      expect(prisma.staffMember.findMany).toHaveBeenCalledTimes(1);
+      expect(prisma.staffPresenceConfirmation.findMany).toHaveBeenCalledTimes(
+        1,
+      );
+      expect(prisma.staffAttendance.findMany).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe('existing StaffAttendance (Congé/Retard/Absence) is untouched', () => {
     it('still creates a leave record the same way', async () => {
       prisma.staffMember.findUniqueOrThrow.mockResolvedValue(staffA);

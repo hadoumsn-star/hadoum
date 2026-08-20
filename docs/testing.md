@@ -127,6 +127,69 @@ npm run test:e2e:ui               # interactive UI mode
 npm run test:e2e:report           # open the last HTML report
 ```
 
+### 3a. Real upload/PDF coverage needs a real S3 endpoint (PR 19)
+
+Unlike the backend E2E suite (§2), which overrides `UploadService` with an
+in-memory `FakeUploadService`, these Playwright specs drive the **real**
+running backend, which uses the **real** `UploadService` → a real S3-compatible
+endpoint. `S3_ENDPOINT`/`S3_BUCKET` are "optionnel en local" (see
+`.env.local.example`) — left blank, every upload (campaign documents, donor
+report photos, contact photos, finance receipts, PDF report generation)
+fails with `S3 upload failed: No value provided for input HTTP label: Bucket.`
+Any spec depending on those flows either needs a real S3-compatible target
+configured, or must design around uploads not being available (as most
+existing document-upload specs already do — they assert the transaction/
+resource itself was created, not that the attachment round-tripped).
+
+To get **real** upload/PDF E2E coverage, point the backend at a local MinIO
+instance instead of Hetzner:
+
+- **Docker workflow** (`docker-compose.local.yml`): a `minio` service is
+  already wired in, with a `minio-init` one-shot that creates the
+  `hadoum-local` bucket on first boot. Set the MinIO block in `.env.local`
+  as shown in `.env.local.example`, then `scripts/local/up.sh` as usual —
+  the api container talks to `http://minio:9000`, never Hetzner.
+- **No-Docker workflow** (e.g. this repo's `npm run start:dev` +
+  portable-Postgres setup, with no Docker installed): download the
+  single-binary MinIO server for your platform from
+  https://min.io/download, then:
+  ```bash
+  # from the repo root — data dir is gitignored (.minio-portable), same
+  # convention as .pgportable for Postgres
+  mkdir -p .minio-portable/data
+  MINIO_ROOT_USER=hadoum_dev_minio MINIO_ROOT_PASSWORD=<your-own-dev-password> \
+    ./minio server .minio-portable/data --address ":9000" --console-address ":9001"
+  ```
+  Then create the bucket once (MinIO does not auto-create it) — either with
+  the `mc` client, or via one call to the AWS SDK already installed in
+  `hadoum_api` (`@aws-sdk/client-s3`), e.g. a one-off `node -e` script that
+  constructs an `S3Client` pointed at `http://localhost:9000` with
+  `forcePathStyle: true` and sends a `CreateBucketCommand({ Bucket:
+  'hadoum-local' })`. Finally set `hadoum_api/.env`'s `S3_ENDPOINT=
+  http://localhost:9000`, `S3_REGION=us-east-1`, `S3_ACCESS_KEY`/
+  `S3_SECRET_KEY` to match, and `S3_BUCKET=hadoum-local`, then restart the
+  backend (env vars are read once at process startup, not hot-reloaded).
+
+Either way, credentials here are dev-only, local-only, never real Hetzner
+production/development secrets, and never committed (`.env`/`.env.local`/
+`.minio-portable` are all gitignored).
+
+### 3b. Module 5 fixture-data determinism (PR 19)
+
+`donors-module.spec.ts` reuses the shared dev database across every run,
+same as the rest of this suite — there is no per-test isolated/disposable
+database. That's usually harmless, but a few of the app's donor/campaign
+`<select>` inputs fetch an unfiltered, alphabetically-sorted, backend-capped
+page (`pageSize` maxes at 100 — see `QueryDonorProfilesDto` and its
+siblings) rather than offering a live search. After enough accumulated runs,
+a freshly created fixture can sort outside that first page and silently
+never appear in the dropdown — which reads as test flakiness, not what it
+actually is. `donors-module.spec.ts`'s `unique()` helper prefixes every
+fixture name with `AAA-` specifically to keep it sorting first regardless of
+how much data has accumulated. If you add a new Module 5 spec that creates a
+donor/sponsor fixture and selects it from a plain (non-search) `<select>`,
+reuse `unique()` rather than composing your own fixture name.
+
 ## 4. Manual verification
 
 Every automated suite above was actually run against the live dev stack

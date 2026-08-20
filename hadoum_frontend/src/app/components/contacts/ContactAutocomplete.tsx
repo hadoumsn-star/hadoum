@@ -94,6 +94,14 @@ function ResultRow({
 
 // ─── Props ───────────────────────────────────────────────────────────────────
 
+// This component only ever reads `.fullName` and `.active` off
+// `selectedContact` (for the query text and the "Inactif" badge) — it never
+// round-trips the rest of the shape. Some callers only hold a reduced
+// contact projection embedded in another resource (e.g. a DonorProfile's
+// `contact`), so the prop accepts that minimal shape too rather than
+// forcing every caller to have a full ApiContact/ApiContactSummary on hand.
+type ContactSummaryLike = { fullName: string; active: boolean };
+
 export interface ContactAutocompleteProps {
   /** Selected contact's id, or null when nothing is selected. Source of truth. */
   value: string | null;
@@ -103,7 +111,7 @@ export interface ContactAutocompleteProps {
    * from just its id, so callers should keep this in sync with `value`
    * (both come back together via `onChange`).
    */
-  selectedContact?: ApiContactLike | null;
+  selectedContact?: ApiContactLike | ContactSummaryLike | null;
   onChange: (contact: ApiContactLike | null) => void;
   label?: string;
   placeholder?: string;
